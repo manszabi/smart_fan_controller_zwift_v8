@@ -1,0 +1,29 @@
+{
+  // ============================================================
+  // ZWIFT API POLLING BEÁLLÍTÁSOK
+  // ============================================================
+  // Ez a fájl a zwift_api_polling.py konfigurációja.
+  // Másold "zwift_api_settings.json" néven és töltsd ki a saját adataiddal.
+  //
+  // A bejelentkezési adatok megadási sorrendje (prioritás szerint):
+  //   1. --username / --password CLI paraméterek
+  //   2. ZWIFT_USERNAME / ZWIFT_PASSWORD környezeti változók
+  //   3. zwift_api_settings.json fájl (ez a fájl)
+  //   4. Interaktív bekérés (első futáskor – elmenti a zwift_api_settings.json-be)
+
+  // Zwift fiók bejelentkezési adatok
+  // A Zwift regisztrációkor megadott email cím és jelszó.
+  "username": "your_zwift_email@example.com",
+  "password": "your_zwift_password",
+
+  // UDP broadcast cím – ide küldi a lekérdezett adatokat (power, HR, cadence, speed).
+  // A smart_fan_controller ezen a címen fogadja (datasource.zwift_udp_host / zwift_udp_port).
+  "broadcast_host": "127.0.0.1",   // localhost – ne módosítsd, hacsak nem másik gépre küldöd
+  "broadcast_port": 7878,           // Meg kell egyeznie a settings.json datasource.zwift_udp_port értékével
+
+  // Lekérdezési gyakoriság másodpercben.
+  // A Zwift API-t ennyiként kérdezi le a script.
+  // Alacsonyabb érték = gyakoribb frissítés, de nagyobb API terhelés.
+  // Ajánlott: 3.0–5.0 másodperc.
+  "poll_interval": 3.0
+}
