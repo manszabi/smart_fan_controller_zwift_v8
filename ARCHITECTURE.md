@@ -26,19 +26,19 @@
 │  ┌─────────────────── INPUT HANDLERS ──────────────────────────────┐   │
 │  │                                                                  │   │
 │  │  ┌──────────────┐  ┌──────────────┐  ┌───────────────────────┐  │   │
-│  │  │  ANT+ Input  │  │  BLE Input   │  │   Zwift UDP Input     │  │   │
-│  │  │  (Thread)    │  │  (async)     │  │   (async server)      │  │   │
-│  │  │              │  │              │  │   127.0.0.1:7878       │  │   │
-│  │  │ ┌──────────┐ │  │ ┌──────────┐ │  │                       │  │   │
-│  │  │ │Power     │ │  │ │Power     │ │  │  ┌─────────────────┐  │  │   │
-│  │  │ │Meter     │ │  │ │Service   │ │  │  │zwift_api_polling│  │  │   │
-│  │  │ │(openant) │ │  │ │(0x1818)  │ │  │  │.py (subprocess) │  │  │   │
-│  │  │ └──────────┘ │  │ └──────────┘ │  │  │ OAuth2 + Proto  │  │  │   │
-│  │  │ ┌──────────┐ │  │ ┌──────────┐ │  │  │ → UDP JSON      │  │  │   │
-│  │  │ │Heart     │ │  │ │HR        │ │  │  └─────────────────┘  │  │   │
-│  │  │ │Rate      │ │  │ │Service   │ │  │                       │  │   │
-│  │  │ │(openant) │ │  │ │(0x180D)  │ │  │                       │  │   │
-│  │  │ └──────────┘ │  │ └──────────┘ │  │                       │  │   │
+│  │  │  ANT+ Input  │  │  BLE Input   │  │   Zwift Input         │  │   │
+│  │  │  (Thread)    │  │  (async)     │  │   (async)             │  │   │
+│  │  │              │  │              │  │                       │  │   │
+│  │  │ ┌──────────┐ │  │ ┌──────────┐ │  │  ┌─────────────────┐ │  │   │
+│  │  │ │Power     │ │  │ │Power     │ │  │  │ ZwiftAuth       │ │  │   │
+│  │  │ │Meter     │ │  │ │Service   │ │  │  │ (OAuth2)        │ │  │   │
+│  │  │ │(openant) │ │  │ │(0x1818)  │ │  │  ├─────────────────┤ │  │   │
+│  │  │ └──────────┘ │  │ └──────────┘ │  │  │ ZwiftAPIClient  │ │  │   │
+│  │  │ ┌──────────┐ │  │ ┌──────────┐ │  │  │ (HTTPS polling) │ │  │   │
+│  │  │ │Heart     │ │  │ │HR        │ │  │  ├─────────────────┤ │  │   │
+│  │  │ │Rate      │ │  │ │Service   │ │  │  │ProtobufDecoder  │ │  │   │
+│  │  │ │(openant) │ │  │ │(0x180D)  │ │  │  │ → queue         │ │  │   │
+│  │  │ └──────────┘ │  │ └──────────┘ │  │  └─────────────────┘ │  │   │
 │  │  └──────┬───────┘  └──────┬───────┘  └───────────┬───────────┘  │   │
 │  │         │                 │                       │              │   │
 │  └─────────┼─────────────────┼───────────────────────┼──────────────┘   │
@@ -179,7 +179,6 @@ ACTIVE (timer running)
 | Main            | -       | Qt event loop (HUD), signal handling          |
 | AsyncioThread   | daemon  | All async tasks (BLE, processing, control)    |
 | ANT+ Thread     | daemon  | openant blocking loop (bridges via queue)     |
-| zwift_api_polling| subprocess | Zwift OAuth2 polling → UDP broadcast        |
 
 **Synchronization:**
 - `asyncio.Queue` - data flow between input handlers and processors
@@ -189,12 +188,12 @@ ACTIVE (timer running)
 
 ---
 
-## File Structure
+## Current File Structure
 
 | File | Purpose |
 |------|---------|
 | `swift_fan_controller_new_v8_PySide6.py` | Main app (~5300 lines): all core logic, HUD, orchestration |
-| `zwift_api_polling.py` | Zwift API subprocess: OAuth2, protobuf decode, UDP send |
+| `zwift_api_polling.py` | Zwift API polling: OAuth2, protobuf decode, UDP send |
 | `esp32_fan_controller.ino` | ESP32-C3 firmware: BLE server, relay control, OTA |
 | `settings.json` | User configuration (auto-created with defaults) |
 | `settings.example.json` / `.jsonc` | Configuration templates |
@@ -202,39 +201,65 @@ ACTIVE (timer running)
 
 ---
 
-## Proposed Refactoring Structure
+## Planned Refactoring Structure
 
-The main file (`swift_fan_controller_new_v8_PySide6.py`, ~5300 lines) could be split into:
+The monolithic main file (`swift_fan_controller_new_v8_PySide6.py`, ~5300 lines) and the
+separate subprocess (`zwift_api_polling.py`) will be refactored into:
 
 ```
 smart_fan_controller/
-├── __main__.py              # Entry point, argument parsing
+├── __init__.py              # Main class exports
+├── __main__.py              # Entry point (python -m smart_fan_controller)
+│
 ├── config/
 │   ├── loader.py            # load_settings(), validation, defaults
 │   └── schemas.py           # Setting dataclasses/TypedDicts
+│
 ├── core/
 │   ├── controller.py        # FanController orchestrator
 │   ├── zones.py             # zone_for_power(), zone_for_hr(), apply_zone_mode()
 │   ├── cooldown.py          # CooldownController state machine
 │   ├── averager.py          # PowerAverager, HRAverager
-│   └── dropout.py           # Dropout detection logic
+│   ├── dropout.py           # dropout_checker_task
+│   ├── power_processor.py   # power_processor_task
+│   ├── hr_processor.py      # hr_processor_task
+│   └── zone_controller.py   # zone_controller_task
+│
 ├── input/
 │   ├── antplus.py           # ANTPlusInputHandler
 │   ├── ble_power.py         # BLEPowerInputHandler
 │   ├── ble_hr.py            # BLEHRInputHandler
-│   └── zwift_udp.py         # ZwiftUDPInputHandler
+│   └── zwift.py             # ZwiftInputHandler (OAuth2 + polling + protobuf → queue)
+│
 ├── output/
 │   └── ble_fan.py           # BLEFanOutputController
+│
 ├── hud/
 │   ├── window.py            # HUDWindow (PySide6 LCARS UI)
 │   ├── sounds.py            # Sound generation & playback
 │   └── theme.py             # LCARS colors, fonts, styling
+│
 └── zwift/
-    └── api_polling.py       # Zwift API polling (subprocess)
+    ├── auth.py              # ZwiftAuth (OAuth2 token management)
+    ├── api_client.py        # ZwiftAPIClient (HTTPS calls)
+    ├── protobuf_decoder.py  # ProtobufDecoder (binary protobuf parsing)
+    └── polling.py           # Polling loop logic
 ```
+
+### Key design decisions
+- **No more subprocess/UDP**: Zwift polling runs in-process as an async task, communicates
+  via `asyncio.Queue` just like ANT+ and BLE input handlers
+- **No UDPBroadcaster**: Removed — data flows directly through queues
+- **Processor tasks split out**: `power_processor_task`, `hr_processor_task`,
+  `zone_controller_task` each in their own file under `core/`
+- **`input/zwift.py`** uses classes from `zwift/` module but follows the same queue pattern
+  as all other input handlers
+- **BLE input duplication kept**: `ble_power.py` and `ble_hr.py` may share similar
+  scan/connect logic but remain separate files for simplicity
 
 ### Benefits
 - **Testability**: Pure functions (zones, cooldown) easily unit-testable
 - **Readability**: Each file has a single responsibility (~200-500 lines)
 - **Maintainability**: Changes isolated to relevant module
 - **Reusability**: Input handlers, averagers, cooldown logic reusable independently
+- **Unified communication**: All data sources use the same asyncio.Queue pattern
