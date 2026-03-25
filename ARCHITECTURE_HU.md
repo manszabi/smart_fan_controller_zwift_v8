@@ -26,19 +26,19 @@
 │  ┌───────────────── BEMENETI KEZELOK ─────────────────────────────┐   │
 │  │                                                                  │   │
 │  │  ┌──────────────┐  ┌──────────────┐  ┌───────────────────────┐  │   │
-│  │  │  ANT+ Bemenet│  │  BLE Bemenet │  │   Zwift UDP Bemenet   │  │   │
-│  │  │  (Szal)      │  │  (async)     │  │   (async szerver)     │  │   │
-│  │  │              │  │              │  │   127.0.0.1:7878       │  │   │
-│  │  │ ┌──────────┐ │  │ ┌──────────┐ │  │                       │  │   │
-│  │  │ │Teljesit- │ │  │ │Teljesit- │ │  │  ┌─────────────────┐  │  │   │
-│  │  │ │menymero  │ │  │ │meny      │ │  │  │zwift_api_polling│  │  │   │
-│  │  │ │(openant) │ │  │ │(0x1818)  │ │  │  │.py (alfolyamat) │  │  │   │
-│  │  │ └──────────┘ │  │ └──────────┘ │  │  │ OAuth2 + Proto  │  │  │   │
-│  │  │ ┌──────────┐ │  │ ┌──────────┐ │  │  │ → UDP JSON      │  │  │   │
-│  │  │ │Pulzus-   │ │  │ │Pulzus    │ │  │  └─────────────────┘  │  │   │
-│  │  │ │mero      │ │  │ │(0x180D)  │ │  │                       │  │   │
-│  │  │ │(openant) │ │  │ └──────────┘ │  │                       │  │   │
-│  │  │ └──────────┘ │  │              │  │                       │  │   │
+│  │  │  ANT+ Bemenet│  │  BLE Bemenet │  │   Zwift Bemenet       │  │   │
+│  │  │  (Szal)      │  │  (async)     │  │   (async)             │  │   │
+│  │  │              │  │              │  │                       │  │   │
+│  │  │ ┌──────────┐ │  │ ┌──────────┐ │  │  ┌─────────────────┐ │  │   │
+│  │  │ │Teljesit- │ │  │ │Teljesit- │ │  │  │ ZwiftAuth       │ │  │   │
+│  │  │ │menymero  │ │  │ │meny      │ │  │  │ (OAuth2)        │ │  │   │
+│  │  │ │(openant) │ │  │ │(0x1818)  │ │  │  ├─────────────────┤ │  │   │
+│  │  │ └──────────┘ │  │ └──────────┘ │  │  │ ZwiftAPIClient  │ │  │   │
+│  │  │ ┌──────────┐ │  │ ┌──────────┐ │  │  │ (HTTPS polling) │ │  │   │
+│  │  │ │Pulzus-   │ │  │ │Pulzus    │ │  │  ├─────────────────┤ │  │   │
+│  │  │ │mero      │ │  │ │(0x180D)  │ │  │  │ProtobufDecoder  │ │  │   │
+│  │  │ │(openant) │ │  │ └──────────┘ │  │  │ → queue         │ │  │   │
+│  │  │ └──────────┘ │  │              │  │  └─────────────────┘ │  │   │
 │  │  └──────┬───────┘  └──────┬───────┘  └───────────┬───────────┘  │   │
 │  │         │                 │                       │              │   │
 │  └─────────┼─────────────────┼───────────────────────┼──────────────┘   │
@@ -180,7 +180,6 @@ AKTIV (idozito fut)
 | Fo szal          | -          | Qt esemenyhurok (HUD), jelkezeles                |
 | AsyncioThread    | daemon     | Osszes async feladat (BLE, feldolgozas, vezerles)|
 | ANT+ szal        | daemon     | openant blokkolo ciklus (queue-n keresztul hidal) |
-| zwift_api_polling| alfolyamat | Zwift OAuth2 lekerdez → UDP kuldes               |
 
 **Szinkronizacio:**
 - `asyncio.Queue` - adatfolyam bemeneti kezelok es feldolgozok kozott
@@ -190,12 +189,12 @@ AKTIV (idozito fut)
 
 ---
 
-## Fajl struktura
+## Jelenlegi fajl struktura
 
 | Fajl | Cel |
 |------|-----|
-| `swift_fan_controller_new_v8_PySide6.py` | Fo alkalmazas (~5300 sor): teljes logika, HUD, vezenyels |
-| `zwift_api_polling.py` | Zwift API alfolyamat: OAuth2, protobuf dekodolas, UDP kuldes |
+| `swift_fan_controller_new_v8_PySide6.py` | Fo alkalmazas (~5300 sor): teljes logika, HUD, vezerles |
+| `zwift_api_polling.py` | Zwift API lekerdezs: OAuth2, protobuf dekodolas, UDP kuldes |
 | `esp32_fan_controller.ino` | ESP32-C3 firmware: BLE szerver, rele vezerles, OTA |
 | `settings.json` | Felhasznaloi konfiguracio (automatikusan letrejon alapertelmezettekkel) |
 | `settings.example.json` / `.jsonc` | Konfiguracios sablonok |
@@ -203,39 +202,65 @@ AKTIV (idozito fut)
 
 ---
 
-## Javasolt refaktoralasi struktura
+## Tervezett refaktoralasi struktura
 
-A fo fajl (`swift_fan_controller_new_v8_PySide6.py`, ~5300 sor) felbonthato lenne:
+A monolitikus fo fajl (`swift_fan_controller_new_v8_PySide6.py`, ~5300 sor) es a kulon
+alfolyamat (`zwift_api_polling.py`) atdolgozasra kerul:
 
 ```
 smart_fan_controller/
-├── __main__.py              # Belepesi pont, argumentum feldolgozas
+├── __init__.py              # Fo osztalyok exportalasa
+├── __main__.py              # Belepesi pont (python -m smart_fan_controller)
+│
 ├── config/
 │   ├── loader.py            # load_settings(), validacio, alapertelmezettek
 │   └── schemas.py           # Beallitas dataclass-ok/TypedDict-ek
+│
 ├── core/
 │   ├── controller.py        # FanController fo vezerloelemem
 │   ├── zones.py             # zone_for_power(), zone_for_hr(), apply_zone_mode()
 │   ├── cooldown.py          # CooldownController allapotgep
 │   ├── averager.py          # PowerAverager, HRAverager
-│   └── dropout.py           # Dropout (adatvesztes) eszleles logika
+│   ├── dropout.py           # dropout_checker_task
+│   ├── power_processor.py   # power_processor_task
+│   ├── hr_processor.py      # hr_processor_task
+│   └── zone_controller.py   # zone_controller_task
+│
 ├── input/
 │   ├── antplus.py           # ANTPlusInputHandler
 │   ├── ble_power.py         # BLEPowerInputHandler
 │   ├── ble_hr.py            # BLEHRInputHandler
-│   └── zwift_udp.py         # ZwiftUDPInputHandler
+│   └── zwift.py             # ZwiftInputHandler (OAuth2 + polling + protobuf → queue)
+│
 ├── output/
 │   └── ble_fan.py           # BLEFanOutputController
+│
 ├── hud/
 │   ├── window.py            # HUDWindow (PySide6 LCARS felhasznaloi felulet)
-│   ├── sounds.py            # Hang generaas es lejatszas
+│   ├── sounds.py            # Hang generalas es lejatszas
 │   └── theme.py             # LCARS szinek, betutipusok, stilusok
+│
 └── zwift/
-    └── api_polling.py       # Zwift API lekerdezs (alfolyamat)
+    ├── auth.py              # ZwiftAuth (OAuth2 token kezeles)
+    ├── api_client.py        # ZwiftAPIClient (HTTPS hivasok)
+    ├── protobuf_decoder.py  # ProtobufDecoder (binaris protobuf feldolgozas)
+    └── polling.py           # Polling ciklus logika
 ```
+
+### Fo tervezesi dontesek
+- **Nincs tobbe subprocess/UDP**: A Zwift lekerdezs a fo processben fut async task-kent,
+  `asyncio.Queue`-n kommunikal, pont mint az ANT+ es BLE bemeneti kezelok
+- **UDPBroadcaster torolve**: Nem szukseges — az adatok kozvetlenul queue-kon keresztul aramlanak
+- **Feldolgozo task-ok szetvalasztva**: `power_processor_task`, `hr_processor_task`,
+  `zone_controller_task` mind kulon fajlban a `core/` alatt
+- **`input/zwift.py`** a `zwift/` modul osztalyait hasznalja, de ugyanazt a queue mintat
+  koveti mint az osszes tobbi bemeneti kezelo
+- **BLE bemenet duplikacio marad**: `ble_power.py` es `ble_hr.py` hasonlo scan/connect
+  logikat tartalmazhat, de az egyszeru kezeleshez kulon fajlok maradnak
 
 ### Elonyok
 - **Tesztelhetoseg**: Tiszta fuggvenyek (zonazas, cooldown) konnyen unit-tesztelhetok
 - **Olvashatosag**: Minden fajl egyetlen felelosseggel rendelkezik (~200-500 sor)
 - **Karbantarthatosag**: Valtoztatasok az adott modulra korlatozodnak
 - **Ujrafelhasznalhatosag**: Bemeneti kezelok, atlagolok, cooldown logika fuggetlenul hasznalhato
+- **Egyseges kommunikacio**: Minden adatforras ugyanazt az asyncio.Queue mintat hasznalja
