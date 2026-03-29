@@ -39,6 +39,7 @@
   "datasource": {
     "power_source": "zwiftudp",
     "hr_source": "zwiftudp",
+    "_comment_sources": "power_source és hr_source: 'antplus', 'ble', 'zwiftudp' vagy null (kikapcsolva)",
     "BLE_buffer_seconds": 3,
     "BLE_minimum_samples": 6,
     "BLE_buffer_rate_hz": 4,
