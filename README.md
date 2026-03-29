@@ -23,7 +23,7 @@ A program valós időben fogadja a teljesítmény (watt) és szívfrekvencia (bp
 
 ## Fő jellemzők
 
-- **Három adatforrás:** ANT+ (USB dongle), BLE (Bluetooth Low Energy), Zwift API polling – szabadon kombinálhatók
+- **Három adatforrás:** ANT+ (USB dongle), BLE (Bluetooth Low Energy), Zwift API polling – szabadon kombinálhatók, bármelyik `null`-ra állítható a kikapcsoláshoz
 - **Három zóna mód:** power_only, hr_only, higher_wins (a magasabb zóna nyer)
 - **Adaptív cooldown:** zóna csökkentésnél várakozás (felezés nagy esésnél, duplázás visszaemelkedésnél)
 - **Auto-discovery:** BLE és ANT+ eszközök automatikus felderítése és logolása
@@ -82,7 +82,7 @@ Röviden a `settings.json` fő szekciói:
 | `power_zones` | FTP, watt tartomány, zóna százalékok, 0W azonnali leállás |
 | `heart_rate_zones` | HR zónák, zone_mode (power_only/hr_only/higher_wins) |
 | `ble` | ESP32 ventilátor vezérlő (kimenet) |
-| `datasource` | Adatforrás kiválasztás, ANT+/BLE/Zwift specifikus beállítások |
+| `datasource` | Adatforrás kiválasztás (antplus/ble/zwiftudp/null), ANT+/BLE/Zwift specifikus beállítások |
 | `hud` | LCARS hang be/ki, hangerő, Zwift exit figyelés |
 
 Kommentezett referencia: `settings.example.jsonc`
@@ -146,10 +146,27 @@ Kommentezett referencia: `settings.example.jsonc`
 {
   "power_zones": { "ftp": 200 },
   "datasource": {
-    "power_source": "antplus"
+    "power_source": "antplus",
+    "hr_source": null
   },
   "heart_rate_zones": {
-    "enabled": false
+    "zone_mode": "power_only"
+  }
+}
+```
+
+### Csak HR (BLE), power nélkül
+
+```json
+{
+  "heart_rate_zones": {
+    "enabled": true,
+    "max_hr": 185,
+    "zone_mode": "hr_only"
+  },
+  "datasource": {
+    "power_source": null,
+    "hr_source": "ble"
   }
 }
 ```
