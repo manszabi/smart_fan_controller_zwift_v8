@@ -548,6 +548,44 @@ def load_settings(settings_file: str = "settings.json") -> Dict[str, Any]:
     except Exception as exc:
         print(f"⚠ valid_hr kereszt-validáció sikertelen: {exc}")
 
+    # 6) zone_mode + null forrás inkompatibilitás figyelmeztetés
+    try:
+        ds_cfg = settings["datasource"]
+        hrz_cfg: dict[str, Any] = settings.get("heart_rate_zones") or {}
+        hr_on = hrz_cfg.get("enabled", False)
+        zm = hrz_cfg.get("zone_mode", ZoneMode.POWER_ONLY) if hr_on else ZoneMode.POWER_ONLY
+        ps = ds_cfg.get("power_source")
+        hs = ds_cfg.get("hr_source")
+
+        if zm == ZoneMode.HIGHER_WINS:
+            if ps is None and hs is None:
+                print(
+                    "⚠ zone_mode 'higher_wins', de mindkét forrás null – "
+                    "nincs adat a zóna meghatározásához!"
+                )
+            elif ps is None:
+                print(
+                    "⚠ zone_mode 'higher_wins', de power_source null – "
+                    "csak HR alapján fog dönteni (mint hr_only)."
+                )
+            elif hs is None:
+                print(
+                    "⚠ zone_mode 'higher_wins', de hr_source null – "
+                    "csak power alapján fog dönteni (mint power_only)."
+                )
+        elif zm == ZoneMode.POWER_ONLY and ps is None:
+            print(
+                "⚠ zone_mode 'power_only', de power_source null – "
+                "nincs adat a zóna meghatározásához!"
+            )
+        elif zm == ZoneMode.HR_ONLY and hs is None:
+            print(
+                "⚠ zone_mode 'hr_only', de hr_source null – "
+                "nincs adat a zóna meghatározásához!"
+            )
+    except Exception as exc:
+        print(f"⚠ zone_mode/null forrás kereszt-validáció sikertelen: {exc}")
+
     return settings
 
 
@@ -2962,6 +3000,10 @@ async def dropout_checker_task(
                 and (now - state.last_hr_time) < hr_dropout_timeout
             )
 
+            label = "unknown"
+            elapsed = 0.0
+            stale = False
+
             if zone_mode == ZoneMode.POWER_ONLY:
                 stale = not power_fresh
                 elapsed = (
@@ -3724,40 +3766,48 @@ class FanController:
                 )
 
         # --- Feldolgozó és vezérlő korrutinok ---
-        self._tasks.append(
-            asyncio.create_task(
-                _guarded_task(
-                    power_processor_task(
-                        raw_power_queue,
-                        state,
-                        zone_event,
-                        power_averager,
-                        printer,
-                        s,
-                        power_zones,
+        if power_source is not None:
+            self._tasks.append(
+                asyncio.create_task(
+                    _guarded_task(
+                        power_processor_task(
+                            raw_power_queue,
+                            state,
+                            zone_event,
+                            power_averager,
+                            printer,
+                            s,
+                            power_zones,
+                        ),
+                        "PowerProcessor",
                     ),
-                    "PowerProcessor",
-                ),
-                name="PowerProcessor",
+                    name="PowerProcessor",
+                )
             )
-        )
-        self._tasks.append(
-            asyncio.create_task(
-                _guarded_task(
-                    hr_processor_task(
-                        raw_hr_queue,
-                        state,
-                        zone_event,
-                        hr_averager,
-                        printer,
-                        s,
-                        hr_zones,
+        else:
+            logger.info("Power processor kihagyva (power_source: null)")
+
+        if hr_source is not None and hr_enabled:
+            self._tasks.append(
+                asyncio.create_task(
+                    _guarded_task(
+                        hr_processor_task(
+                            raw_hr_queue,
+                            state,
+                            zone_event,
+                            hr_averager,
+                            printer,
+                            s,
+                            hr_zones,
+                        ),
+                        "HRProcessor",
                     ),
-                    "HRProcessor",
-                ),
-                name="HRProcessor",
+                    name="HRProcessor",
+                )
             )
-        )
+        else:
+            logger.info("HR processor kihagyva (hr_source: %s, hr_enabled: %s)",
+                        hr_source, hr_enabled)
         self._tasks.append(
             asyncio.create_task(
                 _guarded_task(
