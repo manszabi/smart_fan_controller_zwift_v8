@@ -3858,6 +3858,12 @@ class FanController:
         finally:
             # Guard against None if setup crashed before ble_fan init
             if self._ble_fan is not None:  # type: ignore[redundant-expr]
+                # Leállítás előtt LEVEL:0 küldése – ventilátor kikapcsolása
+                try:
+                    await self._ble_fan._write_level(0)
+                    print("✓ Ventilátor leállítva (LEVEL:0)")
+                except Exception as exc:
+                    logger.warning(f"LEVEL:0 küldése sikertelen leállításkor: {exc}")
                 await self._ble_fan.disconnect()
                 self._ble_fan = None
             # Fix #13: ANT+ leállítás a stop()-ban történik, nem duplikáljuk itt
