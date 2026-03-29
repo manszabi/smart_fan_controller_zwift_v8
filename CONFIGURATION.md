@@ -64,8 +64,8 @@ A program a `settings.json` fájlból olvassa a beállításokat. Ha a fájl nem
 
 **Zóna módok:**
 
-- `"power_only"` – csak a teljesítmény zóna dönt (HR figyelmen kívül)
-- `"hr_only"` – csak a HR zóna dönt (power figyelmen kívül)
+- `"power_only"` – csak a teljesítmény zóna dönt (HR figyelmen kívül) – ilyenkor `hr_source` állítható `null`-ra
+- `"hr_only"` – csak a HR zóna dönt (power figyelmen kívül) – ilyenkor `power_source` állítható `null`-ra
 - `"higher_wins"` – a kettő közül a magasabb zóna érvényesül
 
 **HR zóna kiosztás:**
@@ -107,10 +107,10 @@ Az ESP32 BLE vezérlőhöz való csatlakozás beállításai. A program `LEVEL:N
 
 | Mező | Értékek | Alapértelmezett | Leírás |
 |------|---------|-----------------|--------|
-| `power_source` | `"antplus"`, `"ble"`, `"zwiftudp"` | `"zwiftudp"` | Teljesítmény adatforrás. |
-| `hr_source` | `"antplus"`, `"ble"`, `"zwiftudp"` | `"zwiftudp"` | Szívfrekvencia adatforrás. |
+| `power_source` | `"antplus"`, `"ble"`, `"zwiftudp"`, `null` | `"zwiftudp"` | Teljesítmény adatforrás. `null` = kikapcsolva. |
+| `hr_source` | `"antplus"`, `"ble"`, `"zwiftudp"`, `null` | `"zwiftudp"` | Szívfrekvencia adatforrás. `null` = kikapcsolva. |
 
-A power és HR különböző forrásból is jöhet (pl. `power_source: "antplus"`, `hr_source: "ble"`).
+A power és HR különböző forrásból is jöhet (pl. `power_source: "antplus"`, `hr_source: "ble"`). Ha az érték `null`, az adott szenzorhoz nem csatlakozik semmilyen forrás – hasznos ha a `zone_mode` miatt az egyik adat nem szükséges (pl. `"hr_only"` módban `power_source: null`).
 
 ### Forrás-specifikus buffer beállítások
 

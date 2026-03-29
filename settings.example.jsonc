@@ -86,7 +86,9 @@
   // ADATFORRÁS BEÁLLÍTÁSOK
   // ============================================================
   "datasource": {
-    // Adatforrás kiválasztása: "antplus", "ble", "zwiftudp"
+    // Adatforrás kiválasztása: "antplus", "ble", "zwiftudp", vagy null (kikapcsolva).
+    // Ha null, az adott szenzorhoz nem csatlakozik semmilyen forrás.
+    // Példa: zone_mode "hr_only" esetén a power_source null-ra állítható.
     "power_source": "zwiftudp",
     "hr_source": "zwiftudp",
 
