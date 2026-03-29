@@ -356,8 +356,12 @@ def load_settings(settings_file: str = "settings.json") -> Dict[str, Any]:
 
         if ds.get("power_source") in VALID_DATA_SOURCES:
             settings["datasource"]["power_source"] = ds["power_source"]
+        elif "power_source" in ds and ds["power_source"] is None:
+            settings["datasource"]["power_source"] = None
         if ds.get("hr_source") in VALID_DATA_SOURCES:
             settings["datasource"]["hr_source"] = ds["hr_source"]
+        elif "hr_source" in ds and ds["hr_source"] is None:
+            settings["datasource"]["hr_source"] = None
 
         # --- ANT+ eszköz beállítások ---
         for key in ("ant_power_device_id", "ant_hr_device_id"):
@@ -616,13 +620,13 @@ def _resolve_buffer_settings(settings: Dict[str, Any], role: str) -> Dict[str, A
     """
     ds = settings["datasource"]
     source_key = "power_source" if role == "power" else "hr_source"
-    source = ds.get(source_key, DataSource.ANTPLUS)
+    source = ds.get(source_key)
 
     if source == DataSource.BLE:
         prefix = "BLE"
     elif source == DataSource.ANTPLUS:
         prefix = "ANT"
-    else:  # zwiftudp
+    else:  # zwiftudp or None (fallback)
         prefix = "zwiftUDP"
 
     gs = settings["global_settings"]
@@ -1995,8 +1999,8 @@ class ANTPlusInputHandler:
         t.start()
 
         # Indulási log: milyen device ID-kkal indul
-        power_src = self.ds.get("power_source", DataSource.ANTPLUS)
-        hr_src = self.ds.get("hr_source", DataSource.ANTPLUS)
+        power_src = self.ds.get("power_source")
+        hr_src = self.ds.get("hr_source")
         if power_src == DataSource.ANTPLUS:
             pid = self._power_device_id
             mode = f"device_id={pid}" if pid else "wildcard (első elérhető)"
@@ -2098,7 +2102,7 @@ class ANTPlusInputHandler:
         self._node = node
         self._devices = []
 
-        if self.ds.get("power_source", DataSource.ANTPLUS) == DataSource.ANTPLUS:
+        if self.ds.get("power_source") == DataSource.ANTPLUS:
             pid = self._power_device_id
             meter = PowerMeter(self._node, device_id=pid)
             meter.on_found = self._make_on_found("ANT+ Power", "PowerMeter", meter)
@@ -2106,7 +2110,7 @@ class ANTPlusInputHandler:
             meter.on_update = self._on_any_broadcast
             self._devices.append(meter)
 
-        if self.ds.get("hr_source", DataSource.ANTPLUS) == DataSource.ANTPLUS and self.hr_enabled:
+        if self.ds.get("hr_source") == DataSource.ANTPLUS and self.hr_enabled:
             hid = self._hr_device_id
             hr_monitor = HeartRate(self._node, device_id=hid)
             hr_monitor.on_found = self._make_on_found("ANT+ HR", "HeartRate", hr_monitor)
@@ -3524,20 +3528,26 @@ class FanController:
         )
         print(f"Zóna határok: {power_zones}")
 
-        print(
-            f"💪 Power buffer ({ds['power_source'].upper()}): "
-            f"{power_buf['buffer_seconds']}s | "
-            f"minta: {power_buf['minimum_samples']} | "
-            f"rate: {power_buf['buffer_rate_hz']}Hz | "
-            f"dropout: {power_buf['dropout_timeout']}s"
-        )
-        print(
-            f"❤️  HR buffer    ({ds['hr_source'].upper()}): "
-            f"{hr_buf['buffer_seconds']}s | "
-            f"minta: {hr_buf['minimum_samples']} | "
-            f"rate: {hr_buf['buffer_rate_hz']}Hz | "
-            f"dropout: {hr_buf['dropout_timeout']}s"
-        )
+        if ds.get("power_source") is not None:
+            print(
+                f"💪 Power buffer ({ds['power_source'].upper()}): "
+                f"{power_buf['buffer_seconds']}s | "
+                f"minta: {power_buf['minimum_samples']} | "
+                f"rate: {power_buf['buffer_rate_hz']}Hz | "
+                f"dropout: {power_buf['dropout_timeout']}s"
+            )
+        else:
+            print("💪 Power forrás: KIKAPCSOLVA (null)")
+        if ds.get("hr_source") is not None:
+            print(
+                f"❤️  HR buffer    ({ds['hr_source'].upper()}): "
+                f"{hr_buf['buffer_seconds']}s | "
+                f"minta: {hr_buf['minimum_samples']} | "
+                f"rate: {hr_buf['buffer_rate_hz']}Hz | "
+                f"dropout: {hr_buf['dropout_timeout']}s"
+            )
+        else:
+            print("❤️  HR forrás:    KIKAPCSOLVA (null)")
 
         print(
             f"Cooldown: {s['global_settings']['cooldown_seconds']}s  |  "
@@ -3637,8 +3647,8 @@ class FanController:
         )
 
         # --- Bemeneti adatforrások ---
-        power_source = ds.get("power_source", DataSource.ANTPLUS)
-        hr_source = ds.get("hr_source", DataSource.ANTPLUS)
+        power_source = ds.get("power_source")
+        hr_source = ds.get("hr_source")
 
         if power_source == DataSource.BLE:
             ble_power = BLEPowerInputHandler(s, raw_power_queue)
