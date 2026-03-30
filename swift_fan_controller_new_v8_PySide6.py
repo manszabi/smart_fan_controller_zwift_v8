@@ -4521,7 +4521,8 @@ class HUDWindow(QWidget):
     # ────────── FONT BETÖLTÉS ──────────
 
     def _try_load_lcars_font(self) -> None:
-        """Antonio font letöltése és betöltése."""
+        """Antonio font betöltése lokális cache-ből (ha korábban letöltődött)
+        vagy letöltése timeout-tal és felhasználói figyelmeztetéssel."""
         if _platform.system() != "Windows":
             return
         try:
@@ -4530,17 +4531,33 @@ class HUDWindow(QWidget):
             font_dir = os.path.join(os.path.expanduser("~"), ".swift_fan_fonts")
             os.makedirs(font_dir, exist_ok=True)
 
+            needs_download = False
             for style in ("Bold", "Regular"):
                 fpath = os.path.join(font_dir, f"Antonio-{style}.ttf")
                 if not os.path.exists(fpath):
-                    url = (
-                        "https://raw.githubusercontent.com/google/fonts/main/"
-                        f"ofl/antonio/static/Antonio-{style}.ttf"
-                    )
-                    urllib.request.urlretrieve(url, fpath)
-                QFontDatabase.addApplicationFont(fpath)
-        except Exception:
-            pass
+                    needs_download = True
+                    break
+
+            if needs_download:
+                print("⏳ LCARS font (Antonio) letöltése első indításkor...")
+                for style in ("Bold", "Regular"):
+                    fpath = os.path.join(font_dir, f"Antonio-{style}.ttf")
+                    if not os.path.exists(fpath):
+                        url = (
+                            "https://raw.githubusercontent.com/google/fonts/main/"
+                            f"ofl/antonio/static/Antonio-{style}.ttf"
+                        )
+                        with urllib.request.urlopen(url, timeout=10) as resp:
+                            with open(fpath, "wb") as out:
+                                out.write(resp.read())
+                print("✓ LCARS font letöltve.")
+
+            for style in ("Bold", "Regular"):
+                fpath = os.path.join(font_dir, f"Antonio-{style}.ttf")
+                if os.path.exists(fpath):
+                    QFontDatabase.addApplicationFont(fpath)
+        except Exception as exc:
+            logger.warning(f"LCARS font betöltés sikertelen (rendszer font használata): {exc}")
 
     def _detect_best_font(self) -> str:
         """Legjobb elérhető LCARS-stílusú font kiválasztása."""
@@ -5195,7 +5212,8 @@ def main() -> None:
         _exe_dir = os.path.dirname(os.path.abspath(sys.executable))
         _settings_path = os.path.join(_exe_dir, "settings.json")
     else:
-        _settings_path = "settings.json"
+        _script_dir = os.path.dirname(os.path.abspath(__file__))
+        _settings_path = os.path.join(_script_dir, "settings.json")
     controller = FanController(_settings_path)
     controller.print_startup_info()
 
