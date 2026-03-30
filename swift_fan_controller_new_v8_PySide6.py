@@ -296,80 +296,368 @@ class PowerZonesConfig:
         return dataclasses.asdict(self)
 
 
+@dataclasses.dataclass
+class GlobalSettingsConfig:
+    """Globális beállítások – típusbiztos."""
+
+    cooldown_seconds: int = 120
+    buffer_seconds: int = 3
+    minimum_samples: int = 6
+    buffer_rate_hz: int = 4
+    dropout_timeout: int = 5
+
+    @classmethod
+    def from_dict(cls, raw: dict[str, Any]) -> "GlobalSettingsConfig":
+        d = cls()
+        fields_range = {
+            "cooldown_seconds": (0, 300),
+            "buffer_seconds": (1, 10),
+            "minimum_samples": (1, 1000),
+            "buffer_rate_hz": (1, 60),
+            "dropout_timeout": (1, 120),
+        }
+        kwargs: dict[str, int] = {}
+        for key, (lo, hi) in fields_range.items():
+            if key in raw:
+                v = raw[key]
+                if isinstance(v, bool):
+                    print(f"⚠ Érvénytelen '{key}' érték: {v!r} ({lo}–{hi} közötti egész kell)")
+                elif isinstance(v, (int, float)) and lo <= v <= hi:
+                    kwargs[key] = int(v)
+                else:
+                    print(f"⚠ Érvénytelen '{key}' érték: {v} ({lo}–{hi} közötti egész kell)")
+        return cls(**{**dataclasses.asdict(d), **kwargs})
+
+
+@dataclasses.dataclass
+class HeartRateZonesConfig:
+    """Szívfrekvencia zóna beállítások – típusbiztos, validált.
+
+    Validáció a __post_init__-ben:
+      - z1_max_percent < z2_max_percent
+      - resting_hr < max_hr
+      - valid_min_hr < valid_max_hr
+    """
+
+    enabled: bool = True
+    max_hr: int = 185
+    resting_hr: int = 60
+    zone_mode: str = ZoneMode.HIGHER_WINS
+    z1_max_percent: int = 70
+    z2_max_percent: int = 80
+    valid_min_hr: int = 30
+    valid_max_hr: int = 220
+    zero_hr_immediate: bool = False
+
+    def __post_init__(self) -> None:
+        # z1/z2 százalék kereszt-validáció
+        if self.z1_max_percent >= self.z2_max_percent:
+            low = min(self.z1_max_percent, self.z2_max_percent)
+            high = max(self.z1_max_percent, self.z2_max_percent)
+            if low == high:
+                if low >= 100:
+                    low, high = 99, 100
+                else:
+                    high = low + 1
+            print(
+                f"⚠ Érvénytelen HR zóna százalékok (z1={self.z1_max_percent}, z2={self.z2_max_percent}). "
+                f"Értékek rendezése és legalább 1% különbség biztosítása."
+            )
+            self.z1_max_percent, self.z2_max_percent = low, high
+
+        # resting_hr < max_hr
+        if self.resting_hr >= self.max_hr:
+            new_rest = max(30, self.max_hr - 1)
+            print(
+                f"⚠ Érvénytelen HR értékek (resting_hr={self.resting_hr}, max_hr={self.max_hr}). "
+                f"resting_hr {new_rest}-re állítva."
+            )
+            self.resting_hr = new_rest
+
+        # valid_min_hr < valid_max_hr
+        if self.valid_min_hr >= self.valid_max_hr:
+            print(
+                f"⚠ valid_min_hr ({self.valid_min_hr}) >= valid_max_hr ({self.valid_max_hr}), "
+                f"alapértelmezés visszaállítva."
+            )
+            defaults = HeartRateZonesConfig.__dataclass_fields__
+            self.valid_min_hr = defaults["valid_min_hr"].default
+            self.valid_max_hr = defaults["valid_max_hr"].default
+
+    @classmethod
+    def from_dict(cls, raw: dict[str, Any]) -> "HeartRateZonesConfig":
+        d = cls()
+        kwargs: dict[str, Any] = dataclasses.asdict(d)
+
+        int_fields = {
+            "max_hr": (100, 220),
+            "resting_hr": (30, 100),
+            "z1_max_percent": (1, 100),
+            "z2_max_percent": (1, 100),
+            "valid_min_hr": (30, 100),
+            "valid_max_hr": (150, 300),
+        }
+        for key, (lo, hi) in int_fields.items():
+            if key in raw:
+                v = raw[key]
+                if isinstance(v, bool):
+                    print(f"⚠ Érvénytelen '{key}' érték: {v!r} ({lo}–{hi} közötti egész kell)")
+                elif isinstance(v, (int, float)) and lo <= v <= hi:
+                    kwargs[key] = int(v)
+                else:
+                    print(f"⚠ Érvénytelen '{key}' érték: {v} ({lo}–{hi} közötti egész kell)")
+
+        for key in ("enabled", "zero_hr_immediate"):
+            if key in raw:
+                v = raw[key]
+                if isinstance(v, bool):
+                    kwargs[key] = v
+                else:
+                    print(f"⚠ Érvénytelen '{key}' érték: {v} (true/false kell)")
+
+        if "zone_mode" in raw and raw["zone_mode"] in VALID_ZONE_MODES:
+            kwargs["zone_mode"] = raw["zone_mode"]
+
+        return cls(**kwargs)
+
+
+@dataclasses.dataclass
+class BleConfig:
+    """BLE kimeneti (ventillátor) beállítások – típusbiztos."""
+
+    device_name: Optional[str] = None
+    scan_timeout: int = 10
+    connection_timeout: int = 15
+    reconnect_interval: int = 5
+    max_retries: int = 10
+    command_timeout: int = 3
+    service_uuid: str = "0000ffe0-0000-1000-8000-00805f9b34fb"
+    characteristic_uuid: str = "0000ffe1-0000-1000-8000-00805f9b34fb"
+    pin_code: Optional[str] = "123456"
+
+    @classmethod
+    def from_dict(cls, raw: dict[str, Any]) -> "BleConfig":
+        d = cls()
+        kwargs: dict[str, Any] = dataclasses.asdict(d)
+
+        # device_name
+        if "device_name" in raw:
+            dn = raw["device_name"]
+            if dn is None or (isinstance(dn, str) and not dn.strip()):
+                kwargs["device_name"] = None
+            elif isinstance(dn, str) and dn.strip():
+                kwargs["device_name"] = dn.strip()
+
+        int_fields = {
+            "scan_timeout": (1, 60),
+            "connection_timeout": (1, 60),
+            "reconnect_interval": (1, 60),
+            "max_retries": (1, 100),
+            "command_timeout": (1, 30),
+        }
+        for key, (lo, hi) in int_fields.items():
+            if key in raw:
+                v = raw[key]
+                if isinstance(v, bool):
+                    print(f"⚠ Érvénytelen '{key}' érték: {v!r} ({lo}–{hi} közötti egész kell)")
+                elif isinstance(v, (int, float)) and lo <= v <= hi:
+                    kwargs[key] = int(v)
+                else:
+                    print(f"⚠ Érvénytelen '{key}' érték: {v} ({lo}–{hi} közötti egész kell)")
+
+        if isinstance(raw.get("service_uuid"), str) and raw["service_uuid"]:
+            kwargs["service_uuid"] = raw["service_uuid"]
+        if isinstance(raw.get("characteristic_uuid"), str) and raw["characteristic_uuid"]:
+            kwargs["characteristic_uuid"] = raw["characteristic_uuid"]
+
+        # pin_code
+        if "pin_code" in raw:
+            pc = raw["pin_code"]
+            if pc is None:
+                kwargs["pin_code"] = None
+            elif isinstance(pc, int) and not isinstance(pc, bool) and 0 <= pc <= 999999:
+                kwargs["pin_code"] = str(pc)
+                if len(str(pc)) < 6:
+                    print(
+                        f"⚠ pin_code int-ként megadva ({pc}) → \"{str(pc)}\". "
+                        f"Ha vezető nullákra van szükség, string-ként add meg: "
+                        f"\"pin_code\": \"{pc:06d}\""
+                    )
+            elif isinstance(pc, str) and pc.isdigit() and 0 < len(pc) <= 20:
+                kwargs["pin_code"] = pc
+            else:
+                print(f"⚠ Érvénytelen 'pin_code' érték: {pc}")
+
+        return cls(**kwargs)
+
+
+@dataclasses.dataclass
+class DatasourceConfig:
+    """Adatforrás beállítások – típusbiztos."""
+
+    power_source: Optional[str] = DataSource.ZWIFTUDP
+    hr_source: Optional[str] = DataSource.ZWIFTUDP
+    BLE_buffer_seconds: int = 3
+    BLE_minimum_samples: int = 6
+    BLE_buffer_rate_hz: int = 4
+    BLE_dropout_timeout: int = 5
+    ANT_buffer_seconds: int = 3
+    ANT_minimum_samples: int = 6
+    ANT_buffer_rate_hz: int = 4
+    ANT_dropout_timeout: int = 5
+    zwiftUDP_buffer_seconds: int = 10
+    zwiftUDP_minimum_samples: int = 2
+    zwiftUDP_buffer_rate_hz: int = 3
+    zwiftUDP_dropout_timeout: int = 15
+    ant_power_device_id: int = 0
+    ant_hr_device_id: int = 0
+    ant_power_reconnect_interval: int = 5
+    ant_power_max_retries: int = 10
+    ant_hr_reconnect_interval: int = 5
+    ant_hr_max_retries: int = 10
+    ble_power_device_name: Optional[str] = None
+    ble_power_scan_timeout: int = 10
+    ble_power_reconnect_interval: int = 5
+    ble_power_max_retries: int = 10
+    ble_hr_device_name: Optional[str] = None
+    ble_hr_scan_timeout: int = 10
+    ble_hr_reconnect_interval: int = 5
+    ble_hr_max_retries: int = 10
+    zwift_udp_port: int = 7878
+    zwift_udp_host: str = "127.0.0.1"
+    zwift_auto_launch: bool = True
+    zwift_launcher_path: Optional[str] = None
+
+    def __post_init__(self) -> None:
+        # minimum_samples <= buffer_seconds * buffer_rate_hz cross-validation
+        for prefix in ("BLE", "ANT", "zwiftUDP"):
+            bs = getattr(self, f"{prefix}_buffer_seconds")
+            ms = getattr(self, f"{prefix}_minimum_samples")
+            brz = getattr(self, f"{prefix}_buffer_rate_hz")
+            if bs > 0 and brz > 0:
+                max_samples = bs * brz
+                if ms > max_samples:
+                    print(
+                        f"⚠ [{prefix}] Érvénytelen minimum_samples ({ms}) – "
+                        f"nagyobb, mint buffer_seconds * buffer_rate_hz "
+                        f"({bs} * {brz} = {max_samples}). "
+                        f"{prefix}_minimum_samples {max_samples}-re állítva."
+                    )
+                    setattr(self, f"{prefix}_minimum_samples", max_samples)
+
+    @classmethod
+    def from_dict(cls, raw: dict[str, Any]) -> "DatasourceConfig":
+        d = cls()
+        kwargs: dict[str, Any] = dataclasses.asdict(d)
+
+        # power_source / hr_source
+        if raw.get("power_source") in VALID_DATA_SOURCES:
+            kwargs["power_source"] = raw["power_source"]
+        elif "power_source" in raw and raw["power_source"] is None:
+            kwargs["power_source"] = None
+        if raw.get("hr_source") in VALID_DATA_SOURCES:
+            kwargs["hr_source"] = raw["hr_source"]
+        elif "hr_source" in raw and raw["hr_source"] is None:
+            kwargs["hr_source"] = None
+
+        # ANT+ device IDs
+        for key in ("ant_power_device_id", "ant_hr_device_id"):
+            _from_dict_int(raw, kwargs, key, 0, 65535)
+        for key in ("ant_power_reconnect_interval", "ant_hr_reconnect_interval"):
+            _from_dict_int(raw, kwargs, key, 1, 60)
+        for key in ("ant_power_max_retries", "ant_hr_max_retries"):
+            _from_dict_int(raw, kwargs, key, 1, 100)
+
+        # BLE sensor device names
+        for key in ("ble_power_device_name", "ble_hr_device_name"):
+            if key in raw and (raw[key] is None or isinstance(raw[key], str)):
+                kwargs[key] = raw[key]
+        for key in ("ble_power_scan_timeout", "ble_power_reconnect_interval",
+                     "ble_hr_scan_timeout", "ble_hr_reconnect_interval"):
+            _from_dict_int(raw, kwargs, key, 1, 60)
+        for key in ("ble_power_max_retries", "ble_hr_max_retries"):
+            _from_dict_int(raw, kwargs, key, 1, 100)
+
+        # Zwift UDP
+        if isinstance(raw.get("zwift_udp_host"), str) and raw["zwift_udp_host"]:
+            kwargs["zwift_udp_host"] = raw["zwift_udp_host"]
+        _from_dict_int(raw, kwargs, "zwift_udp_port", 1024, 65535)
+
+        if "zwift_auto_launch" in raw and isinstance(raw["zwift_auto_launch"], bool):
+            kwargs["zwift_auto_launch"] = raw["zwift_auto_launch"]
+        if "zwift_launcher_path" in raw:
+            lp = raw["zwift_launcher_path"]
+            if lp is None or isinstance(lp, str):
+                kwargs["zwift_launcher_path"] = lp
+
+        # Per-source buffer settings
+        for prefix in ("BLE", "ANT", "zwiftUDP"):
+            _from_dict_int(raw, kwargs, f"{prefix}_buffer_seconds", 1, 60)
+            _from_dict_int(raw, kwargs, f"{prefix}_minimum_samples", 1, 100)
+            _from_dict_int(raw, kwargs, f"{prefix}_buffer_rate_hz", 1, 60)
+            _from_dict_int(raw, kwargs, f"{prefix}_dropout_timeout", 1, 300)
+
+        return cls(**kwargs)
+
+
+@dataclasses.dataclass
+class HudConfig:
+    """HUD beállítások – típusbiztos."""
+
+    sound_enabled: bool = True
+    sound_volume: float = 0.5
+    close_at_zwiftapp_exe: bool = True
+
+    @classmethod
+    def from_dict(cls, raw: dict[str, Any]) -> "HudConfig":
+        kwargs: dict[str, Any] = {}
+        if "sound_enabled" in raw and isinstance(raw["sound_enabled"], bool):
+            kwargs["sound_enabled"] = raw["sound_enabled"]
+        if "sound_volume" in raw and isinstance(raw["sound_volume"], (int, float)):
+            kwargs["sound_volume"] = float(raw["sound_volume"])
+        # Support both old key "close_at_zwiftapp.exe" and new "close_at_zwiftapp_exe"
+        for key in ("close_at_zwiftapp.exe", "close_at_zwiftapp_exe"):
+            if key in raw and isinstance(raw[key], bool):
+                kwargs["close_at_zwiftapp_exe"] = raw[key]
+        return cls(**kwargs)
+
+    def to_dict(self) -> Dict[str, Any]:
+        """JSON-kompatibilis dict (régi kulcsnévvel a kompatibilitásért)."""
+        return {
+            "sound_enabled": self.sound_enabled,
+            "sound_volume": self.sound_volume,
+            "close_at_zwiftapp.exe": self.close_at_zwiftapp_exe,
+        }
+
+
+def _from_dict_int(src: dict[str, Any], dst: dict[str, Any], key: str, lo: int, hi: int) -> None:
+    """Helper: int mezőt olvas raw dict-ből dst dict-be validálva."""
+    if key not in src:
+        return
+    v = src[key]
+    if isinstance(v, bool):
+        print(f"⚠ Érvénytelen '{key}' érték: {v!r} ({lo}–{hi} közötti egész kell)")
+        return
+    if isinstance(v, float) and not v.is_integer():
+        print(f"⚠ Érvénytelen '{key}' érték: {v} (törtrész nem elfogadott, egész kell)")
+        return
+    if isinstance(v, (int, float)) and lo <= v <= hi:
+        dst[key] = int(v)
+    else:
+        print(f"⚠ Érvénytelen '{key}' érték: {v} ({lo}–{hi} közötti egész kell)")
+
+
 # ============================================================
 # ALAPÉRTELMEZETT BEÁLLÍTÁSOK
 # ============================================================
 
 DEFAULT_SETTINGS: Dict[str, Any] = {
-    "global_settings": {
-        "cooldown_seconds": 120,
-        "buffer_seconds": 3,
-        "minimum_samples": 6,
-        "buffer_rate_hz": 4,
-        "dropout_timeout": 5,
-    },
+    "global_settings": GlobalSettingsConfig(),
     "power_zones": PowerZonesConfig(),
-    "heart_rate_zones": {
-        "enabled": True,
-        "max_hr": 185,
-        "resting_hr": 60,
-        "zone_mode": ZoneMode.HIGHER_WINS,
-        "z1_max_percent": 70,
-        "z2_max_percent": 80,
-        "valid_min_hr": 30,
-        "valid_max_hr": 220,
-        "zero_hr_immediate": False,
-    },
-    "ble": {
-        "device_name": None,
-        "scan_timeout": 10,
-        "connection_timeout": 15,
-        "reconnect_interval": 5,
-        "max_retries": 10,
-        "command_timeout": 3,
-        "service_uuid": "0000ffe0-0000-1000-8000-00805f9b34fb",
-        "characteristic_uuid": "0000ffe1-0000-1000-8000-00805f9b34fb",
-        "pin_code": "123456",
-    },
-    "datasource": {
-        "power_source": DataSource.ZWIFTUDP,
-        "hr_source": DataSource.ZWIFTUDP,
-        "BLE_buffer_seconds": 3,
-        "BLE_minimum_samples": 6,
-        "BLE_buffer_rate_hz": 4,
-        "BLE_dropout_timeout": 5,
-        "ANT_buffer_seconds": 3,
-        "ANT_minimum_samples": 6,
-        "ANT_buffer_rate_hz": 4,
-        "ANT_dropout_timeout": 5,
-        "zwiftUDP_buffer_seconds": 10,
-        "zwiftUDP_minimum_samples": 2,
-        "zwiftUDP_buffer_rate_hz": 3,
-        "zwiftUDP_dropout_timeout": 15,
-        "ant_power_device_id": 0,
-        "ant_hr_device_id": 0,
-        "ant_power_reconnect_interval": 5,
-        "ant_power_max_retries": 10,
-        "ant_hr_reconnect_interval": 5,
-        "ant_hr_max_retries": 10,
-        "ble_power_device_name": None,
-        "ble_power_scan_timeout": 10,
-        "ble_power_reconnect_interval": 5,
-        "ble_power_max_retries": 10,
-        "ble_hr_device_name": None,
-        "ble_hr_scan_timeout": 10,
-        "ble_hr_reconnect_interval": 5,
-        "ble_hr_max_retries": 10,
-        "zwift_udp_port": 7878,
-        "zwift_udp_host": "127.0.0.1",
-        "zwift_auto_launch": True,
-        "zwift_launcher_path": None,
-    },
-    "hud": {
-        "sound_enabled": True,
-        "sound_volume": 0.5,
-        "close_at_zwiftapp.exe": True,
-    },
+    "heart_rate_zones": HeartRateZonesConfig(),
+    "ble": BleConfig(),
+    "datasource": DatasourceConfig(),
+    "hud": HudConfig(),
 }
 
 
@@ -408,219 +696,28 @@ def load_settings(settings_file: str = "settings.json") -> Dict[str, Any]:
         print(f"⚠ '{settings_file}' beolvasási hiba: {exc}. Alapértelmezés használata.")
         return settings
 
-    # --- Globális beállítások ---
+    # --- Szekciók betöltése dataclass from_dict()-tel ---
     if isinstance(loaded.get("global_settings"), dict):
-        gs = loaded["global_settings"]
-        _load_int(gs, settings["global_settings"], "cooldown_seconds", 0, 300)
-        _load_int(gs, settings["global_settings"], "buffer_seconds", 1, 10)
-        _load_int(gs, settings["global_settings"], "minimum_samples", 1, 1000)
-        _load_int(gs, settings["global_settings"], "buffer_rate_hz", 1, 60)
-        _load_int(gs, settings["global_settings"], "dropout_timeout", 1, 120)
-    # --- Teljesítmény zóna beállítások ---
+        settings["global_settings"] = GlobalSettingsConfig.from_dict(loaded["global_settings"])
     if isinstance(loaded.get("power_zones"), dict):
         settings["power_zones"] = PowerZonesConfig.from_dict(loaded["power_zones"])
-
-    # --- BLE kimeneti beállítások ---
-    if isinstance(loaded.get("ble"), dict):
-        b = loaded["ble"]
-        # device_name: null vagy "" → auto-discovery mód (None-ra állítva)
-        if "device_name" in b:
-            dn = b["device_name"]
-            if dn is None or (isinstance(dn, str) and not dn.strip()):
-                settings["ble"]["device_name"] = None
-            elif isinstance(dn, str) and dn.strip():
-                settings["ble"]["device_name"] = dn.strip()
-        _load_int(b, settings["ble"], "scan_timeout", 1, 60)
-        _load_int(b, settings["ble"], "connection_timeout", 1, 60)
-        _load_int(b, settings["ble"], "reconnect_interval", 1, 60)
-        _load_int(b, settings["ble"], "max_retries", 1, 100)
-        _load_int(b, settings["ble"], "command_timeout", 1, 30)
-        if isinstance(b.get("service_uuid"), str) and b["service_uuid"]:
-            settings["ble"]["service_uuid"] = b["service_uuid"]
-        if isinstance(b.get("characteristic_uuid"), str) and b["characteristic_uuid"]:
-            settings["ble"]["characteristic_uuid"] = b["characteristic_uuid"]
-        if "pin_code" in b:
-            pc = b["pin_code"]
-            if pc is None:
-                settings["ble"]["pin_code"] = None
-            elif isinstance(pc, int) and not isinstance(pc, bool) and 0 <= pc <= 999999:
-                settings["ble"]["pin_code"] = str(pc)
-                if len(str(pc)) < 6:
-                    print(
-                        f"⚠ pin_code int-ként megadva ({pc}) → \"{str(pc)}\". "
-                        f"Ha vezető nullákra van szükség, string-ként add meg: "
-                        f"\"pin_code\": \"{pc:06d}\""
-                    )
-            elif isinstance(pc, str) and pc.isdigit() and 0 < len(pc) <= 20:
-                settings["ble"]["pin_code"] = pc
-            else:
-                print(f"⚠ Érvénytelen 'pin_code' érték: {pc}")
-
-    # --- Adatforrás beállítások ---
-    if isinstance(loaded.get("datasource"), dict):
-        ds = loaded["datasource"]
-
-        if ds.get("power_source") in VALID_DATA_SOURCES:
-            settings["datasource"]["power_source"] = ds["power_source"]
-        elif "power_source" in ds and ds["power_source"] is None:
-            settings["datasource"]["power_source"] = None
-        if ds.get("hr_source") in VALID_DATA_SOURCES:
-            settings["datasource"]["hr_source"] = ds["hr_source"]
-        elif "hr_source" in ds and ds["hr_source"] is None:
-            settings["datasource"]["hr_source"] = None
-
-        # --- ANT+ eszköz beállítások ---
-        for key in ("ant_power_device_id", "ant_hr_device_id"):
-            _load_int(ds, settings["datasource"], key, 0, 65535)
-
-        for key in (
-            "ant_power_reconnect_interval",
-            "ant_hr_reconnect_interval",
-        ):
-            _load_int(ds, settings["datasource"], key, 1, 60)
-
-        for key in ("ant_power_max_retries", "ant_hr_max_retries"):
-            _load_int(ds, settings["datasource"], key, 1, 100)
-
-        # --- BLE eszköz beállítások ---
-        for key in ("ble_power_device_name", "ble_hr_device_name"):
-            if key in ds and (ds[key] is None or isinstance(ds[key], str)):
-                settings["datasource"][key] = ds[key]
-
-        for key in (
-            "ble_power_scan_timeout",
-            "ble_power_reconnect_interval",
-            "ble_hr_scan_timeout",
-            "ble_hr_reconnect_interval",
-        ):
-            _load_int(ds, settings["datasource"], key, 1, 60)
-
-        for key in ("ble_power_max_retries", "ble_hr_max_retries"):
-            _load_int(ds, settings["datasource"], key, 1, 100)
-
-        if isinstance(ds.get("zwift_udp_host"), str) and ds["zwift_udp_host"]:
-            settings["datasource"]["zwift_udp_host"] = ds["zwift_udp_host"]
-        _load_int(ds, settings["datasource"], "zwift_udp_port", 1024, 65535)
-
-        for prefix in ("BLE", "ANT", "zwiftUDP"):
-            _load_int(ds, settings["datasource"], f"{prefix}_buffer_seconds", 1, 60)
-            _load_int(ds, settings["datasource"], f"{prefix}_minimum_samples", 1, 100)
-            _load_int(ds, settings["datasource"], f"{prefix}_buffer_rate_hz", 1, 60)
-            _load_int(ds, settings["datasource"], f"{prefix}_dropout_timeout", 1, 300)
-
-    # --- Szívfrekvencia zóna beállítások ---
     if isinstance(loaded.get("heart_rate_zones"), dict):
-        hrz = loaded["heart_rate_zones"]
-        _load_bool(hrz, settings["heart_rate_zones"], "enabled")
-        _load_int(hrz, settings["heart_rate_zones"], "max_hr", 100, 220)
-        _load_int(hrz, settings["heart_rate_zones"], "resting_hr", 30, 100)
-        if hrz.get("zone_mode") in VALID_ZONE_MODES:
-            settings["heart_rate_zones"]["zone_mode"] = hrz["zone_mode"]
-        _load_int(hrz, settings["heart_rate_zones"], "valid_min_hr", 30, 100)
-        _load_int(hrz, settings["heart_rate_zones"], "valid_max_hr", 150, 300)
-        _load_int(hrz, settings["heart_rate_zones"], "z1_max_percent", 1, 100)
-        _load_int(hrz, settings["heart_rate_zones"], "z2_max_percent", 1, 100)
-        _load_bool(hrz, settings["heart_rate_zones"], "zero_hr_immediate")
+        settings["heart_rate_zones"] = HeartRateZonesConfig.from_dict(loaded["heart_rate_zones"])
+    if isinstance(loaded.get("ble"), dict):
+        settings["ble"] = BleConfig.from_dict(loaded["ble"])
+    if isinstance(loaded.get("datasource"), dict):
+        settings["datasource"] = DatasourceConfig.from_dict(loaded["datasource"])
+    if isinstance(loaded.get("hud"), dict):
+        settings["hud"] = HudConfig.from_dict(loaded["hud"])
 
-    # --- Kereszt-validációk ---
-
-    # 1) Forrás-specifikus minimum_samples <= buffer_seconds * buffer_rate_hz
+    # --- Kereszt-validáció: zone_mode + null forrás ---
     try:
-        ds_cfg = settings["datasource"]
-        for prefix in ("BLE", "ANT", "zwiftUDP"):
-            gs = settings["global_settings"]
-            bs = int(
-                ds_cfg.get(
-                    f"{prefix}_buffer_seconds", gs.get("buffer_seconds", 3)
-                )
-            )
-            ms = int(
-                ds_cfg.get(
-                    f"{prefix}_minimum_samples", gs.get("minimum_samples", 6)
-                )
-            )
-            brz = int(
-                ds_cfg.get(
-                    f"{prefix}_buffer_rate_hz", gs.get("buffer_rate_hz", 4)
-                )
-            )
-            if bs > 0 and brz > 0:
-                max_samples = bs * brz
-                if ms > max_samples:
-                    print(
-                        f"⚠ [{prefix}] Érvénytelen minimum_samples ({ms}) – "
-                        f"nagyobb, mint buffer_seconds * buffer_rate_hz "
-                        f"({bs} * {brz} = {max_samples}). "
-                        f"{prefix}_minimum_samples {max_samples}-re állítva."
-                    )
-                    ds_cfg[f"{prefix}_minimum_samples"] = max_samples
-    except Exception as exc:
-        print(f"⚠ minimum_samples/buffer_seconds kereszt-validáció sikertelen: {exc}")
-
-    # 2-3) Power zóna validáció a PowerZonesConfig.__post_init__()-ban történik
-
-    # 4) HR zónák: z1_max_percent < z2_max_percent és resting_hr < max_hr
-    try:
-        hrz: dict[str, Any] = settings.get("heart_rate_zones") or {}
-        z1p = hrz.get("z1_max_percent")
-        z2p = hrz.get("z2_max_percent")
-        if isinstance(z1p, int) and isinstance(z2p, int):
-            if z1p >= z2p:
-                low = min(z1p, z2p)
-                high = max(z1p, z2p)
-                if low == high:
-                    if low >= 100:
-                        low = 99
-                        high = 100
-                    else:
-                        high = low + 1
-                print(
-                    f"⚠ Érvénytelen HR zóna százalékok (z1_max_percent={z1p}, z2_max_percent={z2p}). "
-                    f"Értékek rendezése és legalább 1% különbség biztosítása."
-                )
-                hrz["z1_max_percent"] = low
-                hrz["z2_max_percent"] = high
-        max_hr = hrz.get("max_hr")
-        resting_hr = hrz.get("resting_hr")
-        if isinstance(max_hr, int) and isinstance(resting_hr, int):
-            if resting_hr >= max_hr:
-                new_rest = max(30, max_hr - 1)
-                print(
-                    f"⚠ Érvénytelen HR értékek (resting_hr={resting_hr}, max_hr={max_hr}). "
-                    f"resting_hr {new_rest}-re állítva."
-                )
-                hrz["resting_hr"] = new_rest
-    except Exception as exc:
-        print(f"⚠ HR zóna kereszt-validáció sikertelen: {exc}")
-
-    # 5) valid_min_hr < valid_max_hr
-    try:
-        hrz: dict[str, Any] = settings.get("heart_rate_zones") or {}
-        valid_min = hrz.get("valid_min_hr")
-        valid_max = hrz.get("valid_max_hr")
-        if isinstance(valid_min, int) and isinstance(valid_max, int):
-            if valid_min >= valid_max:
-                print(
-                    f"⚠ valid_min_hr ({valid_min}) >= valid_max_hr ({valid_max}), "
-                    f"alapértelmezés visszaállítva."
-                )
-                hrz["valid_min_hr"] = DEFAULT_SETTINGS["heart_rate_zones"][
-                    "valid_min_hr"
-                ]
-                hrz["valid_max_hr"] = DEFAULT_SETTINGS["heart_rate_zones"][
-                    "valid_max_hr"
-                ]
-    except Exception as exc:
-        print(f"⚠ valid_hr kereszt-validáció sikertelen: {exc}")
-
-    # 6) zone_mode + null forrás inkompatibilitás figyelmeztetés
-    try:
-        ds_cfg = settings["datasource"]
-        hrz_cfg: dict[str, Any] = settings.get("heart_rate_zones") or {}
-        hr_on = hrz_cfg.get("enabled", False)
-        zm = hrz_cfg.get("zone_mode", ZoneMode.POWER_ONLY) if hr_on else ZoneMode.POWER_ONLY
-        ps = ds_cfg.get("power_source")
-        hs = ds_cfg.get("hr_source")
+        ds_cfg: DatasourceConfig = settings["datasource"]
+        hrz_cfg: HeartRateZonesConfig = settings["heart_rate_zones"]
+        hr_on = hrz_cfg.enabled
+        zm = hrz_cfg.zone_mode if hr_on else ZoneMode.POWER_ONLY
+        ps = ds_cfg.power_source
+        hs = ds_cfg.hr_source
 
         if zm == ZoneMode.HIGHER_WINS:
             if ps is None and hs is None:
@@ -654,48 +751,13 @@ def load_settings(settings_file: str = "settings.json") -> Dict[str, Any]:
     return settings
 
 
-def _load_int(src: dict[str, Any], dst: dict[str, Any], key: str, lo: int, hi: int) -> None:
-    """Helper: int mezőt tölt be érvényes tartomány esetén.
-
-    Törtszámokat és bool értékeket visszautasítja.
-
-    Args:
-        src: Forrás dict (betöltött JSON).
-        dst: Cél dict (settings).
-        key: A mező neve.
-        lo:  Minimális elfogadható érték (inclusive).
-        hi:  Maximális elfogadható érték (inclusive).
-    """
-    if key not in src:
-        return
-    v = src[key]
-    if isinstance(v, bool):
-        print(f"⚠ Érvénytelen '{key}' érték: {v!r} (true/false helyett {lo}–{hi} közötti egész kell)")
-        return
-    if isinstance(v, float) and not v.is_integer():
-        print(f"⚠ Érvénytelen '{key}' érték: {v} (törtrész nem elfogadott, egész kell)")
-        return
-    if isinstance(v, (int, float)) and lo <= v <= hi:
-        dst[key] = int(v)
-    else:
-        print(f"⚠ Érvénytelen '{key}' érték: {v} ({lo}–{hi} közötti egész kell)")
-
-
-def _load_bool(src: dict[str, Any], dst: dict[str, Any], key: str) -> None:
-    """Helper: bool mezőt tölt be."""
-    if key in src:
-        if isinstance(src[key], bool):
-            dst[key] = src[key]
-        else:
-            print(f"⚠ Érvénytelen '{key}' érték: {src[key]} (true/false kell)")
-
 
 def _settings_to_serializable(settings: Dict[str, Any]) -> Dict[str, Any]:
     """Settings dict-et JSON-serializálható formára alakít (dataclass → dict)."""
     out = {}
     for k, v in settings.items():
         if dataclasses.is_dataclass(v) and not isinstance(v, type):
-            out[k] = dataclasses.asdict(v)
+            out[k] = v.to_dict() if hasattr(v, "to_dict") else dataclasses.asdict(v)
         else:
             out[k] = v
     return out
@@ -728,10 +790,10 @@ def get_effective_zone_mode(settings: Dict[str, Any]) -> ZoneMode:
     Returns:
         Az effektív ZoneMode.
     """
-    hrz = settings.get("heart_rate_zones", {})
-    if not hrz.get("enabled", False):
+    hrz: HeartRateZonesConfig = settings["heart_rate_zones"]
+    if not hrz.enabled:
         return ZoneMode.POWER_ONLY
-    return hrz.get("zone_mode", ZoneMode.POWER_ONLY)
+    return hrz.zone_mode
 
 
 def _resolve_buffer_settings(settings: Dict[str, Any], role: str) -> Dict[str, Any]:
@@ -750,18 +812,17 @@ def _resolve_buffer_settings(settings: Dict[str, Any], role: str) -> Dict[str, A
     Returns:
         Dict: buffer_seconds, minimum_samples, buffer_rate_hz, dropout_timeout
     """
-    ds = settings["datasource"]
-    source_key = "power_source" if role == "power" else "hr_source"
-    source = ds.get(source_key)
+    ds: DatasourceConfig = settings["datasource"]
+    source = ds.power_source if role == "power" else ds.hr_source
 
     if source is None:
         # Null forrás: globális fallback értékek
-        gs = settings["global_settings"]
+        gs: GlobalSettingsConfig = settings["global_settings"]
         return {
-            "buffer_seconds": gs.get("buffer_seconds", 3),
-            "minimum_samples": gs.get("minimum_samples", 6),
-            "buffer_rate_hz": gs.get("buffer_rate_hz", 4),
-            "dropout_timeout": gs.get("dropout_timeout", 5),
+            "buffer_seconds": gs.buffer_seconds,
+            "minimum_samples": gs.minimum_samples,
+            "buffer_rate_hz": gs.buffer_rate_hz,
+            "dropout_timeout": gs.dropout_timeout,
         }
 
     if source == DataSource.BLE:
@@ -771,20 +832,12 @@ def _resolve_buffer_settings(settings: Dict[str, Any], role: str) -> Dict[str, A
     else:  # zwiftudp
         prefix = "zwiftUDP"
 
-    gs = settings["global_settings"]
+    gs: GlobalSettingsConfig = settings["global_settings"]
     return {
-        "buffer_seconds": ds.get(
-            f"{prefix}_buffer_seconds", gs.get("buffer_seconds", 3)
-        ),
-        "minimum_samples": ds.get(
-            f"{prefix}_minimum_samples", gs.get("minimum_samples", 6)
-        ),
-        "buffer_rate_hz": ds.get(
-            f"{prefix}_buffer_rate_hz", gs.get("buffer_rate_hz", 4)
-        ),
-        "dropout_timeout": ds.get(
-            f"{prefix}_dropout_timeout", gs.get("dropout_timeout", 5)
-        ),
+        "buffer_seconds": getattr(ds, f"{prefix}_buffer_seconds", gs.buffer_seconds),
+        "minimum_samples": getattr(ds, f"{prefix}_minimum_samples", gs.minimum_samples),
+        "buffer_rate_hz": getattr(ds, f"{prefix}_buffer_rate_hz", gs.buffer_rate_hz),
+        "dropout_timeout": getattr(ds, f"{prefix}_dropout_timeout", gs.dropout_timeout),
     }
 
 
@@ -1629,16 +1682,16 @@ class BLEFanOutputController:
     DISCONNECT_TIMEOUT = 5.0
 
     def __init__(self, settings: Dict[str, Any]) -> None:
-        ble = settings["ble"]
-        self.device_name: Optional[str] = ble["device_name"]
-        self.scan_timeout: int = ble["scan_timeout"]
-        self.connection_timeout: int = ble["connection_timeout"]
-        self.reconnect_interval: int = ble["reconnect_interval"]
-        self.max_retries: int = ble["max_retries"]
-        self.command_timeout: int = ble["command_timeout"]
-        self.service_uuid: str = ble["service_uuid"]
-        self.characteristic_uuid: str = ble["characteristic_uuid"]
-        self.pin_code: Optional[str] = ble.get("pin_code")
+        ble: BleConfig = settings["ble"]
+        self.device_name: Optional[str] = ble.device_name
+        self.scan_timeout: int = ble.scan_timeout
+        self.connection_timeout: int = ble.connection_timeout
+        self.reconnect_interval: int = ble.reconnect_interval
+        self.max_retries: int = ble.max_retries
+        self.command_timeout: int = ble.command_timeout
+        self.service_uuid: str = ble.service_uuid
+        self.characteristic_uuid: str = ble.characteristic_uuid
+        self.pin_code: Optional[str] = ble.pin_code
 
         self.is_connected: bool = False
         self.last_sent: Optional[int] = None
@@ -2097,25 +2150,25 @@ class ANTPlusInputHandler:
         loop: asyncio.AbstractEventLoop,
     ) -> None:
         self.settings = settings
-        self.ds = settings["datasource"]
-        self.hr_enabled = settings.get("heart_rate_zones", {}).get("enabled", False)
+        self.ds: DatasourceConfig = settings["datasource"]
+        self.hr_enabled: bool = settings["heart_rate_zones"].enabled
         self.power_queue = power_queue
         self.hr_queue = hr_queue
         self.loop = loop
 
         # ANT+ device ID-k (0 = wildcard / első elérhető)
-        self._power_device_id: int = self.ds.get("ant_power_device_id", 0)
-        self._hr_device_id: int = self.ds.get("ant_hr_device_id", 0)
+        self._power_device_id: int = self.ds.ant_power_device_id
+        self._hr_device_id: int = self.ds.ant_hr_device_id
 
         # Reconnect beállítások a settings-ből (a kettő közül a nagyobbat használja,
         # mert a power és HR egyetlen közös ANT+ szálban fut)
         self._reconnect_delay: int = max(
-            self.ds.get("ant_power_reconnect_interval", 5),
-            self.ds.get("ant_hr_reconnect_interval", 5),
+            self.ds.ant_power_reconnect_interval,
+            self.ds.ant_hr_reconnect_interval,
         )
         self._max_retries: int = max(
-            self.ds.get("ant_power_max_retries", 10),
-            self.ds.get("ant_hr_max_retries", 10),
+            self.ds.ant_power_max_retries,
+            self.ds.ant_hr_max_retries,
         )
 
         self._running = threading.Event()
@@ -2141,8 +2194,8 @@ class ANTPlusInputHandler:
         t.start()
 
         # Indulási log: milyen device ID-kkal indul
-        power_src = self.ds.get("power_source")
-        hr_src = self.ds.get("hr_source")
+        power_src = self.ds.power_source
+        hr_src = self.ds.hr_source
         if power_src == DataSource.ANTPLUS:
             pid = self._power_device_id
             mode = f"device_id={pid}" if pid else "wildcard (első elérhető)"
@@ -2244,7 +2297,7 @@ class ANTPlusInputHandler:
         self._node = node
         self._devices = []
 
-        if self.ds.get("power_source") == DataSource.ANTPLUS:
+        if self.ds.power_source == DataSource.ANTPLUS:
             pid = self._power_device_id
             meter = PowerMeter(self._node, device_id=pid)
             meter.on_found = self._make_on_found("ANT+ Power", "PowerMeter", meter)
@@ -2252,7 +2305,7 @@ class ANTPlusInputHandler:
             meter.on_update = self._on_any_broadcast
             self._devices.append(meter)
 
-        if self.ds.get("hr_source") == DataSource.ANTPLUS and self.hr_enabled:
+        if self.ds.hr_source == DataSource.ANTPLUS and self.hr_enabled:
             hid = self._hr_device_id
             hr_monitor = HeartRate(self._node, device_id=hid)
             hr_monitor.on_found = self._make_on_found("ANT+ HR", "HeartRate", hr_monitor)
@@ -2424,12 +2477,12 @@ class _BLESensorInputHandler(abc.ABC):
     def __init__(
         self, settings: Dict[str, Any], queue: asyncio.Queue[float]
     ) -> None:
-        ds = settings["datasource"]
+        ds: DatasourceConfig = settings["datasource"]
         pfx = self._settings_prefix
-        self.device_name: Optional[str] = ds.get(f"{pfx}_device_name")
-        self.scan_timeout: int = ds.get(f"{pfx}_scan_timeout", 10)
-        self.reconnect_interval: int = ds.get(f"{pfx}_reconnect_interval", 5)
-        self.max_retries: int = ds.get(f"{pfx}_max_retries", 10)
+        self.device_name: Optional[str] = getattr(ds, f"{pfx}_device_name")
+        self.scan_timeout: int = getattr(ds, f"{pfx}_scan_timeout", 10)
+        self.reconnect_interval: int = getattr(ds, f"{pfx}_reconnect_interval", 5)
+        self.max_retries: int = getattr(ds, f"{pfx}_max_retries", 10)
         self._queue = queue
         self.is_connected = False
         self._retry_count = 0
@@ -2658,16 +2711,16 @@ class ZwiftUDPInputHandler:
         power_queue: asyncio.Queue[float],
         hr_queue: asyncio.Queue[float],
     ) -> None:
-        ds = settings["datasource"]
+        ds: DatasourceConfig = settings["datasource"]
         self.settings = settings
-        self.host: str = ds.get("zwift_udp_host", "127.0.0.1")
-        self.port: int = ds.get("zwift_udp_port", 7878)
+        self.host: str = ds.zwift_udp_host
+        self.port: int = ds.zwift_udp_port
         self.power_queue = power_queue
         self.hr_queue = hr_queue
 
-        self.process_power: bool = ds.get("power_source") == DataSource.ZWIFTUDP
-        hr_enabled = settings.get("heart_rate_zones", {}).get("enabled", False)
-        self.process_hr: bool = ds.get("hr_source") == DataSource.ZWIFTUDP and hr_enabled
+        self.process_power: bool = ds.power_source == DataSource.ZWIFTUDP
+        hr_enabled: bool = settings["heart_rate_zones"].enabled
+        self.process_hr: bool = ds.hr_source == DataSource.ZWIFTUDP and hr_enabled
 
         self._transport: Any = None
 
@@ -2742,9 +2795,9 @@ class ZwiftUDPInputHandler:
                 logger.debug(f"Zwift UDP: érvénytelen power: {p}")
 
         if self.process_hr and "heartrate" in pkt:
-            hrz = self.settings.get("heart_rate_zones", {})
-            valid_min_hr: int = hrz.get("valid_min_hr", 30)
-            valid_max_hr: int = hrz.get("valid_max_hr", 220)
+            hrz: HeartRateZonesConfig = self.settings["heart_rate_zones"]
+            valid_min_hr: int = hrz.valid_min_hr
+            valid_max_hr: int = hrz.valid_max_hr
 
             h: int | float = pkt["heartrate"]
             if is_valid_hr(h, valid_min_hr, valid_max_hr):
@@ -2877,10 +2930,10 @@ async def hr_processor_task(
         settings: Betöltött beállítások dict-je.
         hr_zones: Kiszámított HR zóna határok.
     """
-    hrz = settings.get("heart_rate_zones", {})
+    hrz: HeartRateZonesConfig = settings["heart_rate_zones"]
     zone_mode = get_effective_zone_mode(settings)
-    valid_min_hr: int = hrz.get("valid_min_hr", 30)
-    valid_max_hr: int = hrz.get("valid_max_hr", 220)
+    valid_min_hr: int = hrz.valid_min_hr
+    valid_max_hr: int = hrz.valid_max_hr
 
     logger.info("HR processor korrutin elindítva")
 
@@ -2975,7 +3028,7 @@ async def zone_controller_task(
     """
     zone_mode = get_effective_zone_mode(settings)
     zero_power_immediate = settings["power_zones"].zero_power_immediate
-    zero_hr_immediate = settings["heart_rate_zones"].get("zero_hr_immediate", False)
+    zero_hr_immediate = settings["heart_rate_zones"].zero_hr_immediate
     power_buf = _resolve_buffer_settings(settings, "power")
     hr_buf = _resolve_buffer_settings(settings, "hr")
     power_dropout_timeout = power_buf["dropout_timeout"]
@@ -3295,11 +3348,11 @@ class FanController:
         return self._cooldown_ctrl
 
     def __repr__(self) -> str:
-        ds = self.settings.get("datasource", {})
+        ds: DatasourceConfig = self.settings["datasource"]
         return (
             f"FanController(running={self._running}, "
-            f"power_src={ds.get('power_source')}, "
-            f"hr_src={ds.get('hr_source')}, "
+            f"power_src={ds.power_source}, "
+            f"hr_src={ds.hr_source}, "
             f"tasks={len(self._tasks)})"
         )
 
@@ -3409,8 +3462,8 @@ class FanController:
           4. Rákattint a "Let's Go" gombra
           5. Megvárja amíg a ZwiftApp.exe elindul
         """
-        ds = self.settings.get("datasource", {})
-        if not ds.get("zwift_auto_launch", True):
+        ds: DatasourceConfig = self.settings["datasource"]
+        if not ds.zwift_auto_launch:
             logger.info("Zwift auto-launch kikapcsolva a beállításokban.")
             return
 
@@ -3424,7 +3477,7 @@ class FanController:
             return
 
         # Launcher útvonal meghatározása
-        launcher_path: Optional[str] = ds.get("zwift_launcher_path")
+        launcher_path: Optional[str] = ds.zwift_launcher_path
         if not launcher_path:
             launcher_path = self._find_zwift_launcher()
         if not launcher_path:
@@ -3635,8 +3688,8 @@ class FanController:
     def print_startup_info(self) -> None:
         """Kiírja az indítási konfigurációs összefoglalót."""
         s = self.settings
-        ds = s["datasource"]
-        hrz = s.get("heart_rate_zones", {})
+        ds: DatasourceConfig = s["datasource"]
+        hrz: HeartRateZonesConfig = s["heart_rate_zones"]
 
         power_buf = _resolve_buffer_settings(s, "power")
         hr_buf = _resolve_buffer_settings(s, "hr")
@@ -3658,9 +3711,9 @@ class FanController:
         )
         print(f"Zóna határok: {power_zones}")
 
-        if ds.get("power_source") is not None:
+        if ds.power_source is not None:
             print(
-                f"💪 Power buffer ({ds['power_source'].upper()}): "
+                f"💪 Power buffer ({ds.power_source.upper()}): "
                 f"{power_buf['buffer_seconds']}s | "
                 f"minta: {power_buf['minimum_samples']} | "
                 f"rate: {power_buf['buffer_rate_hz']}Hz | "
@@ -3668,9 +3721,9 @@ class FanController:
             )
         else:
             print("💪 Power forrás: KIKAPCSOLVA (null)")
-        if ds.get("hr_source") is not None:
+        if ds.hr_source is not None:
             print(
-                f"❤️  HR buffer    ({ds['hr_source'].upper()}): "
+                f"❤️  HR buffer    ({ds.hr_source.upper()}): "
                 f"{hr_buf['buffer_seconds']}s | "
                 f"minta: {hr_buf['minimum_samples']} | "
                 f"rate: {hr_buf['buffer_rate_hz']}Hz | "
@@ -3680,22 +3733,22 @@ class FanController:
             print("❤️  HR forrás:    KIKAPCSOLVA (null)")
 
         print(
-            f"Cooldown: {s['global_settings']['cooldown_seconds']}s  |  "
+            f"Cooldown: {s['global_settings'].cooldown_seconds}s  |  "
             f"0W azonnali: {'Igen' if s['power_zones'].zero_power_immediate else 'Nem'}  |  "
-            f"0HR azonnali: {'Igen' if s['heart_rate_zones'].get('zero_hr_immediate', False) else 'Nem'}"
+            f"0HR azonnali: {'Igen' if hrz.zero_hr_immediate else 'Nem'}"
         )
-        ble_fan_name = s["ble"]["device_name"]
-        if ble_fan_name:
-            print(f"BLE Fan: {ble_fan_name}")
+        ble_cfg: BleConfig = s["ble"]
+        if ble_cfg.device_name:
+            print(f"BLE Fan: {ble_cfg.device_name}")
         else:
             print("BLE Fan: (auto-discovery – service UUID alapján)")
-        if s["ble"].get("pin_code"):
-            print(f"BLE PIN: {'*' * len(str(s['ble']['pin_code']))}")
+        if ble_cfg.pin_code:
+            print(f"BLE PIN: {'*' * len(ble_cfg.pin_code)}")
 
         # BLE szenzor auto-discovery jelzés
-        if ds.get("power_source") == DataSource.BLE and not ds.get("ble_power_device_name"):
+        if ds.power_source == DataSource.BLE and not ds.ble_power_device_name:
             print("BLE Power: (auto-discovery – Cycling Power Service)")
-        if ds.get("hr_source") == DataSource.BLE and not ds.get("ble_hr_device_name"):
+        if ds.hr_source == DataSource.BLE and not ds.ble_hr_device_name:
             print("BLE HR: (auto-discovery – Heart Rate Service)")
 
         print(f"Zónamód: {zone_mode}")
@@ -3705,24 +3758,22 @@ class FanController:
         """A vezérlő fő asyncio korrutinja – elindít mindent és vár."""
         self._tasks = []
         s = self.settings
-        ds = s["datasource"]
-        hr_enabled = s.get("heart_rate_zones", {}).get("enabled", False)
+        ds: DatasourceConfig = s["datasource"]
+        hrz_cfg: HeartRateZonesConfig = s["heart_rate_zones"]
+        hr_enabled = hrz_cfg.enabled
         zone_mode = get_effective_zone_mode(s)
 
         # --- Zóna határok kiszámítása ---
+        pz: PowerZonesConfig = s["power_zones"]
         power_zones = calculate_power_zones(
-            s["power_zones"].ftp,
-            s["power_zones"].min_watt,
-            s["power_zones"].max_watt,
-            s["power_zones"].z1_max_percent,
-            s["power_zones"].z2_max_percent,
+            pz.ftp, pz.min_watt, pz.max_watt, pz.z1_max_percent, pz.z2_max_percent,
         )
         hr_zones = (
             calculate_hr_zones(
-                s["heart_rate_zones"]["max_hr"],
-                s["heart_rate_zones"]["resting_hr"],
-                s["heart_rate_zones"]["z1_max_percent"],
-                s["heart_rate_zones"]["z2_max_percent"],
+                hrz_cfg.max_hr,
+                hrz_cfg.resting_hr,
+                hrz_cfg.z1_max_percent,
+                hrz_cfg.z2_max_percent,
             )
             if hr_enabled
             else {"resting": 60, "z1_max": 130, "z2_max": 148}
@@ -3753,7 +3804,7 @@ class FanController:
             hr_buf["minimum_samples"],
             hr_buf["buffer_rate_hz"],
         )
-        cooldown_ctrl = CooldownController(s["global_settings"]["cooldown_seconds"])
+        cooldown_ctrl = CooldownController(s["global_settings"].cooldown_seconds)
         self._cooldown_ctrl = cooldown_ctrl
         printer = ConsolePrinter()
 
@@ -3774,8 +3825,8 @@ class FanController:
         )
 
         # --- Bemeneti adatforrások ---
-        power_source = ds.get("power_source")
-        hr_source = ds.get("hr_source")
+        power_source = ds.power_source
+        hr_source = ds.hr_source
 
         if power_source == DataSource.BLE:
             ble_power = BLEPowerInputHandler(s, raw_power_queue)
@@ -4399,9 +4450,9 @@ class HUDWindow(QWidget):
 
         # ───────── LCARS HANGEFFEKTEK ─────────
         self._sound = LCARSSoundManager()
-        hud_cfg = self._ctrl.settings.get("hud", {})
-        self._sound.set_enabled(hud_cfg.get("sound_enabled", True))
-        self._sound.set_volume(hud_cfg.get("sound_volume", 0.5))
+        hud_cfg: HudConfig = self._ctrl.settings["hud"]
+        self._sound.set_enabled(hud_cfg.sound_enabled)
+        self._sound.set_volume(hud_cfg.sound_volume)
         self._prev_zone: Optional[int] = None
         self._prev_ble_status: Optional[str] = None
         self._prev_ant_status: Optional[str] = None
@@ -4820,9 +4871,11 @@ class HUDWindow(QWidget):
     def _save_hud_setting(self, key: str, value: Any) -> None:
         """Egy HUD beállítás mentése a settings.json fájlba."""
         settings = self._ctrl.settings
-        if "hud" not in settings:
-            settings["hud"] = {}
-        settings["hud"][key] = value
+        hud_cfg: HudConfig = settings["hud"]
+        # Map old key names to dataclass attribute names
+        attr = key.replace(".", "_") if "." in key else key
+        if hasattr(hud_cfg, attr):
+            setattr(hud_cfg, attr, value)
         try:
             with open(self._ctrl.settings_file, "w", encoding="utf-8") as f:
                 json.dump(_settings_to_serializable(settings), f, indent=2, ensure_ascii=False)
@@ -4958,9 +5011,9 @@ class HUDWindow(QWidget):
             self._prev_ble_status = ble_status
 
             # BLE szenzorok
-            ds = self._ctrl.settings["datasource"]
-            power_ble = ds.get("power_source") == DataSource.BLE
-            hr_ble = ds.get("hr_source") == DataSource.BLE
+            ds: DatasourceConfig = self._ctrl.settings["datasource"]
+            power_ble = ds.power_source == DataSource.BLE
+            hr_ble = ds.hr_source == DataSource.BLE
 
             if not power_ble and not hr_ble:
                 c = self._lighten(self.TEXT_DIM) if flash_white else self.TEXT_DIM
@@ -5002,8 +5055,8 @@ class HUDWindow(QWidget):
                     self._update_label(self._lbl_ble_sens, "STANDBY", self.LCARS_GOLD)
 
             # ANT+
-            power_ant = ds.get("power_source") == DataSource.ANTPLUS
-            hr_ant = ds.get("hr_source") == DataSource.ANTPLUS
+            power_ant = ds.power_source == DataSource.ANTPLUS
+            hr_ant = ds.hr_source == DataSource.ANTPLUS
             ant = getattr(self._ctrl, "_antplus_handler", None)
 
             if not power_ant and not hr_ant:
@@ -5052,8 +5105,8 @@ class HUDWindow(QWidget):
 
             # Zwift
             zwift = getattr(self._ctrl, "_zwift_udp", None)
-            power_zwift = ds.get("power_source") == DataSource.ZWIFTUDP
-            hr_zwift = ds.get("hr_source") == DataSource.ZWIFTUDP
+            power_zwift = ds.power_source == DataSource.ZWIFTUDP
+            hr_zwift = ds.hr_source == DataSource.ZWIFTUDP
 
             if zwift is not None and (power_zwift or hr_zwift):
                 now = time.monotonic()
@@ -5117,18 +5170,14 @@ class HUDWindow(QWidget):
                 bg = self.TEXT_DIM
             self._update_tile_bg(self._tile_zero_imm, bg)
 
-            zhi = self._ctrl.settings["heart_rate_zones"].get(
-                "zero_hr_immediate", False
-            )
+            zhi = self._ctrl.settings["heart_rate_zones"].zero_hr_immediate
             if zhi:
                 bg = self._lighten(self.LCARS_CYAN) if flash_white else self.LCARS_CYAN
             else:
                 bg = self.TEXT_DIM
             self._update_tile_bg(self._tile_zero_hr_imm, bg)
 
-            zone_mode_val = self._ctrl.settings["heart_rate_zones"].get(
-                "zone_mode", ZoneMode.POWER_ONLY
-            )
+            zone_mode_val = self._ctrl.settings["heart_rate_zones"].zone_mode
             hw = zone_mode_val == ZoneMode.HIGHER_WINS
             if hw:
                 bg = self._lighten(self.LCARS_ORANGE) if flash_white else self.LCARS_ORANGE
@@ -5159,7 +5208,7 @@ class HUDWindow(QWidget):
             self._update_tile_bg(self._tile_cooldown, bg)
 
             # ── ZwiftApp.exe process figyelés (~10s-onként) ──
-            if self._ctrl.settings.get("hud", {}).get("close_at_zwiftapp.exe", True):
+            if self._ctrl.settings["hud"].close_at_zwiftapp_exe:
                 self._zwift_check_counter += 1
                 if self._zwift_check_counter >= self._ZWIFT_CHECK_INTERVAL:
                     self._zwift_check_counter = 0
