@@ -12,7 +12,11 @@
     "buffer_seconds": 3,         // Gördülő átlag ablak mérete (1–10 mp)
     "minimum_samples": 6,        // Minimum minta érvényes átlaghoz (1–1000)
     "buffer_rate_hz": 4,         // Várt mintavételi frekvencia Hz-ben (1–60)
-    "dropout_timeout": 5         // Adatforrás kiesés timeout (1–120 mp)
+    "dropout_timeout": 5,        // Adatforrás kiesés timeout (1–120 mp)
+
+    // Log fájlok könyvtára. Ha null vagy hiányzik, a program könyvtárát használja.
+    // Fájlok: smart_fan_controller.log, ble_devices.log, ant_devices.log
+    "log_directory": null
   },
 
   // ============================================================
