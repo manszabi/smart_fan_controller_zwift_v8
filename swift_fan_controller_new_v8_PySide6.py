@@ -1381,15 +1381,6 @@ class ConsolePrinter:
             return True
         return False
 
-    def print(self, key: str, message: str, interval: float = 1.0) -> bool:
-        """Deprecated: használd az emit()-et. Elfedi a beépített print()-et."""
-        import warnings
-        warnings.warn(
-            "ConsolePrinter.print() deprecated, használd az emit()-et",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return self.emit(key, message, interval)
 
 
 # ============================================================
@@ -1905,8 +1896,8 @@ class BLEFanOutputController:
                     self._auth_failed = True
                     try:
                         await client.disconnect()
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        logger.debug(f"BLE disconnect hiba PIN fail után: {exc}")
                     return False
 
                 logger.warning(f"BLE AUTH ismeretlen válasz: {resp} - folytatás")
@@ -1915,8 +1906,8 @@ class BLEFanOutputController:
             finally:
                 try:
                     await client.stop_notify(self.characteristic_uuid)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.debug(f"BLE stop_notify hiba: {exc}")
 
         except Exception as exc:
             logger.error(f"BLE AUTH hiba: {exc}")
@@ -2039,8 +2030,8 @@ class BLEFanOutputController:
             self.is_connected = False
             try:
                 await client.disconnect()
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug(f"BLE disconnect hiba timeout után: {exc}")
             self._client = None
 
         except Exception as exc:
@@ -2048,8 +2039,8 @@ class BLEFanOutputController:
             self.is_connected = False
             try:
                 await client.disconnect()
-            except Exception:
-                pass
+            except Exception as exc2:
+                logger.debug(f"BLE disconnect hiba küldési hiba után: {exc2}")
             self._client = None
 
     async def disconnect(self) -> None:
@@ -2061,8 +2052,8 @@ class BLEFanOutputController:
                     client.disconnect(),
                     timeout=self.DISCONNECT_TIMEOUT,
                 )
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug(f"BLE disconnect hiba: {exc}")
             finally:
                 self.is_connected = False
                 self._client = None
@@ -2325,14 +2316,14 @@ class ANTPlusInputHandler:
             for d in self._devices:
                 try:
                     d.close_channel()
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.debug(f"ANT+ csatorna bezárási hiba: {exc}")
             if self._node:
                 self._node.stop()
                 self._node = None
             self._devices = []
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug(f"ANT+ cleanup hiba: {exc}")
 
     def _watchdog(self) -> None:
         """Watchdog szál: ha az ANT+ node fut, de sokáig nem jön adat, leállítja.
@@ -2364,8 +2355,8 @@ class ANTPlusInputHandler:
                 )
                 try:
                     node.stop()
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.debug(f"ANT+ watchdog node.stop() hiba: {exc}")
             # Ha a node elindul, de WATCHDOG_TIMEOUT * 2 ideje nem jött semmi adat
             # (pl. rossz device_id, vagy az eszköz soha nem volt hatótávolságban)
             elif last == 0.0 and started > 0 and (now - started) > self.WATCHDOG_TIMEOUT * 2:
@@ -2375,8 +2366,8 @@ class ANTPlusInputHandler:
                 )
                 try:
                     node.stop()
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.debug(f"ANT+ watchdog node.stop() hiba: {exc}")
 
     def _thread_loop(self) -> None:
         """Az ANT+ szál fő ciklusa – újracsatlakozási logikával.
@@ -4017,8 +4008,8 @@ class FanController:
             if not task.done():
                 try:
                     task.cancel()
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.debug(f"Task cancel hiba: {exc}")
         if self._antplus_handler:
             self._antplus_handler.stop()
         if self._antplus_thread and self._antplus_thread.is_alive():
@@ -4032,8 +4023,8 @@ class FanController:
             if t is not None:
                 try:
                     t.close()
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.debug(f"Zwift UDP transport bezárási hiba: {exc}")
 
         # Zwift subprocess leállítása
         if self._zwift_proc is not None:
@@ -4393,8 +4384,8 @@ class LCARSSoundManager:
         import shutil
         try:
             shutil.rmtree(self._temp_dir, ignore_errors=True)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug(f"Temp dir törlési hiba: {exc}")
 
 
 class HUDWindow(QWidget):
@@ -4681,7 +4672,8 @@ class HUDWindow(QWidget):
         """Legjobb elérhető LCARS-stílusú font kiválasztása."""
         try:
             available = set(QFontDatabase.families())
-        except Exception:
+        except Exception as exc:
+            logger.debug(f"Font lista lekérés sikertelen: {exc}")
             return "Consolas"
 
         preferred = [
@@ -4885,23 +4877,23 @@ class HUDWindow(QWidget):
 
     # ────────── LABEL FRISSÍTÉS SEGÉD ──────────
 
+    import re as _re
+    _RE_COLOR = _re.compile(r"(?<!-)color:\s*[^;]+;")
+    _RE_BG_COLOR = _re.compile(r"background-color:\s*[^;]+;")
+
     @staticmethod
     def _update_label(lbl: "QLabel", text: str, color: str) -> None:  # type: ignore[reportInvalidTypeForm]
         """Label szöveg és szín frissítése stylesheet-tel."""
-        import re as _re
         current = lbl.styleSheet()
-        new_ss = _re.sub(r"(?<!-)color:\s*[^;]+;", f"color: {color};", current, count=1)
+        new_ss = HUDWindow._RE_COLOR.sub(f"color: {color};", current, count=1)
         lbl.setStyleSheet(new_ss)
         lbl.setText(text)
 
     @staticmethod
     def _update_tile_bg(tile: "QLabel", bg: str) -> None:  # type: ignore[reportInvalidTypeForm]
         """Tile háttérszín frissítése."""
-        import re as _re
         current = tile.styleSheet()
-        new_ss = _re.sub(
-            r"background-color:\s*[^;]+;", f"background-color: {bg};", current, count=1
-        )
+        new_ss = HUDWindow._RE_BG_COLOR.sub(f"background-color: {bg};", current, count=1)
         tile.setStyleSheet(new_ss)
 
     @staticmethod
@@ -5360,19 +5352,20 @@ def main() -> None:
                 QMetaObject.invokeMethod(
                     hud, "close", Qt.ConnectionType.QueuedConnection,
                 )
-            except Exception:
+            except Exception as exc:
                 # Fallback: ha az invokeMethod nem működik, quit() azonnal
+                logger.debug(f"HUD invokeMethod hiba: {exc}")
                 try:
                     from PySide6.QtWidgets import QApplication as _QApp
                     _qapp = _QApp.instance()
                     if _qapp is not None:
                         _qapp.quit()
-                except Exception:
-                    pass
+                except Exception as exc2:
+                    logger.debug(f"QApplication quit hiba: {exc2}")
         try:
             loop.call_soon_threadsafe(shutdown_event.set)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug(f"shutdown_event.set hiba: {exc}")
 
     # SIGTERM: Unix-on megbízható, Windows-on a Popen.terminate() nem garantálja
     # SIGINT: Ctrl+C mindkét platformon működik
@@ -5466,8 +5459,8 @@ def main() -> None:
             # Shutdown event jelzése → asyncio loop megbízhatóan leáll
             try:
                 loop.call_soon_threadsafe(shutdown_event.set)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug(f"shutdown_event.set hiba: {exc}")
 
             asyncio_thread.join(timeout=3.0)
             loop.close()
@@ -5483,8 +5476,8 @@ def main() -> None:
             cleanup()
             try:
                 loop.call_soon_threadsafe(shutdown_event.set)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug(f"shutdown_event.set hiba: {exc}")
             asyncio_thread.join(timeout=3.0)
             loop.close()
             print("\nProgram leállítva.")

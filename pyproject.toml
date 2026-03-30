@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "smart-fan-controller-zwift"
+version = "8.0.0"
+description = "Zwift-integrált okos ventilátor vezérlő – BLE, ANT+, Zwift UDP adatforrásokkal"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+
+dependencies = [
+    "bleak>=0.21.0",
+]
+
+[project.optional-dependencies]
+ant = ["openant>=1.0.0"]
+zwift = ["requests>=2.28.0"]
+ui = ["PySide6>=6.5.0"]
+autolaunch = ["pywinauto>=0.6.8"]
+all = [
+    "bleak>=0.21.0",
+    "openant>=1.0.0",
+    "requests>=2.28.0",
+    "PySide6>=6.5.0",
+    "pywinauto>=0.6.8",
+]
+
+[project.scripts]
+smart-fan-controller = "swift_fan_controller_new_v8_PySide6:main"
