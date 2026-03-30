@@ -179,7 +179,45 @@ logger = logging.getLogger("swift_fan_controller_new")
 user_logger = logging.getLogger("user")
 
 
-def _setup_logging() -> None:
+def _resolve_log_dir(log_directory: Optional[str]) -> str:
+    """Log könyvtár meghatározása és validálása.
+
+    Ha ``log_directory`` None, üres, vagy nem létezik / nem hozható létre,
+    a program indítási könyvtárát (CWD) használja fallback-ként.
+
+    Returns:
+        Érvényes, írható könyvtár elérési útja.
+    """
+    default_dir = os.path.dirname(os.path.abspath(__file__))
+
+    if not log_directory:
+        return default_dir
+
+    log_directory = os.path.expanduser(log_directory)
+    log_directory = os.path.abspath(log_directory)
+
+    try:
+        os.makedirs(log_directory, exist_ok=True)
+        # Írhatóság tesztelése
+        test_file = os.path.join(log_directory, ".log_write_test")
+        with open(test_file, "w") as f:
+            f.write("test")
+        os.remove(test_file)
+        return log_directory
+    except OSError:
+        # Nem sikerült létrehozni / írni – fallback
+        user_logger.warning(
+            f"⚠ log_directory nem elérhető: '{log_directory}', "
+            f"alapértelmezett használata: '{default_dir}'"
+        )
+        return default_dir
+
+
+# Modul-szintű változó: a feloldott log könyvtár (_setup_logging állítja be)
+_log_dir: str = os.path.dirname(os.path.abspath(__file__))
+
+
+def _setup_logging(log_directory: Optional[str] = None) -> None:
     """Logging konfiguráció: konzol + rotált fájl (500 KB max).
 
     Két logger:
@@ -187,12 +225,19 @@ def _setup_logging() -> None:
         Konzolra tiszta formátum (csak az üzenet), fájlba időbélyeggel.
       - ``logger``: Belső debug/info logok (fájlba mindig, konzolra WARNING+ felett).
 
-    A log fájl a szkript könyvtárába kerül: ``smart_fan_controller.log``
+    A log fájlok a ``log_directory``-ba kerülnek (ha érvényes), különben
+    a program indítási könyvtárába.
+
+    Többszöri hívás biztonságos: a korábbi handler-eket eltávolítja.
+
+    Args:
+        log_directory: Log fájlok könyvtára (None = alapértelmezett).
     """
     from logging.handlers import RotatingFileHandler
 
-    log_dir = os.path.dirname(os.path.abspath(__file__))
-    log_file = os.path.join(log_dir, "smart_fan_controller.log")
+    global _log_dir
+    _log_dir = _resolve_log_dir(log_directory)
+    log_file = os.path.join(_log_dir, "smart_fan_controller.log")
 
     file_fmt = logging.Formatter(
         "%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -206,6 +251,7 @@ def _setup_logging() -> None:
 
     # ── user_logger: felhasználói üzenetek ──
     ul = logging.getLogger("user")
+    ul.handlers.clear()  # Korábbi handler-ek törlése (újrahívás esetén)
     ul.setLevel(logging.DEBUG)
     ul.propagate = False
 
@@ -217,6 +263,7 @@ def _setup_logging() -> None:
 
     # ── logger: belső logok ──
     il = logging.getLogger("swift_fan_controller_new")
+    il.handlers.clear()
     il.setLevel(logging.DEBUG)
     il.propagate = False
 
@@ -360,6 +407,7 @@ class GlobalSettingsConfig:
     minimum_samples: int = 6
     buffer_rate_hz: int = 4
     dropout_timeout: int = 5
+    log_directory: Optional[str] = None
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> "GlobalSettingsConfig":
@@ -371,7 +419,7 @@ class GlobalSettingsConfig:
             "buffer_rate_hz": (1, 60),
             "dropout_timeout": (1, 120),
         }
-        kwargs: dict[str, int] = {}
+        kwargs: dict[str, Any] = {}
         for key, (lo, hi) in fields_range.items():
             if key in raw:
                 v = raw[key]
@@ -381,6 +429,13 @@ class GlobalSettingsConfig:
                     kwargs[key] = int(v)
                 else:
                     user_logger.warning(f"⚠ Érvénytelen '{key}' érték: {v} ({lo}–{hi} közötti egész kell)")
+        # log_directory: null vagy valid string
+        if "log_directory" in raw:
+            ld = raw["log_directory"]
+            if ld is None:
+                kwargs["log_directory"] = None
+            elif isinstance(ld, str) and ld.strip():
+                kwargs["log_directory"] = ld.strip()
         return cls(**{**dataclasses.asdict(d), **kwargs})
 
 
@@ -1550,7 +1605,9 @@ async def send_zone(zone: int, zone_queue: asyncio.Queue[int]) -> None:
 # BLE ESZKÖZ KERESÉS ÉS LOGOLÁS (közös segédfüggvények)
 # ============================================================
 
-_BLE_LOG_FILE = "ble_devices.log"
+def _ble_log_path() -> str:
+    """Visszaadja a ble_devices.log teljes útvonalát a konfigurált log könyvtárban."""
+    return os.path.join(_log_dir, "ble_devices.log")
 
 
 def _log_ble_devices_to_file(
@@ -1572,7 +1629,7 @@ def _log_ble_devices_to_file(
     # Meglévő address-ek beolvasása a fájlból
     existing_addresses: set[str] = set()
     try:
-        with open(_BLE_LOG_FILE, "r", encoding="utf-8") as f:
+        with open(_ble_log_path(), "r", encoding="utf-8") as f:
             for line in f:
                 # Sorok formátuma: "  név | ADDRESS | UUIDs: ..."
                 parts = line.split("|")
@@ -1581,7 +1638,7 @@ def _log_ble_devices_to_file(
     except FileNotFoundError:
         pass  # Még nem létezik a fájl, minden eszköz új
     except OSError as exc:
-        logger.warning(f"Nem sikerült olvasni a {_BLE_LOG_FILE} fájlt: {exc}")
+        logger.warning(f"Nem sikerült olvasni a {_ble_log_path()} fájlt: {exc}")
 
     # Csak az új eszközök szűrése
     new_devices = [
@@ -1595,13 +1652,13 @@ def _log_ble_devices_to_file(
 
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     try:
-        with open(_BLE_LOG_FILE, "a", encoding="utf-8") as f:
+        with open(_ble_log_path(), "a", encoding="utf-8") as f:
             f.write(f"\n--- BLE Scan ({scan_context}) @ {timestamp} ---\n")
             for name, addr, uuids in new_devices:
                 uuid_str = ", ".join(uuids[:5]) if uuids else "–"
                 f.write(f"  {name or '(névtelen)':30s} | {addr} | UUIDs: {uuid_str}\n")
     except OSError as exc:
-        logger.warning(f"Nem sikerült írni a {_BLE_LOG_FILE} fájlba: {exc}")
+        logger.warning(f"Nem sikerült írni a {_ble_log_path()} fájlba: {exc}")
 
 
 def _print_ble_devices(
@@ -2119,7 +2176,9 @@ class BLEFanOutputController:
 # ============================================================
 
 
-_ANT_LOG_FILE = "ant_devices.log"
+def _ant_log_path() -> str:
+    """Visszaadja az ant_devices.log teljes útvonalát a konfigurált log könyvtárban."""
+    return os.path.join(_log_dir, "ant_devices.log")
 
 
 def _log_ant_device_to_file(
@@ -2143,7 +2202,7 @@ def _log_ant_device_to_file(
     # Meglévő bejegyzések ellenőrzése
     existing_entries: set[str] = set()
     try:
-        with open(_ANT_LOG_FILE, "r", encoding="utf-8") as f:
+        with open(_ant_log_path(), "r", encoding="utf-8") as f:
             for line in f:
                 # Sorok formátuma: "  TÍPUS | DEVICE_ID | info"
                 parts = line.split("|")
@@ -2152,20 +2211,20 @@ def _log_ant_device_to_file(
     except FileNotFoundError:
         pass
     except OSError as exc:
-        logger.warning(f"Nem sikerült olvasni a {_ANT_LOG_FILE} fájlt: {exc}")
+        logger.warning(f"Nem sikerült olvasni a {_ant_log_path()} fájlt: {exc}")
 
     if entry_key in existing_entries:
         return
 
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     try:
-        with open(_ANT_LOG_FILE, "a", encoding="utf-8") as f:
+        with open(_ant_log_path(), "a", encoding="utf-8") as f:
             f.write(
                 f"  {device_type:20s} | {device_id} | {device_info} "
                 f"| @ {timestamp}\n"
             )
     except OSError as exc:
-        logger.warning(f"Nem sikerült írni a {_ANT_LOG_FILE} fájlba: {exc}")
+        logger.warning(f"Nem sikerült írni a {_ant_log_path()} fájlba: {exc}")
 
 
 class ANTPlusInputHandler:
@@ -5358,6 +5417,7 @@ def main() -> None:
     if _platform.system() == "Windows" and sys.version_info < (3, 14):
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
+    # Kezdeti logging (alapértelmezett könyvtár) – a settings betöltés is logolhat
     _setup_logging()
 
     # PyInstaller frozen exe: settings.json az exe mellett keresendő
@@ -5368,6 +5428,12 @@ def main() -> None:
         _script_dir = os.path.dirname(os.path.abspath(__file__))
         _settings_path = os.path.join(_script_dir, "settings.json")
     controller = FanController(_settings_path)
+
+    # Logging újrakonfigurálása a betöltött log_directory alapján
+    log_dir_setting = controller.settings["global_settings"].log_directory
+    if log_dir_setting:
+        _setup_logging(log_dir_setting)
+
     controller.print_startup_info()
 
     loop = asyncio.new_event_loop()
