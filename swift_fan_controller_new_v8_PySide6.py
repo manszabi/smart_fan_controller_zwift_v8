@@ -57,7 +57,8 @@ import wave
 
 # COM inicializálás threading modellje – APARTMENTTHREADED kell a Qt-nek (OLE/DnD),
 # és ezt a pywinauto importálása ELŐTT kell beállítani, különben COM conflict lesz.
-sys.coinit_flags = 2  # type: ignore[attr-defined]  # COINIT_APARTMENTTHREADED
+if not hasattr(sys, "coinit_flags"):
+    sys.coinit_flags = 2  # type: ignore[attr-defined]  # COINIT_APARTMENTTHREADED
 
 from collections import deque
 from datetime import datetime
@@ -660,11 +661,21 @@ def _resolve_buffer_settings(settings: Dict[str, Any], role: str) -> Dict[str, A
     source_key = "power_source" if role == "power" else "hr_source"
     source = ds.get(source_key)
 
+    if source is None:
+        # Null forrás: globális fallback értékek
+        gs = settings["global_settings"]
+        return {
+            "buffer_seconds": gs.get("buffer_seconds", 3),
+            "minimum_samples": gs.get("minimum_samples", 6),
+            "buffer_rate_hz": gs.get("buffer_rate_hz", 4),
+            "dropout_timeout": gs.get("dropout_timeout", 5),
+        }
+
     if source == DataSource.BLE:
         prefix = "BLE"
     elif source == DataSource.ANTPLUS:
         prefix = "ANT"
-    else:  # zwiftudp or None (fallback)
+    else:  # zwiftudp
         prefix = "zwiftUDP"
 
     gs = settings["global_settings"]
@@ -3987,7 +3998,7 @@ class LCARSHeaderWidget(QWidget):
         p.setFont(QFont(self._font_family, ver_size))
         p.setPen(QColor("#FFFFFF"))
         p.drawText(int(w - badge_w - 8), 1, badge_w, bar_h - 3,
-                    Qt.AlignmentFlag.AlignCenter, "v1.0.0")
+                    Qt.AlignmentFlag.AlignCenter, f"v{__version__}")
 
         p.end()
 
