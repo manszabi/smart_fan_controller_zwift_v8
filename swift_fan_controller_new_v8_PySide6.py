@@ -176,6 +176,61 @@ if TYPE_CHECKING:
 __version__ = "8.0.0"
 
 logger = logging.getLogger("swift_fan_controller_new")
+user_logger = logging.getLogger("user")
+
+
+def _setup_logging() -> None:
+    """Logging konfiguráció: konzol + rotált fájl (500 KB max).
+
+    Két logger:
+      - ``user_logger``: Felhasználói üzenetek (konzolra + fájlba).
+        Konzolra tiszta formátum (csak az üzenet), fájlba időbélyeggel.
+      - ``logger``: Belső debug/info logok (fájlba mindig, konzolra WARNING+ felett).
+
+    A log fájl a szkript könyvtárába kerül: ``smart_fan_controller.log``
+    """
+    from logging.handlers import RotatingFileHandler
+
+    log_dir = os.path.dirname(os.path.abspath(__file__))
+    log_file = os.path.join(log_dir, "smart_fan_controller.log")
+
+    file_fmt = logging.Formatter(
+        "%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+    file_handler = RotatingFileHandler(
+        log_file, maxBytes=500 * 1024, backupCount=2, encoding="utf-8",
+    )
+    file_handler.setLevel(logging.DEBUG)
+    file_handler.setFormatter(file_fmt)
+
+    # ── user_logger: felhasználói üzenetek ──
+    ul = logging.getLogger("user")
+    ul.setLevel(logging.DEBUG)
+    ul.propagate = False
+
+    console_user = logging.StreamHandler(sys.stdout)
+    console_user.setLevel(logging.DEBUG)
+    console_user.setFormatter(logging.Formatter("%(message)s"))
+    ul.addHandler(console_user)
+    ul.addHandler(file_handler)
+
+    # ── logger: belső logok ──
+    il = logging.getLogger("swift_fan_controller_new")
+    il.setLevel(logging.DEBUG)
+    il.propagate = False
+
+    console_internal = logging.StreamHandler(sys.stderr)
+    console_internal.setLevel(logging.WARNING)
+    console_internal.setFormatter(logging.Formatter(
+        "%(asctime)s [%(levelname)s] %(name)s: %(message)s", datefmt="%H:%M:%S",
+    ))
+    il.addHandler(console_internal)
+    il.addHandler(file_handler)
+
+    # Zajos külső könyvtárak elnémítása
+    logging.getLogger("bleak").setLevel(logging.CRITICAL)
+    logging.getLogger("openant").setLevel(logging.CRITICAL)
 
 
 # ============================================================
@@ -202,13 +257,13 @@ class PowerZonesConfig:
     def __post_init__(self) -> None:
         # min_watt / max_watt kereszt-validáció
         if self.min_watt > self.max_watt:
-            print(
+            user_logger.warning(
                 f"⚠ Érvénytelen watt tartomány (min_watt={self.min_watt}, max_watt={self.max_watt}). "
                 f"Feltételezett felcserélés, értékek megfordítva."
             )
             self.min_watt, self.max_watt = self.max_watt, self.min_watt
         elif self.min_watt == self.max_watt:
-            print(
+            user_logger.warning(
                 f"⚠ min_watt és max_watt azonos értékű ({self.min_watt}). "
                 f"max_watt {self.min_watt + 1}-re állítva."
             )
@@ -222,7 +277,7 @@ class PowerZonesConfig:
                     low, high = 99, 100
                 else:
                     high = low + 1
-            print(
+            user_logger.warning(
                 f"⚠ Érvénytelen power zóna százalékok (z1={self.z1_max_percent}, z2={self.z2_max_percent}). "
                 f"Javítva: z1={low}, z2={high}."
             )
@@ -251,42 +306,42 @@ class PowerZonesConfig:
             if isinstance(v, int) and not isinstance(v, bool) and 100 <= v <= 500:
                 ftp = v
             else:
-                print(f"⚠ Érvénytelen 'ftp' érték: {v} (100–500 közötti egész kell)")
+                user_logger.warning(f"⚠ Érvénytelen 'ftp' érték: {v} (100–500 közötti egész kell)")
 
         if "min_watt" in raw:
             v = raw["min_watt"]
             if isinstance(v, int) and not isinstance(v, bool) and 0 <= v <= 9999:
                 min_watt = v
             else:
-                print(f"⚠ Érvénytelen 'min_watt' érték: {v} (0–9999 közötti egész kell)")
+                user_logger.warning(f"⚠ Érvénytelen 'min_watt' érték: {v} (0–9999 közötti egész kell)")
 
         if "max_watt" in raw:
             v = raw["max_watt"]
             if isinstance(v, int) and not isinstance(v, bool) and 1 <= v <= 100000:
                 max_watt = v
             else:
-                print(f"⚠ Érvénytelen 'max_watt' érték: {v} (1–100000 közötti egész kell)")
+                user_logger.warning(f"⚠ Érvénytelen 'max_watt' érték: {v} (1–100000 közötti egész kell)")
 
         if "z1_max_percent" in raw:
             v = raw["z1_max_percent"]
             if isinstance(v, int) and not isinstance(v, bool) and 1 <= v <= 100:
                 z1 = v
             else:
-                print(f"⚠ Érvénytelen 'z1_max_percent' érték: {v} (1–100 közötti egész kell)")
+                user_logger.warning(f"⚠ Érvénytelen 'z1_max_percent' érték: {v} (1–100 közötti egész kell)")
 
         if "z2_max_percent" in raw:
             v = raw["z2_max_percent"]
             if isinstance(v, int) and not isinstance(v, bool) and 1 <= v <= 100:
                 z2 = v
             else:
-                print(f"⚠ Érvénytelen 'z2_max_percent' érték: {v} (1–100 közötti egész kell)")
+                user_logger.warning(f"⚠ Érvénytelen 'z2_max_percent' érték: {v} (1–100 közötti egész kell)")
 
         if "zero_power_immediate" in raw:
             v = raw["zero_power_immediate"]
             if isinstance(v, bool):
                 zpi = v
             else:
-                print(f"⚠ Érvénytelen 'zero_power_immediate' érték: {v} (true/false kell)")
+                user_logger.warning(f"⚠ Érvénytelen 'zero_power_immediate' érték: {v} (true/false kell)")
 
         return cls(ftp=ftp, min_watt=min_watt, max_watt=max_watt,
                    z1_max_percent=z1, z2_max_percent=z2, zero_power_immediate=zpi)
@@ -321,11 +376,11 @@ class GlobalSettingsConfig:
             if key in raw:
                 v = raw[key]
                 if isinstance(v, bool):
-                    print(f"⚠ Érvénytelen '{key}' érték: {v!r} ({lo}–{hi} közötti egész kell)")
+                    user_logger.warning(f"⚠ Érvénytelen '{key}' érték: {v!r} ({lo}–{hi} közötti egész kell)")
                 elif isinstance(v, (int, float)) and lo <= v <= hi:
                     kwargs[key] = int(v)
                 else:
-                    print(f"⚠ Érvénytelen '{key}' érték: {v} ({lo}–{hi} közötti egész kell)")
+                    user_logger.warning(f"⚠ Érvénytelen '{key}' érték: {v} ({lo}–{hi} közötti egész kell)")
         return cls(**{**dataclasses.asdict(d), **kwargs})
 
 
@@ -359,7 +414,7 @@ class HeartRateZonesConfig:
                     low, high = 99, 100
                 else:
                     high = low + 1
-            print(
+            user_logger.warning(
                 f"⚠ Érvénytelen HR zóna százalékok (z1={self.z1_max_percent}, z2={self.z2_max_percent}). "
                 f"Értékek rendezése és legalább 1% különbség biztosítása."
             )
@@ -368,7 +423,7 @@ class HeartRateZonesConfig:
         # resting_hr < max_hr
         if self.resting_hr >= self.max_hr:
             new_rest = max(30, self.max_hr - 1)
-            print(
+            user_logger.warning(
                 f"⚠ Érvénytelen HR értékek (resting_hr={self.resting_hr}, max_hr={self.max_hr}). "
                 f"resting_hr {new_rest}-re állítva."
             )
@@ -376,7 +431,7 @@ class HeartRateZonesConfig:
 
         # valid_min_hr < valid_max_hr
         if self.valid_min_hr >= self.valid_max_hr:
-            print(
+            user_logger.warning(
                 f"⚠ valid_min_hr ({self.valid_min_hr}) >= valid_max_hr ({self.valid_max_hr}), "
                 f"alapértelmezés visszaállítva."
             )
@@ -401,11 +456,11 @@ class HeartRateZonesConfig:
             if key in raw:
                 v = raw[key]
                 if isinstance(v, bool):
-                    print(f"⚠ Érvénytelen '{key}' érték: {v!r} ({lo}–{hi} közötti egész kell)")
+                    user_logger.warning(f"⚠ Érvénytelen '{key}' érték: {v!r} ({lo}–{hi} közötti egész kell)")
                 elif isinstance(v, (int, float)) and lo <= v <= hi:
                     kwargs[key] = int(v)
                 else:
-                    print(f"⚠ Érvénytelen '{key}' érték: {v} ({lo}–{hi} közötti egész kell)")
+                    user_logger.warning(f"⚠ Érvénytelen '{key}' érték: {v} ({lo}–{hi} közötti egész kell)")
 
         for key in ("enabled", "zero_hr_immediate"):
             if key in raw:
@@ -413,7 +468,7 @@ class HeartRateZonesConfig:
                 if isinstance(v, bool):
                     kwargs[key] = v
                 else:
-                    print(f"⚠ Érvénytelen '{key}' érték: {v} (true/false kell)")
+                    user_logger.warning(f"⚠ Érvénytelen '{key}' érték: {v} (true/false kell)")
 
         if "zone_mode" in raw and raw["zone_mode"] in VALID_ZONE_MODES:
             kwargs["zone_mode"] = raw["zone_mode"]
@@ -459,11 +514,11 @@ class BleConfig:
             if key in raw:
                 v = raw[key]
                 if isinstance(v, bool):
-                    print(f"⚠ Érvénytelen '{key}' érték: {v!r} ({lo}–{hi} közötti egész kell)")
+                    user_logger.warning(f"⚠ Érvénytelen '{key}' érték: {v!r} ({lo}–{hi} közötti egész kell)")
                 elif isinstance(v, (int, float)) and lo <= v <= hi:
                     kwargs[key] = int(v)
                 else:
-                    print(f"⚠ Érvénytelen '{key}' érték: {v} ({lo}–{hi} közötti egész kell)")
+                    user_logger.warning(f"⚠ Érvénytelen '{key}' érték: {v} ({lo}–{hi} közötti egész kell)")
 
         if isinstance(raw.get("service_uuid"), str) and raw["service_uuid"]:
             kwargs["service_uuid"] = raw["service_uuid"]
@@ -478,7 +533,7 @@ class BleConfig:
             elif isinstance(pc, int) and not isinstance(pc, bool) and 0 <= pc <= 999999:
                 kwargs["pin_code"] = str(pc)
                 if len(str(pc)) < 6:
-                    print(
+                    user_logger.warning(
                         f"⚠ pin_code int-ként megadva ({pc}) → \"{str(pc)}\". "
                         f"Ha vezető nullákra van szükség, string-ként add meg: "
                         f"\"pin_code\": \"{pc:06d}\""
@@ -486,7 +541,7 @@ class BleConfig:
             elif isinstance(pc, str) and pc.isdigit() and 0 < len(pc) <= 20:
                 kwargs["pin_code"] = pc
             else:
-                print(f"⚠ Érvénytelen 'pin_code' érték: {pc}")
+                user_logger.warning(f"⚠ Érvénytelen 'pin_code' érték: {pc}")
 
         return cls(**kwargs)
 
@@ -537,7 +592,7 @@ class DatasourceConfig:
             if bs > 0 and brz > 0:
                 max_samples = bs * brz
                 if ms > max_samples:
-                    print(
+                    user_logger.warning(
                         f"⚠ [{prefix}] Érvénytelen minimum_samples ({ms}) – "
                         f"nagyobb, mint buffer_seconds * buffer_rate_hz "
                         f"({bs} * {brz} = {max_samples}). "
@@ -636,15 +691,15 @@ def _from_dict_int(src: dict[str, Any], dst: dict[str, Any], key: str, lo: int, 
         return
     v = src[key]
     if isinstance(v, bool):
-        print(f"⚠ Érvénytelen '{key}' érték: {v!r} ({lo}–{hi} közötti egész kell)")
+        user_logger.warning(f"⚠ Érvénytelen '{key}' érték: {v!r} ({lo}–{hi} közötti egész kell)")
         return
     if isinstance(v, float) and not v.is_integer():
-        print(f"⚠ Érvénytelen '{key}' érték: {v} (törtrész nem elfogadott, egész kell)")
+        user_logger.warning(f"⚠ Érvénytelen '{key}' érték: {v} (törtrész nem elfogadott, egész kell)")
         return
     if isinstance(v, (int, float)) and lo <= v <= hi:
         dst[key] = int(v)
     else:
-        print(f"⚠ Érvénytelen '{key}' érték: {v} ({lo}–{hi} közötti egész kell)")
+        user_logger.warning(f"⚠ Érvénytelen '{key}' érték: {v} ({lo}–{hi} közötti egész kell)")
 
 
 # ============================================================
@@ -687,13 +742,13 @@ def load_settings(settings_file: str = "settings.json") -> Dict[str, Any]:
         with open(settings_file, "r", encoding="utf-8") as f:
             loaded = json.load(f)
     except FileNotFoundError:
-        print(
+        user_logger.warning(
             f"⚠ '{settings_file}' nem található, alapértelmezett beállítások használata."
         )
         _save_default_settings(settings_file, settings)
         return settings
     except (json.JSONDecodeError, OSError) as exc:
-        print(f"⚠ '{settings_file}' beolvasási hiba: {exc}. Alapértelmezés használata.")
+        user_logger.warning(f"⚠ '{settings_file}' beolvasási hiba: {exc}. Alapértelmezés használata.")
         return settings
 
     # --- Szekciók betöltése dataclass from_dict()-tel ---
@@ -721,32 +776,32 @@ def load_settings(settings_file: str = "settings.json") -> Dict[str, Any]:
 
         if zm == ZoneMode.HIGHER_WINS:
             if ps is None and hs is None:
-                print(
+                user_logger.warning(
                     "⚠ zone_mode 'higher_wins', de mindkét forrás null – "
                     "nincs adat a zóna meghatározásához!"
                 )
             elif ps is None:
-                print(
+                user_logger.warning(
                     "⚠ zone_mode 'higher_wins', de power_source null – "
                     "csak HR alapján fog dönteni (mint hr_only)."
                 )
             elif hs is None:
-                print(
+                user_logger.warning(
                     "⚠ zone_mode 'higher_wins', de hr_source null – "
                     "csak power alapján fog dönteni (mint power_only)."
                 )
         elif zm == ZoneMode.POWER_ONLY and ps is None:
-            print(
+            user_logger.warning(
                 "⚠ zone_mode 'power_only', de power_source null – "
                 "nincs adat a zóna meghatározásához!"
             )
         elif zm == ZoneMode.HR_ONLY and hs is None:
-            print(
+            user_logger.warning(
                 "⚠ zone_mode 'hr_only', de hr_source null – "
                 "nincs adat a zóna meghatározásához!"
             )
     except Exception as exc:
-        print(f"⚠ zone_mode/null forrás kereszt-validáció sikertelen: {exc}")
+        user_logger.warning(f"⚠ zone_mode/null forrás kereszt-validáció sikertelen: {exc}")
 
     return settings
 
@@ -768,9 +823,9 @@ def _save_default_settings(path: str, settings: Dict[str, Any]) -> None:
     try:
         with open(path, "w", encoding="utf-8") as f:
             json.dump(_settings_to_serializable(settings), f, indent=2, ensure_ascii=False)
-        print(f"✓ Alapértelmezett '{path}' létrehozva.")
+        user_logger.info(f"✓ Alapértelmezett '{path}' létrehozva.")
     except OSError as exc:
-        print(f"✗ Nem sikerült létrehozni a '{path}' fájlt: {exc}")
+        user_logger.warning(f"✗ Nem sikerült létrehozni a '{path}' fájlt: {exc}")
 
 
 # ============================================================
@@ -1129,7 +1184,7 @@ class CooldownController:
         if new_zone == 0 and zero_immediate:
             if current_zone != 0:
                 self._reset_locked()
-                print("✓ 0W detektálva: azonnali leállás (cooldown nélkül)")
+                user_logger.info("✓ 0W detektálva: azonnali leállás (cooldown nélkül)")
                 return 0
             return None
 
@@ -1158,7 +1213,7 @@ class CooldownController:
         # _last_print beállítása megakadályozza az azonnali dupla kiírást
         # az első _handle_active hívásnál
         self._last_print = now
-        print(
+        user_logger.info(
             f"🕐 Cooldown indítva: {self.cooldown_seconds}s várakozás (cél: {new_zone})"
         )
         # Nagy zónaesés esetén azonnali felezés
@@ -1174,7 +1229,7 @@ class CooldownController:
         if new_zone >= current_zone:
             self._reset_locked()
             if new_zone > current_zone:
-                print(f"✓ Teljesítmény emelkedés: cooldown törölve → zóna: {new_zone}")
+                user_logger.info(f"✓ Teljesítmény emelkedés: cooldown törölve → zóna: {new_zone}")
                 return new_zone
             return None
 
@@ -1185,9 +1240,9 @@ class CooldownController:
             target = new_zone
             self._reset_locked()
             if target != current_zone:
-                print(f"✓ Cooldown lejárt! Zóna váltás: {current_zone} → {target}")
+                user_logger.info(f"✓ Cooldown lejárt! Zóna váltás: {current_zone} → {target}")
                 return target
-            print("✓ Cooldown lejárt, nincs zónaváltás (már a célzónában)")
+            user_logger.info("✓ Cooldown lejárt, nincs zónaváltás (már a célzónában)")
             return None
 
         remaining = self.cooldown_seconds - elapsed
@@ -1199,22 +1254,22 @@ class CooldownController:
             if old_pending is not None and new_zone > old_pending and self.can_double:
                 self._double(now)
                 remaining = self.cooldown_seconds - (now - self.start_time)
-                print(
+                user_logger.info(
                     f"🕐 Cooldown aktív: még {remaining:.0f}s (várakozó zóna: {new_zone})"
                 )
             elif (new_zone == 0 or (current_zone - new_zone >= 2)) and self.can_halve:
                 self._halve(now)
                 remaining = self.cooldown_seconds - (now - self.start_time)
-                print(
+                user_logger.info(
                     f"🕐 Cooldown aktív: még {remaining:.0f}s (várakozó zóna: {new_zone})"
                 )
             else:
-                print(
+                user_logger.info(
                     f"🕐 Cooldown aktív: még {remaining:.0f}s (várakozó zóna: {new_zone})"
                 )
             self._last_print = now
         elif now - self._last_print >= self.PRINT_INTERVAL:
-            print(
+            user_logger.info(
                 f"🕐 Cooldown aktív: még {remaining:.0f}s (várakozó: {self.pending_zone})"
             )
             self._last_print = now
@@ -1228,7 +1283,7 @@ class CooldownController:
         self.start_time = now - (self.cooldown_seconds - new_remaining)
         self.can_halve = False
         self.can_double = True
-        print(f"🕐 Cooldown felezve: {remaining:.0f}s → {new_remaining:.0f}s")
+        user_logger.info(f"🕐 Cooldown felezve: {remaining:.0f}s → {new_remaining:.0f}s")
 
     def _double(self, now: float) -> None:
         """Duplázza a maradék cooldown időt."""
@@ -1237,7 +1292,7 @@ class CooldownController:
         self.start_time = now - (self.cooldown_seconds - new_remaining)
         self.can_double = False
         self.can_halve = True
-        print(f"🕐 Cooldown duplázva: {remaining:.0f}s → {new_remaining:.0f}s")
+        user_logger.info(f"🕐 Cooldown duplázva: {remaining:.0f}s → {new_remaining:.0f}s")
 
     def reset(self) -> None:
         """Törli a cooldown állapotát (publikus API, szálbiztos)."""
@@ -1376,7 +1431,7 @@ class ConsolePrinter:
         """
         now = time.monotonic()
         if now - self._last_times.get(key, 0.0) >= interval:
-            print(message)
+            user_logger.info(message)
             self._last_times[key] = now
             return True
         return False
@@ -1561,14 +1616,14 @@ def _print_ble_devices(
         scan_context: A keresés kontextusa.
         matched_addr: Az automatikusan kiválasztott eszköz címe (◄ jelöléshez).
     """
-    print(f"\n📡 BLE Scan ({scan_context}): {len(devices_info)} eszköz található")
+    user_logger.info(f"\n📡 BLE Scan ({scan_context}): {len(devices_info)} eszköz található")
     for name, addr, uuids in devices_info:
         marker = " ◄ AUTO" if matched_addr and addr == matched_addr else ""
         icon = "📱" if name else "❓"
         uuid_str = ", ".join(uuids[:3]) if uuids else "–"
-        print(f"  {icon} {name or '(névtelen)':30s} | {addr} | {uuid_str}{marker}")
+        user_logger.info(f"  {icon} {name or '(névtelen)':30s} | {addr} | {uuid_str}{marker}")
     if not devices_info:
-        print("  (nincs eszköz a közelben)")
+        user_logger.info("  (nincs eszköz a közelben)")
 
 
 async def _scan_ble_with_autodiscovery(
@@ -1759,7 +1814,7 @@ class BLEFanOutputController:
                 )
                 if matched is not None:
                     self._device_address = matched.address
-                    print(
+                    user_logger.info(
                         f"✓ BLE Fan auto-csatlakozás: "
                         f"{matched.name or '(névtelen)'} ({matched.address})"
                     )
@@ -1767,7 +1822,7 @@ class BLEFanOutputController:
                         f"BLE Fan auto-felderítés: {matched.name} ({matched.address})"
                     )
                     return await self._connect()
-                print(
+                user_logger.warning(
                     f"⚠ BLE Fan: nem található eszköz a(z) {self.service_uuid} "
                     f"service UUID-val – újrapróbálkozás..."
                 )
@@ -1892,7 +1947,7 @@ class BLEFanOutputController:
                     logger.error(
                         f"BLE AUTH sikertelen: {resp} - ellenorizd a pin_code erteket!"
                     )
-                    print(f"✗ BLE PIN hiba ({resp}): helytelen pin_code! Javítsd a settings.json-ban.")
+                    user_logger.warning(f"✗ BLE PIN hiba ({resp}): helytelen pin_code! Javítsd a settings.json-ban.")
                     self._auth_failed = True
                     try:
                         await client.disconnect()
@@ -2270,7 +2325,7 @@ class ANTPlusInputHandler:
             dev_name = getattr(device_ref, "name", "")
             info = dev_name or sensor_label
             logger.info(f"{sensor_label} eszköz megtalálva: id={dev_id} ({info})")
-            print(f"\u2713 {sensor_label} csatlakozva: id={dev_id} ({info})")
+            user_logger.info(f"\u2713 {sensor_label} csatlakozva: id={dev_id} ({info})")
             _log_ant_device_to_file(device_type_str, dev_id, info)
         return _on_found
 
@@ -2502,7 +2557,7 @@ class _BLESensorInputHandler(abc.ABC):
         if self.device_name:
             logger.info(f"{label} fogadó elindítva: {self.device_name}")
         else:
-            print(f"\U0001f4e1 {label}: nincs eszköznév megadva, automatikus felderítés...")
+            user_logger.info(f"\U0001f4e1 {label}: nincs eszköznév megadva, automatikus felderítés...")
             logger.info(f"{label} fogadó elindítva (auto-discovery mód)")
 
         while True:
@@ -2576,7 +2631,7 @@ class _BLESensorInputHandler(abc.ABC):
                     "újrapróbálkozás..."
                 )
             addr = matched.address
-            print(
+            user_logger.info(
                 f"\u2713 {label} auto-csatlakozás: "
                 f"{matched.name or '(névtelen)'} ({matched.address})"
             )
@@ -3079,7 +3134,7 @@ async def zone_controller_task(
                     state.current_avg_hr,
                 )
             await send_zone(zone_to_send, zone_queue)
-            print(f"→ Zóna elküldve: LEVEL:{zone_to_send}")
+            user_logger.info(f"→ Zóna elküldve: LEVEL:{zone_to_send}")
 
 
 # ============================================================
@@ -3187,7 +3242,7 @@ async def dropout_checker_task(
                 label = "power+HR"
 
             if stale:
-                print(f"Adatforrás kiesett ({label}), {elapsed:.1f}s → LEVEL:0")
+                user_logger.info(f"Adatforrás kiesett ({label}), {elapsed:.1f}s → LEVEL:0")
                 if not power_fresh:
                     poweraverager.clear()
                     state.current_avg_power = None
@@ -3483,7 +3538,7 @@ class FanController:
             return
 
         logger.info(f"Zwift indítása: {launcher_path}")
-        print(f"🚀 Zwift indítása: {launcher_path}")
+        user_logger.info(f"🚀 Zwift indítása: {launcher_path}")
 
         # Launcher indítása
         try:
@@ -3504,15 +3559,15 @@ class FanController:
                 "kattintani. Telepítés: pip install pywinauto"
             )
             # Fallback: egyszerűen várunk a ZwiftApp.exe megjelenésére
-            print("⏳ Várakozás a ZwiftApp.exe indulására (kattints a 'Let's Go' gombra)...")
+            user_logger.info("⏳ Várakozás a ZwiftApp.exe indulására (kattints a 'Let's Go' gombra)...")
             for _ in range(180):  # max 6 perc
                 time.sleep(2)
                 if self.is_process_running("ZwiftApp.exe"):
                     logger.info("ZwiftApp.exe elindult.")
-                    print("✅ ZwiftApp.exe elindult!")
+                    user_logger.info("✅ ZwiftApp.exe elindult!")
                     return
             logger.warning("ZwiftApp.exe nem indult el 6 perc alatt.")
-            print("⚠️  ZwiftApp.exe nem indult el 6 perc alatt.")
+            user_logger.warning("⚠️  ZwiftApp.exe nem indult el 6 perc alatt.")
             return
 
         # --- pywinauto automatizáció retry loop-pal ---
@@ -3525,7 +3580,7 @@ class FanController:
             # Ha közben elindult a ZwiftApp.exe (pl. már be volt jelentkezve)
             if self.is_process_running("ZwiftApp.exe"):
                 logger.info("ZwiftApp.exe elindult (frissítés/auto-login után).")
-                print("✅ ZwiftApp.exe elindult!")
+                user_logger.info("✅ ZwiftApp.exe elindult!")
                 return
 
             # Ellenőrizzük, hogy a launcher process még fut-e
@@ -3542,7 +3597,7 @@ class FanController:
                     break
 
             try:
-                print(
+                user_logger.info(
                     f"⏳ Zwift Launcher ablak keresése "
                     f"(próba {attempt}/{max_attempts})..."
                 )
@@ -3560,22 +3615,22 @@ class FanController:
                         for c in children
                     ]
                     logger.info(f"Zwift Launcher kontrollok ({len(child_info)} db): {child_info}")
-                    print(f"   🔍 Kontrollok ({len(child_info)} db):")
+                    user_logger.info(f"   🔍 Kontrollok ({len(child_info)} db):")
                     for text, cls, ctype in child_info:
                         if text.strip():
-                            print(f"      [{ctype}] {cls}: '{text}'")
+                            user_logger.info(f"      [{ctype}] {cls}: '{text}'")
                 except Exception as debug_exc:
                     logger.debug(f"Kontroll lista lekérés sikertelen: {debug_exc}")
 
                 # "LET'S GO" gomb keresése (regex: bármilyen aposztróf-típus)
-                print("⏳ Várakozás a 'LET'S GO' gombra (frissítés esetén ez eltarthat)...")
+                user_logger.info("⏳ Várakozás a 'LET'S GO' gombra (frissítés esetén ez eltarthat)...")
                 button = window.child_window(  # type: ignore[reportOptionalCall]
                     title_re="LET.S GO", control_type="Button"
                 )
                 button.wait("visible", timeout=attempt_interval)  # type: ignore[reportOptionalCall]
                 logger.info("'Let's Go' gomb megtalálva, kattintás...")
                 button.click()  # type: ignore[reportOptionalCall]
-                print("✅ 'Let's Go' gomb megnyomva, várakozás a Zwift indulására...")
+                user_logger.info("✅ 'Let's Go' gomb megnyomva, várakozás a Zwift indulására...")
                 break
 
             except Exception as exc:
@@ -3586,7 +3641,7 @@ class FanController:
                     windows = desktop.windows()
                     win_titles = [w.window_text() for w in windows if w.window_text()]
                     logger.info(f"Látható ablakok: {win_titles}")
-                    print(f"   🔍 Látható ablakok: {win_titles}")
+                    user_logger.info(f"   🔍 Látható ablakok: {win_titles}")
                 except Exception as debug_exc:
                     logger.debug(f"Ablak lista lekérés sikertelen: {debug_exc}")
                 logger.info(
@@ -3594,7 +3649,7 @@ class FanController:
                     f"{exc}"
                 )
                 if attempt < max_attempts:
-                    print(
+                    user_logger.info(
                         f"⏳ Újrapróbálkozás {attempt_interval}s múlva "
                         f"({attempt}/{max_attempts})..."
                     )
@@ -3604,20 +3659,20 @@ class FanController:
                         f"Zwift Launcher UI automatizáció sikertelen {max_attempts} "
                         f"próba után: {exc}"
                     )
-                    print(f"⚠️  Launcher automatizáció sikertelen: {exc}")
-                    print("    Kattints manuálisan a 'Let's Go' gombra!")
+                    user_logger.warning(f"⚠️  Launcher automatizáció sikertelen: {exc}")
+                    user_logger.info("    Kattints manuálisan a 'Let's Go' gombra!")
 
         # Várakozás a ZwiftApp.exe megjelenésére (akár manuális, akár auto kattintás után)
         if not self.is_process_running("ZwiftApp.exe"):
-            print("⏳ Várakozás a ZwiftApp.exe indulására...")
+            user_logger.info("⏳ Várakozás a ZwiftApp.exe indulására...")
             for _ in range(120):  # max 4 perc
                 time.sleep(2)
                 if self.is_process_running("ZwiftApp.exe"):
                     logger.info("ZwiftApp.exe sikeresen elindult.")
-                    print("✅ ZwiftApp.exe elindult!")
+                    user_logger.info("✅ ZwiftApp.exe elindult!")
                     return
             logger.warning("ZwiftApp.exe nem indult el 4 perc alatt.")
-            print("⚠️  ZwiftApp.exe nem indult el 4 perc alatt.")
+            user_logger.warning("⚠️  ZwiftApp.exe nem indult el 4 perc alatt.")
 
     def _start_zwift_subprocess(self, script_name: str) -> None:
         """Elindít egy Zwift subprocess-t (zwift_api_polling).
@@ -3687,11 +3742,11 @@ class FanController:
 
         zone_mode = get_effective_zone_mode(s)
 
-        print("-" * 60)
-        print(f"  Smart Fan Controller v{__version__}  |  Power+HR → BLE Fan")
-        print("-" * 60)
+        user_logger.info("-" * 60)
+        user_logger.info(f"  Smart Fan Controller v{__version__}  |  Power+HR → BLE Fan")
+        user_logger.info("-" * 60)
         zt = s["power_zones"]
-        print(f"FTP: {zt.ftp}W | Érvényes tartomány: 0–{zt.max_watt}W")
+        user_logger.info(f"FTP: {zt.ftp}W | Érvényes tartomány: 0–{zt.max_watt}W")
 
         power_zones = calculate_power_zones(
             zt.ftp,
@@ -3700,10 +3755,10 @@ class FanController:
             zt.z1_max_percent,
             zt.z2_max_percent,
         )
-        print(f"Zóna határok: {power_zones}")
+        user_logger.info(f"Zóna határok: {power_zones}")
 
         if ds.power_source is not None:
-            print(
+            user_logger.info(
                 f"💪 Power buffer ({ds.power_source.upper()}): "
                 f"{power_buf['buffer_seconds']}s | "
                 f"minta: {power_buf['minimum_samples']} | "
@@ -3711,9 +3766,9 @@ class FanController:
                 f"dropout: {power_buf['dropout_timeout']}s"
             )
         else:
-            print("💪 Power forrás: KIKAPCSOLVA (null)")
+            user_logger.info("💪 Power forrás: KIKAPCSOLVA (null)")
         if ds.hr_source is not None:
-            print(
+            user_logger.info(
                 f"❤️  HR buffer    ({ds.hr_source.upper()}): "
                 f"{hr_buf['buffer_seconds']}s | "
                 f"minta: {hr_buf['minimum_samples']} | "
@@ -3721,29 +3776,29 @@ class FanController:
                 f"dropout: {hr_buf['dropout_timeout']}s"
             )
         else:
-            print("❤️  HR forrás:    KIKAPCSOLVA (null)")
+            user_logger.info("❤️  HR forrás:    KIKAPCSOLVA (null)")
 
-        print(
+        user_logger.info(
             f"Cooldown: {s['global_settings'].cooldown_seconds}s  |  "
             f"0W azonnali: {'Igen' if s['power_zones'].zero_power_immediate else 'Nem'}  |  "
             f"0HR azonnali: {'Igen' if hrz.zero_hr_immediate else 'Nem'}"
         )
         ble_cfg: BleConfig = s["ble"]
         if ble_cfg.device_name:
-            print(f"BLE Fan: {ble_cfg.device_name}")
+            user_logger.info(f"BLE Fan: {ble_cfg.device_name}")
         else:
-            print("BLE Fan: (auto-discovery – service UUID alapján)")
+            user_logger.info("BLE Fan: (auto-discovery – service UUID alapján)")
         if ble_cfg.pin_code:
-            print(f"BLE PIN: {'*' * len(ble_cfg.pin_code)}")
+            user_logger.info(f"BLE PIN: {'*' * len(ble_cfg.pin_code)}")
 
         # BLE szenzor auto-discovery jelzés
         if ds.power_source == DataSource.BLE and not ds.ble_power_device_name:
-            print("BLE Power: (auto-discovery – Cycling Power Service)")
+            user_logger.info("BLE Power: (auto-discovery – Cycling Power Service)")
         if ds.hr_source == DataSource.BLE and not ds.ble_hr_device_name:
-            print("BLE HR: (auto-discovery – Heart Rate Service)")
+            user_logger.info("BLE HR: (auto-discovery – Heart Rate Service)")
 
-        print(f"Zónamód: {zone_mode}")
-        print("-" * 60)
+        user_logger.info(f"Zónamód: {zone_mode}")
+        user_logger.info("-" * 60)
 
     async def run(self) -> None:
         """A vezérlő fő asyncio korrutinja – elindít mindent és vár."""
@@ -3970,9 +4025,9 @@ class FanController:
             )
         )
 
-        print()
-        print("🚴 Figyelés elindítva... (Ctrl+C a leállításhoz)")
-        print()
+        user_logger.info("")
+        user_logger.info("🚴 Figyelés elindítva... (Ctrl+C a leállításhoz)")
+        user_logger.info("")
 
         try:
             if self._tasks:
@@ -3988,7 +4043,7 @@ class FanController:
                 # Leállítás előtt LEVEL:0 küldése – ventilátor kikapcsolása
                 try:
                     await self._ble_fan._write_level(0)
-                    print("✓ Ventilátor leállítva (LEVEL:0)")
+                    user_logger.info("✓ Ventilátor leállítva (LEVEL:0)")
                 except Exception as exc:
                     logger.warning(f"LEVEL:0 küldése sikertelen leállításkor: {exc}")
                 await self._ble_fan.disconnect()
@@ -5303,15 +5358,7 @@ def main() -> None:
     if _platform.system() == "Windows" and sys.version_info < (3, 14):
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
-    # Fix #27: logging basicConfig – handler nélkül a logger.info/warning láthatatlan
-    logging.basicConfig(
-        level=logging.WARNING,
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-        datefmt="%H:%M:%S",
-    )
-    logging.getLogger("swift_fan_controller_new").setLevel(logging.ERROR)
-    logging.getLogger("bleak").setLevel(logging.CRITICAL)
-    logging.getLogger("openant").setLevel(logging.CRITICAL)
+    _setup_logging()
 
     # PyInstaller frozen exe: settings.json az exe mellett keresendő
     if getattr(sys, 'frozen', False):
@@ -5340,7 +5387,7 @@ def main() -> None:
         controller.stop()
 
     def signal_handler(signum: int, frame: Any) -> None:
-        print(f"\nSignal {signum} fogadva, leállítás...")
+        user_logger.info(f"\nSignal {signum} fogadva, leállítás...")
         cleanup()
         # A HUD close()-on keresztül indítjuk a leállítást, hogy a
         # shutdown hang lejátszódhasson. A closeEvent timer-je a hang
@@ -5435,7 +5482,7 @@ def main() -> None:
         try:
             hud.run()
         except KeyboardInterrupt:
-            print("\nLeállítás (Ctrl+C)...")
+            user_logger.info("\nLeállítás (Ctrl+C)...")
         finally:
             # Ha a HUD még nem kezdte a bezárást, elindítjuk a shutdown hangot
             if not getattr(hud, "_closing", False):
@@ -5464,14 +5511,14 @@ def main() -> None:
 
             asyncio_thread.join(timeout=3.0)
             loop.close()
-            print("\nProgram leállítva.")
+            user_logger.info("\nProgram leállítva.")
     else:
         logger.warning("PySide6 nem elérhető, HUD nélkül fut")
-        print("⚠ PySide6 nem elérhető – HUD nélkül fut. Ctrl+C a leállításhoz.")
+        user_logger.warning("⚠ PySide6 nem elérhető – HUD nélkül fut. Ctrl+C a leállításhoz.")
         try:
             asyncio_thread.join()
         except KeyboardInterrupt:
-            print("\nLeállítás (Ctrl+C)...")
+            user_logger.info("\nLeállítás (Ctrl+C)...")
         finally:
             cleanup()
             try:
@@ -5480,7 +5527,7 @@ def main() -> None:
                 logger.debug(f"shutdown_event.set hiba: {exc}")
             asyncio_thread.join(timeout=3.0)
             loop.close()
-            print("\nProgram leállítva.")
+            user_logger.info("\nProgram leállítva.")
 
 
 if __name__ == "__main__":
