@@ -4521,41 +4521,34 @@ class HUDWindow(QWidget):
     # ────────── FONT BETÖLTÉS ──────────
 
     def _try_load_lcars_font(self) -> None:
-        """Antonio font betöltése lokális cache-ből (ha korábban letöltődött)
-        vagy letöltése timeout-tal és felhasználói figyelmeztetéssel."""
+        """Antonio font betöltése a script melletti fonts/ mappából.
+
+        Keresési sorrend:
+          1. <script_dir>/fonts/Antonio-{Bold,Regular}.ttf
+          2. <exe_dir>/fonts/...  (PyInstaller frozen)
+        Ha a fontok nem találhatók, a program rendszer fontot használ fallback-ként.
+        """
         if _platform.system() != "Windows":
             return
         try:
-            import urllib.request
+            if getattr(sys, "frozen", False):
+                base_dir = os.path.dirname(os.path.abspath(sys.executable))
+            else:
+                base_dir = os.path.dirname(os.path.abspath(__file__))
+            font_dir = os.path.join(base_dir, "fonts")
 
-            font_dir = os.path.join(os.path.expanduser("~"), ".swift_fan_fonts")
-            os.makedirs(font_dir, exist_ok=True)
-
-            needs_download = False
-            for style in ("Bold", "Regular"):
-                fpath = os.path.join(font_dir, f"Antonio-{style}.ttf")
-                if not os.path.exists(fpath):
-                    needs_download = True
-                    break
-
-            if needs_download:
-                print("⏳ LCARS font (Antonio) letöltése első indításkor...")
-                for style in ("Bold", "Regular"):
-                    fpath = os.path.join(font_dir, f"Antonio-{style}.ttf")
-                    if not os.path.exists(fpath):
-                        url = (
-                            "https://raw.githubusercontent.com/google/fonts/main/"
-                            f"ofl/antonio/static/Antonio-{style}.ttf"
-                        )
-                        with urllib.request.urlopen(url, timeout=10) as resp:
-                            with open(fpath, "wb") as out:
-                                out.write(resp.read())
-                print("✓ LCARS font letöltve.")
-
+            loaded = 0
             for style in ("Bold", "Regular"):
                 fpath = os.path.join(font_dir, f"Antonio-{style}.ttf")
                 if os.path.exists(fpath):
                     QFontDatabase.addApplicationFont(fpath)
+                    loaded += 1
+
+            if loaded == 0:
+                logger.info(
+                    f"LCARS fontok nem találhatók a {font_dir} mappában – "
+                    f"rendszer font használata. Lásd: fonts/README.txt"
+                )
         except Exception as exc:
             logger.warning(f"LCARS font betöltés sikertelen (rendszer font használata): {exc}")
 
