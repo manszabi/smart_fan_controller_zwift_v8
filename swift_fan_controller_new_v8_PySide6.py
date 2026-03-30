@@ -641,6 +641,24 @@ def _save_default_settings(path: str, settings: Dict[str, Any]) -> None:
 # ============================================================
 
 
+def get_effective_zone_mode(settings: Dict[str, Any]) -> ZoneMode:
+    """Meghatározza az effektív zóna módot a beállítások alapján.
+
+    Ha a HR nincs engedélyezve (enabled=False), mindig POWER_ONLY-t ad vissza,
+    függetlenül a zone_mode beállítástól.
+
+    Args:
+        settings: Betöltött beállítások dict-je.
+
+    Returns:
+        Az effektív ZoneMode.
+    """
+    hrz = settings.get("heart_rate_zones", {})
+    if not hrz.get("enabled", False):
+        return ZoneMode.POWER_ONLY
+    return hrz.get("zone_mode", ZoneMode.POWER_ONLY)
+
+
 def _resolve_buffer_settings(settings: Dict[str, Any], role: str) -> Dict[str, Any]:
     """
     Visszaadja a megfelelő buffer/dropout paramétereket a megadott szerephez.
@@ -2699,12 +2717,7 @@ async def power_processor_task(
     """
     min_watt = settings["power_zones"]["min_watt"]
     max_watt = settings["power_zones"]["max_watt"]
-    hr_enabled = settings.get("heart_rate_zones", {}).get("enabled", False)
-    zone_mode = (
-        settings["heart_rate_zones"].get("zone_mode", ZoneMode.POWER_ONLY)
-        if hr_enabled
-        else ZoneMode.POWER_ONLY
-    )
+    zone_mode = get_effective_zone_mode(settings)
 
     logger.info("Power processor korrutin elindítva")
 
@@ -2790,12 +2803,7 @@ async def hr_processor_task(
         hr_zones: Kiszámított HR zóna határok.
     """
     hrz = settings.get("heart_rate_zones", {})
-    hr_enabled = settings.get("heart_rate_zones", {}).get("enabled", False)
-    zone_mode = (
-        settings["heart_rate_zones"].get("zone_mode", ZoneMode.POWER_ONLY)
-        if hr_enabled
-        else ZoneMode.POWER_ONLY
-    )
+    zone_mode = get_effective_zone_mode(settings)
     valid_min_hr: int = hrz.get("valid_min_hr", 30)
     valid_max_hr: int = hrz.get("valid_max_hr", 220)
 
@@ -2890,12 +2898,7 @@ async def zone_controller_task(
         settings: Betöltött beállítások dict-je.
         zone_event: asyncio.Event – jelzi, hogy új adat érkezett.
     """
-    hr_enabled = settings.get("heart_rate_zones", {}).get("enabled", False)
-    zone_mode = (
-        settings["heart_rate_zones"].get("zone_mode", ZoneMode.POWER_ONLY)
-        if hr_enabled
-        else ZoneMode.POWER_ONLY
-    )
+    zone_mode = get_effective_zone_mode(settings)
     zero_power_immediate = settings["power_zones"].get("zero_power_immediate", False)
     zero_hr_immediate = settings["heart_rate_zones"].get("zero_hr_immediate", False)
     power_buf = _resolve_buffer_settings(settings, "power")
@@ -3563,8 +3566,7 @@ class FanController:
         power_buf = _resolve_buffer_settings(s, "power")
         hr_buf = _resolve_buffer_settings(s, "hr")
 
-        hr_enabled = hrz.get("enabled", False)
-        zone_mode = hrz.get("zone_mode", ZoneMode.POWER_ONLY) if hr_enabled else ZoneMode.POWER_ONLY
+        zone_mode = get_effective_zone_mode(s)
 
         print("-" * 60)
         print(f"  Smart Fan Controller v{__version__}  |  Power+HR → BLE Fan")
@@ -3630,10 +3632,7 @@ class FanController:
         s = self.settings
         ds = s["datasource"]
         hr_enabled = s.get("heart_rate_zones", {}).get("enabled", False)
-        if hr_enabled:
-            zone_mode = s["heart_rate_zones"].get("zone_mode", ZoneMode.POWER_ONLY)
-        else:
-            zone_mode = ZoneMode.POWER_ONLY
+        zone_mode = get_effective_zone_mode(s)
 
         # --- Zóna határok kiszámítása ---
         power_zones = calculate_power_zones(
