@@ -179,6 +179,124 @@ logger = logging.getLogger("swift_fan_controller_new")
 
 
 # ============================================================
+# TÍPUSBIZTOS BEÁLLÍTÁS MODELLEK
+# ============================================================
+
+
+@dataclasses.dataclass
+class PowerZonesConfig:
+    """Teljesítmény zóna beállítások – típusbiztos, validált.
+
+    Validáció a __post_init__-ben:
+      - min_watt < max_watt (felcserélés ha szükséges)
+      - z1_max_percent < z2_max_percent (rendezés ha szükséges)
+    """
+
+    ftp: int = 200
+    min_watt: int = 0
+    max_watt: int = 1000
+    z1_max_percent: int = 60
+    z2_max_percent: int = 89
+    zero_power_immediate: bool = False
+
+    def __post_init__(self) -> None:
+        # min_watt / max_watt kereszt-validáció
+        if self.min_watt > self.max_watt:
+            print(
+                f"⚠ Érvénytelen watt tartomány (min_watt={self.min_watt}, max_watt={self.max_watt}). "
+                f"Feltételezett felcserélés, értékek megfordítva."
+            )
+            self.min_watt, self.max_watt = self.max_watt, self.min_watt
+        elif self.min_watt == self.max_watt:
+            print(
+                f"⚠ min_watt és max_watt azonos értékű ({self.min_watt}). "
+                f"max_watt {self.min_watt + 1}-re állítva."
+            )
+            self.max_watt = self.min_watt + 1
+
+        # z1/z2 százalék kereszt-validáció
+        if self.z1_max_percent >= self.z2_max_percent:
+            low, high = min(self.z1_max_percent, self.z2_max_percent), max(self.z1_max_percent, self.z2_max_percent)
+            if low == high:
+                if low >= 100:
+                    low, high = 99, 100
+                else:
+                    high = low + 1
+            print(
+                f"⚠ Érvénytelen power zóna százalékok (z1={self.z1_max_percent}, z2={self.z2_max_percent}). "
+                f"Javítva: z1={low}, z2={high}."
+            )
+            self.z1_max_percent, self.z2_max_percent = low, high
+
+    @classmethod
+    def from_dict(cls, raw: dict[str, Any], defaults: "PowerZonesConfig | None" = None) -> "PowerZonesConfig":
+        """Dict-ből (JSON) hoz létre validált PowerZonesConfig példányt.
+
+        Érvénytelen értékeket figyelmen kívül hagyja (az alapértelmezés marad).
+
+        Args:
+            raw: A JSON-ból betöltött dict.
+            defaults: Alapértelmezett értékek (None = osztály default-ok).
+        """
+        d = defaults or cls()
+        ftp = d.ftp
+        min_watt = d.min_watt
+        max_watt = d.max_watt
+        z1 = d.z1_max_percent
+        z2 = d.z2_max_percent
+        zpi = d.zero_power_immediate
+
+        if "ftp" in raw:
+            v = raw["ftp"]
+            if isinstance(v, int) and not isinstance(v, bool) and 100 <= v <= 500:
+                ftp = v
+            else:
+                print(f"⚠ Érvénytelen 'ftp' érték: {v} (100–500 közötti egész kell)")
+
+        if "min_watt" in raw:
+            v = raw["min_watt"]
+            if isinstance(v, int) and not isinstance(v, bool) and 0 <= v <= 9999:
+                min_watt = v
+            else:
+                print(f"⚠ Érvénytelen 'min_watt' érték: {v} (0–9999 közötti egész kell)")
+
+        if "max_watt" in raw:
+            v = raw["max_watt"]
+            if isinstance(v, int) and not isinstance(v, bool) and 1 <= v <= 100000:
+                max_watt = v
+            else:
+                print(f"⚠ Érvénytelen 'max_watt' érték: {v} (1–100000 közötti egész kell)")
+
+        if "z1_max_percent" in raw:
+            v = raw["z1_max_percent"]
+            if isinstance(v, int) and not isinstance(v, bool) and 1 <= v <= 100:
+                z1 = v
+            else:
+                print(f"⚠ Érvénytelen 'z1_max_percent' érték: {v} (1–100 közötti egész kell)")
+
+        if "z2_max_percent" in raw:
+            v = raw["z2_max_percent"]
+            if isinstance(v, int) and not isinstance(v, bool) and 1 <= v <= 100:
+                z2 = v
+            else:
+                print(f"⚠ Érvénytelen 'z2_max_percent' érték: {v} (1–100 közötti egész kell)")
+
+        if "zero_power_immediate" in raw:
+            v = raw["zero_power_immediate"]
+            if isinstance(v, bool):
+                zpi = v
+            else:
+                print(f"⚠ Érvénytelen 'zero_power_immediate' érték: {v} (true/false kell)")
+
+        return cls(ftp=ftp, min_watt=min_watt, max_watt=max_watt,
+                   z1_max_percent=z1, z2_max_percent=z2, zero_power_immediate=zpi)
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Visszaadja dict formában (JSON serializáláshoz)."""
+        return dataclasses.asdict(self)
+
+
+# ============================================================
 # ALAPÉRTELMEZETT BEÁLLÍTÁSOK
 # ============================================================
 
@@ -190,14 +308,7 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
         "buffer_rate_hz": 4,
         "dropout_timeout": 5,
     },
-    "power_zones": {
-        "ftp": 180,
-        "min_watt": 0,
-        "max_watt": 1000,
-        "z1_max_percent": 60,
-        "z2_max_percent": 89,
-        "zero_power_immediate": False,
-    },
+    "power_zones": PowerZonesConfig(),
     "heart_rate_zones": {
         "enabled": True,
         "max_hr": 185,
@@ -307,13 +418,7 @@ def load_settings(settings_file: str = "settings.json") -> Dict[str, Any]:
         _load_int(gs, settings["global_settings"], "dropout_timeout", 1, 120)
     # --- Teljesítmény zóna beállítások ---
     if isinstance(loaded.get("power_zones"), dict):
-        pz = loaded["power_zones"]
-        _load_int(pz, settings["power_zones"], "ftp", 100, 500)
-        _load_int(pz, settings["power_zones"], "min_watt", 0, 9999)
-        _load_int(pz, settings["power_zones"], "max_watt", 1, 100000)
-        _load_int(pz, settings["power_zones"], "z1_max_percent", 1, 100)
-        _load_int(pz, settings["power_zones"], "z2_max_percent", 1, 100)
-        _load_bool(pz, settings["power_zones"], "zero_power_immediate")
+        settings["power_zones"] = PowerZonesConfig.from_dict(loaded["power_zones"])
 
     # --- BLE kimeneti beállítások ---
     if isinstance(loaded.get("ble"), dict):
@@ -452,48 +557,7 @@ def load_settings(settings_file: str = "settings.json") -> Dict[str, Any]:
     except Exception as exc:
         print(f"⚠ minimum_samples/buffer_seconds kereszt-validáció sikertelen: {exc}")
 
-    # 2) Power zóna: min_watt < max_watt
-    try:
-        zt: dict[str, Any] = settings.get("power_zones") or {}
-        min_watt = zt.get("min_watt")
-        max_watt = zt.get("max_watt")
-        if isinstance(min_watt, int) and isinstance(max_watt, int):
-            if min_watt > max_watt:
-                print(
-                    f"⚠ Érvénytelen watt tartomány (min_watt={min_watt}, max_watt={max_watt}). "
-                    f"Feltételezett felcserélés, értékek megfordítva."
-                )
-                zt["min_watt"], zt["max_watt"] = max_watt, min_watt
-            elif min_watt == max_watt:
-                print(
-                    f"⚠ min_watt és max_watt azonos értékű ({min_watt}). "
-                    f"max_watt {min_watt + 1}-re állítva."
-                )
-                zt["max_watt"] = min_watt + 1
-    except Exception as exc:
-        print(f"⚠ Watt zóna kereszt-validáció sikertelen: {exc}")
-
-    # 3) Power zóna százalékok: z1_max_percent < z2_max_percent
-    try:
-        zt: dict[str, Any] = settings.get("power_zones") or {}
-        z1p = zt.get("z1_max_percent")
-        z2p = zt.get("z2_max_percent")
-        if isinstance(z1p, int) and isinstance(z2p, int) and z1p >= z2p:
-            low, high = min(z1p, z2p), max(z1p, z2p)
-            if low == high:
-                if low >= 100:
-                    low = 99
-                    high = 100
-                else:
-                    high = low + 1
-            print(
-                f"⚠ Érvénytelen power zóna százalékok (z1={z1p}, z2={z2p}). "
-                f"Javítva: z1={low}, z2={high}."
-            )
-            zt["z1_max_percent"] = low
-            zt["z2_max_percent"] = high
-    except Exception as exc:
-        print(f"⚠ Power zóna százalék kereszt-validáció sikertelen: {exc}")
+    # 2-3) Power zóna validáció a PowerZonesConfig.__post_init__()-ban történik
 
     # 4) HR zónák: z1_max_percent < z2_max_percent és resting_hr < max_hr
     try:
@@ -626,11 +690,22 @@ def _load_bool(src: dict[str, Any], dst: dict[str, Any], key: str) -> None:
             print(f"⚠ Érvénytelen '{key}' érték: {src[key]} (true/false kell)")
 
 
+def _settings_to_serializable(settings: Dict[str, Any]) -> Dict[str, Any]:
+    """Settings dict-et JSON-serializálható formára alakít (dataclass → dict)."""
+    out = {}
+    for k, v in settings.items():
+        if dataclasses.is_dataclass(v) and not isinstance(v, type):
+            out[k] = dataclasses.asdict(v)
+        else:
+            out[k] = v
+    return out
+
+
 def _save_default_settings(path: str, settings: Dict[str, Any]) -> None:
     """Létrehozza az alapértelmezett settings.json fájlt."""
     try:
         with open(path, "w", encoding="utf-8") as f:
-            json.dump(settings, f, indent=2, ensure_ascii=False)
+            json.dump(_settings_to_serializable(settings), f, indent=2, ensure_ascii=False)
         print(f"✓ Alapértelmezett '{path}' létrehozva.")
     except OSError as exc:
         print(f"✗ Nem sikerült létrehozni a '{path}' fájlt: {exc}")
@@ -2655,8 +2730,8 @@ class ZwiftUDPInputHandler:
 
         if self.process_power and "power" in pkt:
             p: int | float = pkt["power"]
-            min_watt = self.settings["power_zones"]["min_watt"]
-            max_watt = self.settings["power_zones"]["max_watt"]
+            min_watt = self.settings["power_zones"].min_watt
+            max_watt = self.settings["power_zones"].max_watt
             if is_valid_power(p, min_watt, max_watt):
                 try:
                     self.power_queue.put_nowait(round(p))
@@ -2715,8 +2790,8 @@ async def power_processor_task(
         settings: Betöltött beállítások dict-je.
         power_zones: Kiszámított power zóna határok.
     """
-    min_watt = settings["power_zones"]["min_watt"]
-    max_watt = settings["power_zones"]["max_watt"]
+    min_watt = settings["power_zones"].min_watt
+    max_watt = settings["power_zones"].max_watt
     zone_mode = get_effective_zone_mode(settings)
 
     logger.info("Power processor korrutin elindítva")
@@ -2899,7 +2974,7 @@ async def zone_controller_task(
         zone_event: asyncio.Event – jelzi, hogy új adat érkezett.
     """
     zone_mode = get_effective_zone_mode(settings)
-    zero_power_immediate = settings["power_zones"].get("zero_power_immediate", False)
+    zero_power_immediate = settings["power_zones"].zero_power_immediate
     zero_hr_immediate = settings["heart_rate_zones"].get("zero_hr_immediate", False)
     power_buf = _resolve_buffer_settings(settings, "power")
     hr_buf = _resolve_buffer_settings(settings, "hr")
@@ -3572,14 +3647,14 @@ class FanController:
         print(f"  Smart Fan Controller v{__version__}  |  Power+HR → BLE Fan")
         print("-" * 60)
         zt = s["power_zones"]
-        print(f"FTP: {zt['ftp']}W | Érvényes tartomány: 0–{zt['max_watt']}W")
+        print(f"FTP: {zt.ftp}W | Érvényes tartomány: 0–{zt.max_watt}W")
 
         power_zones = calculate_power_zones(
-            zt["ftp"],
-            zt["min_watt"],
-            zt["max_watt"],
-            zt["z1_max_percent"],
-            zt["z2_max_percent"],
+            zt.ftp,
+            zt.min_watt,
+            zt.max_watt,
+            zt.z1_max_percent,
+            zt.z2_max_percent,
         )
         print(f"Zóna határok: {power_zones}")
 
@@ -3606,7 +3681,7 @@ class FanController:
 
         print(
             f"Cooldown: {s['global_settings']['cooldown_seconds']}s  |  "
-            f"0W azonnali: {'Igen' if s['power_zones'].get('zero_power_immediate', False) else 'Nem'}  |  "
+            f"0W azonnali: {'Igen' if s['power_zones'].zero_power_immediate else 'Nem'}  |  "
             f"0HR azonnali: {'Igen' if s['heart_rate_zones'].get('zero_hr_immediate', False) else 'Nem'}"
         )
         ble_fan_name = s["ble"]["device_name"]
@@ -3636,11 +3711,11 @@ class FanController:
 
         # --- Zóna határok kiszámítása ---
         power_zones = calculate_power_zones(
-            s["power_zones"]["ftp"],
-            s["power_zones"]["min_watt"],
-            s["power_zones"]["max_watt"],
-            s["power_zones"]["z1_max_percent"],
-            s["power_zones"]["z2_max_percent"],
+            s["power_zones"].ftp,
+            s["power_zones"].min_watt,
+            s["power_zones"].max_watt,
+            s["power_zones"].z1_max_percent,
+            s["power_zones"].z2_max_percent,
         )
         hr_zones = (
             calculate_hr_zones(
@@ -4750,7 +4825,7 @@ class HUDWindow(QWidget):
         settings["hud"][key] = value
         try:
             with open(self._ctrl.settings_file, "w", encoding="utf-8") as f:
-                json.dump(settings, f, indent=2, ensure_ascii=False)
+                json.dump(_settings_to_serializable(settings), f, indent=2, ensure_ascii=False)
             logger.info(f"HUD beállítás mentve: hud.{key} = {value}")
         except OSError as exc:
             logger.warning(f"Settings mentési hiba: {exc}")
@@ -5035,9 +5110,7 @@ class HUDWindow(QWidget):
                 self._update_label(self._lbl_cool, "\u2013 \u2013 \u2013", c)
 
             # ── Állapot csík frissítése (aktív = villogó háttér) ──
-            zpi = self._ctrl.settings["power_zones"].get(
-                "zero_power_immediate", False
-            )
+            zpi = self._ctrl.settings["power_zones"].zero_power_immediate
             if zpi:
                 bg = self._lighten(self.LCARS_CYAN) if flash_white else self.LCARS_CYAN
             else:
