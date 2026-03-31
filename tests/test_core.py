@@ -4,11 +4,11 @@ Futtatás: pytest tests/ -v
 """
 from __future__ import annotations
 
-import dataclasses
 import os
 import shutil
 import tempfile
 import time
+from unittest.mock import patch
 
 import pytest
 
@@ -272,13 +272,19 @@ class TestCooldownController:
         assert result == 1
 
     def test_cooldown_expires(self):
-        """Cooldown lejárta után alkalmazódik a várakozó zóna."""
-        cc = CooldownController(cooldown_seconds=1)
-        cc.process(None, 3, False)
-        cc.process(3, 1, False)
-        assert cc.active
-        time.sleep(1.1)
-        result = cc.process(3, 1, False)
+        """Cooldown lejárta után alkalmazódik a várakozó zóna.
+
+        A 3→1 zónaesés (>=2 szint) auto-felezést triggerel: 60s → 30s.
+        A mock 61s-t szimulál, tehát biztosan lejár.
+        """
+        clock = [1000.0]
+        with patch("time.monotonic", side_effect=lambda: clock[0]):
+            cc = CooldownController(cooldown_seconds=60)
+            cc.process(None, 3, False)       # init
+            cc.process(3, 1, False)          # cooldown indul + auto-felezés (30s)
+            assert cc.active
+            clock[0] = 1061.0                # 61s később → biztosan lejárt
+            result = cc.process(3, 1, False)
         assert result == 1
         assert not cc.active
 
@@ -304,12 +310,15 @@ class TestCooldownController:
 
     def test_snapshot_active(self):
         """Snapshot aktív cooldown-ról."""
-        cc = CooldownController(cooldown_seconds=60)
-        cc.process(None, 3, False)
-        cc.process(3, 1, False)
-        active, remaining = cc.snapshot()
+        clock = [1000.0]
+        with patch("time.monotonic", side_effect=lambda: clock[0]):
+            cc = CooldownController(cooldown_seconds=60)
+            cc.process(None, 3, False)
+            cc.process(3, 1, False)  # cooldown indul, 3→1 (>=2 szint) → felezés: 30s
+            clock[0] = 1010.0        # 10s eltelt → maradék ~20s
+            active, remaining = cc.snapshot()
         assert active is True
-        assert 0 < remaining <= 60
+        assert 19.0 <= remaining <= 21.0  # ~20s (30s felezett cooldown - 10s)
 
     def test_snapshot_inactive(self):
         cc = CooldownController(cooldown_seconds=60)
