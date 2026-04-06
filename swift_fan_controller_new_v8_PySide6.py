@@ -2277,6 +2277,7 @@ class ANTPlusInputHandler:
         )
 
         self._running = threading.Event()
+        self._stop_event = threading.Event()  # watchdog leállító jelzés
         self._node: Optional[Any] = None
         self._devices: list[Any] = []
         self._lastdata: float = 0.0  # utolsó bármilyen adat ideje (thread loop használja)
@@ -2293,6 +2294,7 @@ class ANTPlusInputHandler:
             A létrehozott daemon threading.Thread objektum.
         """
         self._running.set()
+        self._stop_event.clear()  # watchdog újraindulásához
         t = threading.Thread(
             target=self._thread_loop, daemon=True, name="ANTPlus-Thread"
         )
@@ -2315,6 +2317,7 @@ class ANTPlusInputHandler:
     def stop(self) -> None:
         """Leállítja az ANT+ szálat és az ANT+ node-ot."""
         self._running.clear()
+        self._stop_event.set()  # watchdog szál felébresztése és leállítása
         self._stop_node()
 
     def _put_power(self, power: float) -> None:
@@ -2447,11 +2450,11 @@ class ANTPlusInputHandler:
         Ez a watchdog detektálja a helyzetet és kívülről hívja a node.stop()-ot,
         ami lehetővé teszi a _thread_loop retry logikájának lefutását.
         """
-        while self._running.is_set():
-            # 5 mp-enként ellenőrzi
-            self._running.wait(timeout=5)
-            if not self._running.is_set():
-                break
+        # _running.is_set() == True normális működésnél, ezért NEM használható
+        # wait(timeout)-ra (azonnal visszatérne). Helyette _stop_event-et
+        # használunk, ami CSAK leálláskor lesz set.
+        stop_event = self._stop_event
+        while not stop_event.wait(timeout=5):
             node = self._node
             if node is None:
                 continue
@@ -2467,6 +2470,7 @@ class ANTPlusInputHandler:
                     f"ANT+ watchdog: {self.WATCHDOG_TIMEOUT}s óta nincs adat, "
                     f"node leállítása..."
                 )
+                self._lastdata = 0.0  # Megakadályozza az ismételt triggerelést
                 try:
                     node.stop()
                 except Exception as exc:
@@ -2478,6 +2482,7 @@ class ANTPlusInputHandler:
                     f"ANT+ watchdog: {self.WATCHDOG_TIMEOUT * 2}s óta nem érkezett "
                     f"adat az indítás óta, node leállítása..."
                 )
+                self._node_started = 0.0  # Megakadályozza az ismételt triggerelést
                 try:
                     node.stop()
                 except Exception as exc:
