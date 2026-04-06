@@ -18,8 +18,8 @@
 // ============================================================
 // VERZIÓ INFORMÁCIÓ
 // ============================================================
-#define FIRMWARE_VERSION "5.2.0"
-#define FIRMWARE_DATE "2026-03-03"
+#define FIRMWARE_VERSION "6.0.0"
+#define FIRMWARE_DATE "2026-04-04"
 
 // ============================================================
 // PIN KIOSZTÁS
@@ -57,13 +57,16 @@ const unsigned long BLE_ZONE_TIMEOUT_MS = 600000;  // 10 perc
 // WiFi STA mód timeout
 unsigned long wifiStartTime = 0;
 const unsigned long WIFI_STA_TIMEOUT_MS = 180000;
-bool wifiTimeoutDisabled = false;  // WebSerial "notimeout" paranccsal tiltható
-bool wifiStopRequested = false;   // WebSerial "wifistop" parancs flag
-bool wifiStopPending = false;     // WiFi leállítás folyamatban (millis késleltetéssel)
+bool wifiTimeoutDisabled = false;       // WebSerial "notimeout" paranccsal tiltható
+bool wifiStopRequested = false;         // WebSerial "wifistop" parancs flag
+bool wifiStopPending = false;           // WiFi leállítás folyamatban (millis késleltetéssel)
 unsigned long wifiStopRequestTime = 0;  // A kérés időpontja
 // Deep sleep visszaszámláló
 unsigned long lastSleepCountdown = 0;
 const unsigned long SLEEP_COUNTDOWN_INTERVAL = 30000;  // 0,5 percenként
+bool webServerConfigured = false;
+bool configPortalConfigured = false;
+bool webServerRunning = false;
 
 // ============================================================
 // BLE UUIDs
@@ -240,8 +243,6 @@ bool loadWiFiConfig();
 void saveWiFiConfig();
 void setupWiFiSTA();
 void setupWiFiAP();
-void setupWebServer();
-void setupConfigPortal();
 void recvMsg(uint8_t* data, size_t len);
 void onOTAStart();
 void onOTAProgress(size_t current, size_t final_size);
@@ -250,6 +251,11 @@ void handleClick();
 void handleLongPressStop();
 void handleDoubleClick();
 void handleMultiClick();
+void configureWebServer();
+void configureConfigPortal();
+void startWebServer();
+void stopWebServer();
+void listPartitions();
 
 // ============================================================
 // WebSerial CALLBACK
@@ -548,60 +554,81 @@ void setupWiFiAP() {
 }
 
 // ============================================================
-// WEB SZERVER SETUP
+// WEB SZERVER SETUP új verzió
 // ============================================================
-void setupWebServer() {
+
+void configureWebServer() {
+  if (webServerConfigured) return;
+
+  ws.onEvent([](AsyncWebSocket* server, AsyncWebSocketClient* client,
+                AwsEventType type, void* arg, uint8_t* data, size_t len) {
+    if (type == WS_EVT_CONNECT) {
+      Serial.println(F("WebSocket kliens csatlakozott"));
+    } else if (type == WS_EVT_DISCONNECT) {
+      Serial.println(F("WebSocket kliens szetkapcsolodott"));
+    }
+  });
+
+  server.addHandler(&ws);
+
+  server.on("/", HTTP_GET, [](AsyncWebServerRequest* request) {
+    request->send(200, "text/html",
+                  "<html><head><meta charset='UTF-8'></head>"
+                  "<body style='font-family:monospace;background:#1e1e1e;color:#4ec9b0;padding:50px;text-align:center;'>"
+                  "<h1>ESP32 Fan Controller v" FIRMWARE_VERSION "</h1>"
+                  "<p><a href='/webserial' style='color:#569cd6;'>WebSerial</a> | "
+                  "<a href='/update' style='color:#569cd6;'>OTA Update</a></p>"
+                  "</body></html>");
+  });
+
+  ElegantOTA.begin(&server);
+  ElegantOTA.onStart(onOTAStart);
+  ElegantOTA.onProgress(onOTAProgress);
+  ElegantOTA.onEnd(onOTAEnd);
+  ElegantOTA.setAutoReboot(false);
+
+  WebSerial.begin(&server);
+  WebSerial.onMessage(recvMsg);
+
+  webServerConfigured = true;
+  Serial.println(F("Web szerver route-ok + WebSerial + ElegantOTA konfiguralva"));
+}
+
+void startWebServer() {
+  if (!webServerConfigured) {
+    configureWebServer();
+  }
+
+  if (webServerRunning) return;
+
+  server.begin();
+  webServerRunning = true;
+
+  Serial.println(F("Web szerver elinditva"));
   if (wifiConnected) {
-    // STA MÓD: WebSocket + WebSerial + ElegantOTA
-
-    ws.onEvent([](AsyncWebSocket* server, AsyncWebSocketClient* client,
-                  AwsEventType type, void* arg, uint8_t* data, size_t len) {
-      if (type == WS_EVT_CONNECT) {
-        Serial.println(F("WebSocket kliens csatlakozott"));
-      } else if (type == WS_EVT_DISCONNECT) {
-        Serial.println(F("WebSocket kliens szétkapcsolodott"));
-      }
-    });
-    server.addHandler(&ws);
-
-    // Főoldal
-    server.on("/", HTTP_GET, [](AsyncWebServerRequest* request) {
-      request->send(200, "text/html",
-                    "<html><head><meta charset='UTF-8'></head>"
-                    "<body style='font-family:monospace;background:#1e1e1e;color:#4ec9b0;padding:50px;text-align:center;'>"
-                    "<h1>ESP32 Fan Controller v" FIRMWARE_VERSION "</h1>"
-                    "<p><a href='/webserial' style='color:#569cd6;'>WebSerial</a> | "
-                    "<a href='/update' style='color:#569cd6;'>OTA Update</a></p>"
-                    "</body></html>");
-    });
-
-    // ElegantOTA
-    ElegantOTA.begin(&server);
-    ElegantOTA.onStart(onOTAStart);
-    ElegantOTA.onProgress(onOTAProgress);
-    ElegantOTA.onEnd(onOTAEnd);
-    ElegantOTA.setAutoReboot(false);
-
-    // WebSerial (CSAK STA módban!)
-    WebSerial.begin(&server);
-    WebSerial.onMessage(recvMsg);
-
-    Serial.println(F("WebSerial es ElegantOTA elindítva!"));
     Serial.print(F("  WebSerial: http://"));
     Serial.print(WiFi.localIP());
     Serial.println(F("/webserial"));
     Serial.print(F("  OTA: http://"));
     Serial.print(WiFi.localIP());
     Serial.println(F("/update"));
-
-  } else {
-    // AP MÓD: Config Portal CSAK (nincs WebSerial!)
-    Serial.println(F("Web szerver elindítva, Config Portal. (port 80)"));
-    setupConfigPortal();
+  } else if (apMode) {
+    Serial.print(F("  Config portal: http://"));
+    Serial.println(WiFi.softAPIP());
   }
+}
 
-  server.begin();
-  Serial.println(F("Web szerver elindítva (port 80)"));
+void stopWebServer() {
+  if (!webServerRunning) return;
+
+  ws.closeAll();
+  delay(50);
+  ws.cleanupClients();
+  server.end();
+  delay(50);
+
+  webServerRunning = false;
+  Serial.println(F("Web szerver leallitva"));
 }
 
 // ============================================================
@@ -647,9 +674,12 @@ String configProcessor(const String& var) {
 }
 
 // ============================================================
-// CONFIG PORTAL (AP módban)
+// CONFIG PORTAL (AP módban) új verzió
 // ============================================================
-void setupConfigPortal() {
+
+void configureConfigPortal() {
+  if (configPortalConfigured) return;
+
   server.on("/", HTTP_GET, [](AsyncWebServerRequest* request) {
     request->send_P(200, "text/html", CONFIG_HTML, configProcessor);
   });
@@ -658,14 +688,18 @@ void setupConfigPortal() {
     if (request->hasParam("ssid", true) && request->hasParam("password", true) && request->hasParam("ip", true) && request->hasParam("gateway", true)) {
 
       strncpy(wifiConfig.ssid, request->getParam("ssid", true)->value().c_str(), sizeof(wifiConfig.ssid) - 1);
+      wifiConfig.ssid[sizeof(wifiConfig.ssid) - 1] = '\0';
+
       strncpy(wifiConfig.password, request->getParam("password", true)->value().c_str(), sizeof(wifiConfig.password) - 1);
+      wifiConfig.password[sizeof(wifiConfig.password) - 1] = '\0';
+
       wifiConfig.ip.fromString(request->getParam("ip", true)->value());
       wifiConfig.gateway.fromString(request->getParam("gateway", true)->value());
 
       saveWiFiConfig();
 
       request->send(200, "text/html",
-                    "<html><body><h2>Mentve! Újraindítás...</h2></body></html>");
+                    "<html><body><h2>Mentve! Ujrainditas...</h2></body></html>");
 
       delay(2000);
       bootCount = 98;
@@ -674,6 +708,8 @@ void setupConfigPortal() {
       request->send(400, "text/plain", "Hianyzo parameterek!");
     }
   });
+
+  configPortalConfigured = true;
 }
 
 // ============================================================
@@ -830,7 +866,6 @@ void handleLongPressStop() {
 }
 
 void handleDoubleClick() {
-  // Debounce: ne fusson le 1 sec-en belül kétszer
   unsigned long now = millis();
   if (now - lastDoubleClickTime < DOUBLE_CLICK_COOLDOWN) {
     return;
@@ -843,7 +878,6 @@ void handleDoubleClick() {
     manualMode = true;
     logPrintln("Manualis mod AKTIV - minden leall");
 
-    // BLE leállítás
     if (bleConnected) {
       pServer->disconnect(0);
       delay(100);
@@ -853,24 +887,15 @@ void handleDoubleClick() {
     bleConnected = false;
 
     if (!otaInProgress) {
-      if (wifiConnected) {
-        // STA mód: WebSocket + Web szerver leállítás
-        ws.closeAll();
-        delay(50);
-        ws.cleanupClients();
-        server.end();
-        delay(50);
-      } else if (apMode) {
-        // AP mód: Config Portal leállítás
-        server.end();
-        delay(50);
+      if (wifiConnected || apMode) {
+        stopWebServer();
       }
 
-      // WiFi leállítás
       if (apMode) {
         WiFi.softAPdisconnect(true);
         apMode = false;
       }
+
       WiFi.disconnect(true);
       delay(50);
       WiFi.mode(WIFI_OFF);
@@ -887,7 +912,6 @@ void handleDoubleClick() {
     setFanZone(manualZoneIndex, SRC_BUTTON);
 
   } else {
-    // 0 → 1 → 2 → 3 → 0 → 1 → 2 → 3 ...
     manualZoneIndex = (manualZoneIndex + 1) % 4;
     setFanZone(manualZoneIndex, SRC_BUTTON);
   }
@@ -939,9 +963,27 @@ void handleMultiClick() {
 
   if (clicks > 3) {
     Serial.println(F("Háromnál több kattintás jött!"));
-    Serial.println(F("Semmi nem történt."));
+    lastActivityTime = millis();
+    Serial.println(F("Inaktivitas visszaszamlalo ujrainditasa."));
     return;
   }
+}
+
+void listPartitions() {
+  esp_partition_iterator_t it = esp_partition_find(ESP_PARTITION_TYPE_ANY, ESP_PARTITION_SUBTYPE_ANY, NULL);
+  if (it == NULL) {
+    Serial.println(F("Nincs particio info"));
+    return;
+  }
+  Serial.println(F("Name | Type | SubType | Offset | Size"));
+  while (it != NULL) {
+    const esp_partition_t* partition = esp_partition_get(it);
+    Serial.printf("%-20s | 0x%02x | 0x%02x | 0x%08x | 0x%08x\n",
+                  partition->label, partition->type, partition->subtype,
+                  partition->address, partition->size);
+    it = esp_partition_next(it);
+  }
+  esp_partition_iterator_release(it);
 }
 
 // ============================================================
@@ -972,7 +1014,6 @@ void setup() {
 
     if (bootCount == 0 || bootCount == 99) {
       Serial.println(F("Restart/boot - az ESP marad ébren (WiFi/BLE indul)"));
-      // Itt folytasd: WiFi.begin(), BLEDevice::init(), stb.
     } else {
       Serial.println(F("Automatikus visszaalvás..."));
       Serial.flush();
@@ -983,6 +1024,8 @@ void setup() {
       esp_deep_sleep_start();
     }
   }
+
+  listPartitions();
 
   // GPIO INIT
   Serial.println(F("[1/7] GPIO pin mode..."));
@@ -1031,7 +1074,16 @@ void setup() {
   }
 
   Serial.println(F("[6/7] Web szerver..."));
-  setupWebServer();
+
+  if (wifiConnected) {
+    configureWebServer();
+    startWebServer();
+  }
+
+  if (apMode) {
+    configureConfigPortal();
+    startWebServer();
+  }
 
   // BLE INIT
   Serial.println(F("[7/7] BLE inicializalas..."));
@@ -1055,7 +1107,7 @@ void setup() {
   pAdvertising->setMaxPreferred(0x12);
   BLEDevice::startAdvertising();
 
-  Serial.println(F("BLE Server: FanController"));
+  Serial.println(F("BLE Server: FanController."));
 
   // BOOT BEFEJEZÉS
   digitalWrite(LED_YELLOW, LOW);
@@ -1088,7 +1140,7 @@ void loop() {
     Serial.print(F("AP mod timeout ("));
     Serial.print(AP_TIMEOUT_MS / 60000);
     Serial.println(F(" perc) - WiFi leallitas"));
-    server.end();
+    stopWebServer();
     WiFi.softAPdisconnect(true);
     delay(50);
     WiFi.mode(WIFI_OFF);
@@ -1110,12 +1162,7 @@ void loop() {
     wifiStopPending = false;
     Serial.println(F("WiFi manualis leallitas (wifistop parancs)..."));
 
-    ws.closeAll();
-    delay(50);
-    ws.cleanupClients();
-
-    server.end();
-    delay(50);
+    stopWebServer();
 
     WiFi.disconnect(true);
     delay(50);
@@ -1135,16 +1182,9 @@ void loop() {
     Serial.println(F(" perc) - WiFi + szolgaltatasok leallitasa"));
     Serial.println(F("============================================================"));
 
-    // 1. WebSocket leállítás
-    Serial.println(F("  [1/4] WebSocket leallitas..."));
-    ws.closeAll();
-    delay(50);
-    ws.cleanupClients();
-
-    // 2. Web szerver leállítás (WebSerial + ElegantOTA is leáll vele)
-    Serial.println(F("  [2/4] Web szerver leallitas (WebSerial + OTA)..."));
-    server.end();
-    delay(50);
+    // 1-2. Web szerver leállítás (WebSocket + WebSerial + ElegantOTA)
+    Serial.println(F("  [1-2/4] Web szerver leallitas..."));
+    stopWebServer();
 
     // 3. WiFi leállítás
     Serial.println(F("  [3/4] WiFi leallitas..."));
@@ -1210,8 +1250,13 @@ void loop() {
   }
 
   if (elapsed > INACTIVITY_MS && elapsed < (0xFFFFFFFF - INACTIVITY_MS)) {
-    logPrintln("Inaktivitas timeout (30 perc) - Deep Sleep");
-    enterDeepSleep();
+    if (otaInProgress) {
+      logPrintln("Inaktivitas timeout, de OTA aktiv - sleep kihagyva");
+      lastActivityTime = millis();
+    } else {
+      logPrintln("Inaktivitas timeout (30 perc) - Deep Sleep");
+      enterDeepSleep();
+    }
   }
 
   yield();
@@ -1459,6 +1504,12 @@ void enterDeepSleep() {
   Serial.println(F("DEEP SLEEP ELOKESZITES"));
   Serial.println(F("============================================================"));
 
+  if (otaInProgress) {
+    logPrintln("Deep sleep tiltva - OTA folyamatban");
+    lastActivityTime = millis();
+    return;
+  }
+
   // 1. Ventilátor OFF
   Serial.println(F("[1/11] Ventilator leallitasa..."));
   if (currentZone > 0) {
@@ -1492,27 +1543,17 @@ void enterDeepSleep() {
   digitalWrite(LED_RED, LOW);
   digitalWrite(LED_YELLOW, LOW);
 
-  // 6. WebSocket leállítás
-  if (wifiConnected) {
-    Serial.println(F("[6/11] WebSocket leallitas..."));
-    ws.closeAll();
-    delay(100);
-    ws.cleanupClients();
-  } else {
-    Serial.println(F("[6/11] WebSocket - skip (nem aktiv)"));
-  }
-
-  // 7. Web szerver leállítás
-  if (wifiConnected || apMode) {
-    Serial.println(F("[7/11] Web szerver leallitas..."));
-    server.end();
+  // 6. 7. Web szerver leallitas
+  if (wifiConnected || apMode || webServerRunning) {
+    Serial.println(F("[6-7/11] Web szerver leallitas..."));
+    stopWebServer();
     if (apMode) {
       WiFi.softAPdisconnect(true);
       apMode = false;
     }
     delay(100);
   } else {
-    Serial.println(F("[7/11] Web szerver - skip (nem aktiv)"));
+    Serial.println(F("[6-7/11] Web szerver - skip (nem aktiv)"));
   }
 
   // 8. BLE leállítás
@@ -1559,5 +1600,6 @@ void enterDeepSleep() {
 
   delay(100);
 
+  Serial.flush();
   esp_deep_sleep_start();
 }
