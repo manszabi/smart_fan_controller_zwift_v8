@@ -2306,11 +2306,11 @@ class ANTPlusInputHandler:
         if power_src == DataSource.ANTPLUS:
             pid = self._power_device_id
             mode = f"device_id={pid}" if pid else "wildcard (első elérhető)"
-            logger.info(f"ANT+ Power szál elindítva – {mode}")
+            user_logger.info(f"ANT+ Power keresés indítva – {mode}")
         if hr_src == DataSource.ANTPLUS and self.hr_enabled:
             hid = self._hr_device_id
             mode = f"device_id={hid}" if hid else "wildcard (első elérhető)"
-            logger.info(f"ANT+ HR szál elindítva – {mode}")
+            user_logger.info(f"ANT+ HR keresés indítva – {mode}")
 
         return t
 
@@ -2466,9 +2466,9 @@ class ANTPlusInputHandler:
             # Ha a node fut és volt már sikeres adat, de azóta WATCHDOG_TIMEOUT
             # ideje nem jött semmi → valószínűleg USB megszakadás
             if last > 0 and (now - last) > self.WATCHDOG_TIMEOUT:
-                logger.warning(
-                    f"ANT+ watchdog: {self.WATCHDOG_TIMEOUT}s óta nincs adat, "
-                    f"node leállítása..."
+                user_logger.warning(
+                    f"⚠ ANT+ {self.WATCHDOG_TIMEOUT}s óta nincs adat – "
+                    f"kapcsolat megszakadt, újracsatlakozás..."
                 )
                 self._lastdata = 0.0  # Megakadályozza az ismételt triggerelést
                 try:
@@ -2478,9 +2478,9 @@ class ANTPlusInputHandler:
             # Ha a node elindul, de WATCHDOG_TIMEOUT * 2 ideje nem jött semmi adat
             # (pl. rossz device_id, vagy az eszköz soha nem volt hatótávolságban)
             elif last == 0.0 and started > 0 and (now - started) > self.WATCHDOG_TIMEOUT * 2:
-                logger.warning(
-                    f"ANT+ watchdog: {self.WATCHDOG_TIMEOUT * 2}s óta nem érkezett "
-                    f"adat az indítás óta, node leállítása..."
+                user_logger.warning(
+                    f"⚠ ANT+ {self.WATCHDOG_TIMEOUT * 2}s óta nem található eszköz, "
+                    f"újrapróbálkozás..."
                 )
                 self._node_started = 0.0  # Megakadályozza az ismételt triggerelést
                 try:
@@ -2518,11 +2518,11 @@ class ANTPlusInputHandler:
                 # Ha volt sikeres adat, reseteljük a számolót
                 if self._lastdata > 0:
                     retry_count = 0
-                    logger.info("ANT+ node normálisan leállt, újraindítás...")
+                    user_logger.info("ANT+ kapcsolat megszakadt, újracsatlakozás...")
                 else:
                     retry_count += 1
-                    logger.warning(
-                        f"ANT+ node leállt adat nélkül, újraindítás... "
+                    user_logger.warning(
+                        f"⚠ ANT+ eszköz nem válaszol "
                         f"({retry_count}/{self._max_retries})"
                     )
 
@@ -2530,27 +2530,30 @@ class ANTPlusInputHandler:
                 if not self._running.is_set():
                     break
                 retry_count += 1
-                logger.warning(f"ANT+ hiba ({retry_count}/{self._max_retries}): {exc}")
+                user_logger.warning(
+                    f"⚠ ANT+ hiba ({retry_count}/{self._max_retries}): {exc}"
+                )
 
             if not self._running.is_set():
                 break
 
             if retry_count >= self._max_retries:
-                logger.warning(
-                    f"ANT+ max próbálkozások ({self._max_retries}), "
-                    f"{self.MAX_RETRY_COOLDOWN}s várakozás..."
+                user_logger.warning(
+                    f"⚠ ANT+ {self._max_retries} sikertelen próbálkozás, "
+                    f"{self.MAX_RETRY_COOLDOWN}s várakozás az újraindítás előtt..."
                 )
                 time.sleep(self.MAX_RETRY_COOLDOWN)
                 if not self._running.is_set():
                     break
                 retry_count = 0
+                user_logger.info("ANT+ keresés újraindítása...")
 
             self._stop_node()
             self._node_started = 0.0
             time.sleep(self._reconnect_delay)
 
         self._stop_node()
-        logger.info("ANT+ szál leállítva")
+        user_logger.info("ANT+ leállítva")
 
 
 # ============================================================
