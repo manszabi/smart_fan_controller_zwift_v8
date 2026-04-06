@@ -1831,11 +1831,10 @@ class BLEFanOutputController:
         """
         self._loop = asyncio.get_running_loop()
         if not _BLEAK_AVAILABLE:
-            msg = "BLE Fan: bleak könyvtár nem elérhető – BLE kimenet letiltva!"
-            logger.error(msg)
+            user_logger.warning("⚠ BLE Fan: bleak könyvtár nem elérhető – BLE kimenet letiltva!")
             return
 
-        logger.info("BLE Fan Output korrutin elindítva")
+        user_logger.info("BLE Fan kimenet elindítva")
         await self._initial_connect()
 
         while True:
@@ -1846,8 +1845,9 @@ class BLEFanOutputController:
         """Kezdeti BLE csatlakozás indításkor (hiba esetén folytatja)."""
         ok = await self._scan_and_connect()
         if not ok:
-            logger.warning(
-                "BLE Fan: kezdeti csatlakozás sikertelen, automatikus újrapróbálkozás parancs küldéskor."
+            user_logger.warning(
+                "⚠ BLE Fan: kezdeti csatlakozás sikertelen, "
+                "automatikus újrapróbálkozás parancs küldéskor"
             )
 
     async def _scan_and_connect(self) -> bool:
@@ -1894,16 +1894,16 @@ class BLEFanOutputController:
             for d in devices:
                 if d.name == self.device_name:
                     self._device_address = d.address
-                    logger.info(f"BLE Fan eszköz megtalálva: {d.name} ({d.address})")
+                    user_logger.info(f"✓ BLE Fan eszköz megtalálva: {d.name} ({d.address})")
                     return await self._connect()
                 if d.name is None:
                     logger.debug(f"BLE eszköz név nélkül: {d.address}")
 
-            logger.error(f"BLE Fan eszköz nem található: {self.device_name}")
+            user_logger.warning(f"⚠ BLE Fan eszköz nem található: '{self.device_name}'")
             return False
 
         except Exception as exc:
-            logger.error(f"BLE Fan keresési hiba: {exc}")
+            user_logger.warning(f"⚠ BLE Fan keresési hiba: {exc}")
             return False
 
     async def _connect(self) -> bool:
@@ -1940,11 +1940,11 @@ class BLEFanOutputController:
             self._retry_count = 0
             self._retry_reset_time = None
             self.last_sent = None
-            logger.info(f"BLE Fan csatlakozva: {self._device_address}")
+            user_logger.info(f"✓ BLE Fan csatlakozva: {self._device_address}")
             return True
 
         except Exception as exc:
-            logger.error(f"BLE Fan csatlakozási hiba: {exc}")
+            user_logger.warning(f"⚠ BLE Fan csatlakozási hiba: {exc}")
             self.is_connected = False
             self._client = None
             return False
@@ -1998,7 +1998,7 @@ class BLEFanOutputController:
                     logger.error("BLE AUTH: üres válasz")
                     return False
                 if resp == "AUTH_OK":
-                    logger.info("BLE AUTH sikeres")
+                    user_logger.info("✓ BLE Fan PIN autentikáció sikeres")
                     return True
                 if resp in ("AUTH_FAIL", "AUTH_LOCKED"):
                     logger.error(
@@ -2039,7 +2039,7 @@ class BLEFanOutputController:
 
     def _handle_disconnect(self) -> None:
         """Disconnect állapotmódosítás – az asyncio event loop-on hívandó."""
-        logger.warning("BLE Fan kapcsolat megszakadt")
+        user_logger.warning("⚠ BLE Fan kapcsolat megszakadt")
         self.is_connected = False
         self.last_sent = None
         # NEM nullázzuk self._client-et itt – az asyncio oldalon kezeljük
@@ -2097,14 +2097,14 @@ class BLEFanOutputController:
         if self._retry_count >= self.max_retries:
             if self._retry_reset_time is None:
                 self._retry_reset_time = now
-                logger.warning(
-                    f"BLE Fan: max újracsatlakozás elérve ({self.max_retries})! "
-                    f"{self.RETRY_RESET_SECONDS}s múlva újrapróbálkozik..."
+                user_logger.warning(
+                    f"⚠ BLE Fan: {self.max_retries} sikertelen próbálkozás, "
+                    f"{self.RETRY_RESET_SECONDS}s várakozás..."
                 )
             return False
 
         self._retry_count += 1
-        logger.info(
+        user_logger.info(
             f"BLE Fan újracsatlakozás... ({self._retry_count}/{self.max_retries})"
         )
 
@@ -2138,7 +2138,7 @@ class BLEFanOutputController:
             logger.info(f"BLE Fan parancs elküldve: {msg}")
 
         except asyncio.TimeoutError:
-            logger.error(f"BLE Fan parancs küldés timeout ({self.command_timeout}s)")
+            user_logger.warning(f"⚠ BLE Fan parancs küldés timeout ({self.command_timeout}s)")
             self.is_connected = False
             try:
                 await client.disconnect()
@@ -2147,7 +2147,7 @@ class BLEFanOutputController:
             self._client = None
 
         except Exception as exc:
-            logger.error(f"BLE Fan küldési hiba: {exc}")
+            user_logger.warning(f"⚠ BLE Fan küldési hiba: {exc}")
             self.is_connected = False
             try:
                 await client.disconnect()
@@ -2277,6 +2277,7 @@ class ANTPlusInputHandler:
         )
 
         self._running = threading.Event()
+        self._stop_event = threading.Event()  # watchdog leállító jelzés
         self._node: Optional[Any] = None
         self._devices: list[Any] = []
         self._lastdata: float = 0.0  # utolsó bármilyen adat ideje (thread loop használja)
@@ -2293,6 +2294,7 @@ class ANTPlusInputHandler:
             A létrehozott daemon threading.Thread objektum.
         """
         self._running.set()
+        self._stop_event.clear()  # watchdog újraindulásához
         t = threading.Thread(
             target=self._thread_loop, daemon=True, name="ANTPlus-Thread"
         )
@@ -2304,17 +2306,18 @@ class ANTPlusInputHandler:
         if power_src == DataSource.ANTPLUS:
             pid = self._power_device_id
             mode = f"device_id={pid}" if pid else "wildcard (első elérhető)"
-            logger.info(f"ANT+ Power szál elindítva – {mode}")
+            user_logger.info(f"ANT+ Power keresés indítva – {mode}")
         if hr_src == DataSource.ANTPLUS and self.hr_enabled:
             hid = self._hr_device_id
             mode = f"device_id={hid}" if hid else "wildcard (első elérhető)"
-            logger.info(f"ANT+ HR szál elindítva – {mode}")
+            user_logger.info(f"ANT+ HR keresés indítva – {mode}")
 
         return t
 
     def stop(self) -> None:
         """Leállítja az ANT+ szálat és az ANT+ node-ot."""
         self._running.clear()
+        self._stop_event.set()  # watchdog szál felébresztése és leállítása
         self._stop_node()
 
     def _put_power(self, power: float) -> None:
@@ -2447,11 +2450,11 @@ class ANTPlusInputHandler:
         Ez a watchdog detektálja a helyzetet és kívülről hívja a node.stop()-ot,
         ami lehetővé teszi a _thread_loop retry logikájának lefutását.
         """
-        while self._running.is_set():
-            # 5 mp-enként ellenőrzi
-            self._running.wait(timeout=5)
-            if not self._running.is_set():
-                break
+        # _running.is_set() == True normális működésnél, ezért NEM használható
+        # wait(timeout)-ra (azonnal visszatérne). Helyette _stop_event-et
+        # használunk, ami CSAK leálláskor lesz set.
+        stop_event = self._stop_event
+        while not stop_event.wait(timeout=5):
             node = self._node
             if node is None:
                 continue
@@ -2463,10 +2466,11 @@ class ANTPlusInputHandler:
             # Ha a node fut és volt már sikeres adat, de azóta WATCHDOG_TIMEOUT
             # ideje nem jött semmi → valószínűleg USB megszakadás
             if last > 0 and (now - last) > self.WATCHDOG_TIMEOUT:
-                logger.warning(
-                    f"ANT+ watchdog: {self.WATCHDOG_TIMEOUT}s óta nincs adat, "
-                    f"node leállítása..."
+                user_logger.warning(
+                    f"⚠ ANT+ {self.WATCHDOG_TIMEOUT}s óta nincs adat – "
+                    f"kapcsolat megszakadt, újracsatlakozás..."
                 )
+                self._lastdata = 0.0  # Megakadályozza az ismételt triggerelést
                 try:
                     node.stop()
                 except Exception as exc:
@@ -2474,10 +2478,11 @@ class ANTPlusInputHandler:
             # Ha a node elindul, de WATCHDOG_TIMEOUT * 2 ideje nem jött semmi adat
             # (pl. rossz device_id, vagy az eszköz soha nem volt hatótávolságban)
             elif last == 0.0 and started > 0 and (now - started) > self.WATCHDOG_TIMEOUT * 2:
-                logger.warning(
-                    f"ANT+ watchdog: {self.WATCHDOG_TIMEOUT * 2}s óta nem érkezett "
-                    f"adat az indítás óta, node leállítása..."
+                user_logger.warning(
+                    f"⚠ ANT+ {self.WATCHDOG_TIMEOUT * 2}s óta nem található eszköz, "
+                    f"újrapróbálkozás..."
                 )
+                self._node_started = 0.0  # Megakadályozza az ismételt triggerelést
                 try:
                     node.stop()
                 except Exception as exc:
@@ -2513,11 +2518,11 @@ class ANTPlusInputHandler:
                 # Ha volt sikeres adat, reseteljük a számolót
                 if self._lastdata > 0:
                     retry_count = 0
-                    logger.info("ANT+ node normálisan leállt, újraindítás...")
+                    user_logger.info("ANT+ kapcsolat megszakadt, újracsatlakozás...")
                 else:
                     retry_count += 1
-                    logger.warning(
-                        f"ANT+ node leállt adat nélkül, újraindítás... "
+                    user_logger.warning(
+                        f"⚠ ANT+ eszköz nem válaszol "
                         f"({retry_count}/{self._max_retries})"
                     )
 
@@ -2525,27 +2530,30 @@ class ANTPlusInputHandler:
                 if not self._running.is_set():
                     break
                 retry_count += 1
-                logger.warning(f"ANT+ hiba ({retry_count}/{self._max_retries}): {exc}")
+                user_logger.warning(
+                    f"⚠ ANT+ hiba ({retry_count}/{self._max_retries}): {exc}"
+                )
 
             if not self._running.is_set():
                 break
 
             if retry_count >= self._max_retries:
-                logger.warning(
-                    f"ANT+ max próbálkozások ({self._max_retries}), "
-                    f"{self.MAX_RETRY_COOLDOWN}s várakozás..."
+                user_logger.warning(
+                    f"⚠ ANT+ {self._max_retries} sikertelen próbálkozás, "
+                    f"{self.MAX_RETRY_COOLDOWN}s várakozás az újraindítás előtt..."
                 )
                 time.sleep(self.MAX_RETRY_COOLDOWN)
                 if not self._running.is_set():
                     break
                 retry_count = 0
+                user_logger.info("ANT+ keresés újraindítása...")
 
             self._stop_node()
             self._node_started = 0.0
             time.sleep(self._reconnect_delay)
 
         self._stop_node()
-        logger.info("ANT+ szál leállítva")
+        user_logger.info("ANT+ leállítva")
 
 
 # ============================================================
@@ -2610,14 +2618,13 @@ class _BLESensorInputHandler(abc.ABC):
         """
         label = self._sensor_label
         if not _BLEAK_AVAILABLE:
-            logger.error(f"{label}: bleak könyvtár nem elérhető!")
+            user_logger.warning(f"⚠ {label}: bleak könyvtár nem elérhető!")
             return
 
         if self.device_name:
-            logger.info(f"{label} fogadó elindítva: {self.device_name}")
+            user_logger.info(f"{label} keresés indítva: {self.device_name}")
         else:
-            user_logger.info(f"\U0001f4e1 {label}: nincs eszköznév megadva, automatikus felderítés...")
-            logger.info(f"{label} fogadó elindítva (auto-discovery mód)")
+            user_logger.info(f"{label}: nincs eszköznév megadva, automatikus felderítés...")
 
         while True:
             try:
@@ -2628,8 +2635,8 @@ class _BLESensorInputHandler(abc.ABC):
                 # gyors végtelen loop ha az eszköz ismételten megszakad.
                 self._retry_count = 0
                 self.is_connected = False
-                logger.info(
-                    f"{label} kapcsolat megszakadt, újracsatlakozás "
+                user_logger.warning(
+                    f"⚠ {label} kapcsolat megszakadt, újracsatlakozás "
                     f"{self.reconnect_interval}s múlva..."
                 )
                 await asyncio.sleep(self.reconnect_interval)
@@ -2638,17 +2645,18 @@ class _BLESensorInputHandler(abc.ABC):
             except Exception as exc:
                 self._retry_count += 1
                 self.is_connected = False
-                logger.warning(
-                    f"{label} kapcsolat hiba "
+                user_logger.warning(
+                    f"⚠ {label} hiba "
                     f"({self._retry_count}/{self.max_retries}): {exc}"
                 )
                 if self._retry_count >= self.max_retries:
-                    logger.warning(
-                        f"{label}: max újracsatlakozás elérve, "
+                    user_logger.warning(
+                        f"⚠ {label}: {self.max_retries} sikertelen próbálkozás, "
                         f"{self.RETRY_RESET_SECONDS}s várakozás..."
                     )
                     await asyncio.sleep(self.RETRY_RESET_SECONDS)
                     self._retry_count = 0
+                    user_logger.info(f"{label} keresés újraindítása...")
                 else:
                     await asyncio.sleep(self.reconnect_interval)
 
@@ -2666,17 +2674,17 @@ class _BLESensorInputHandler(abc.ABC):
 
         if self.device_name:
             # --- Név alapú keresés ---
-            logger.info(f"{label} keresés: {self.device_name}...")
+            logger.debug(f"{label} keresés: {self.device_name}...")
             devices = await BleakScanner.discover(timeout=self.scan_timeout)
             for d in devices:
                 if d.name == self.device_name:
                     addr = d.address
-                    logger.info(f"{label} eszköz megtalálva: {d.name} ({d.address})")
+                    user_logger.info(f"✓ {label} eszköz megtalálva: {d.name} ({d.address})")
                     break
                 if d.name is None:
                     logger.debug(f"BLE eszköz név nélkül: {d.address}")
             if not addr:
-                raise Exception(f"{label} eszköz nem található: {self.device_name}")
+                raise Exception(f"{label} eszköz nem található: '{self.device_name}'")
         else:
             # --- Automatikus felderítés service UUID alapján ---
             matched, _ = await _scan_ble_with_autodiscovery(
@@ -2698,7 +2706,7 @@ class _BLESensorInputHandler(abc.ABC):
         async with BleakClient(addr) as client:
             self.is_connected = True
             self._retry_count = 0
-            logger.info(f"{label} csatlakozva: {addr}")
+            user_logger.info(f"✓ {label} csatlakozva: {addr}")
 
             def _handler(sender: Any, data: bytes) -> None:
                 try:
