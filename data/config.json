@@ -1,0 +1,7 @@
+{
+  "ssid": "kisszoba",
+  "password": "csemegi@",
+  "ip": "192.168.0.100",
+  "gateway": "192.168.0.1",
+  "subnet": "255.255.255.0"
+}
