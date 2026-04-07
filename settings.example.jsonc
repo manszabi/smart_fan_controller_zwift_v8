@@ -161,6 +161,17 @@
 
     // Ha true, a program automatikusan leáll amikor a ZwiftApp.exe kilép.
     // ~10 másodpercenként ellenőrzi a process-t.
-    "close_at_zwiftapp.exe": true
+    "close_at_zwiftapp.exe": true,
+
+    // HUD ablak átlátszósága (20–100%). A slider és a jobb-klikk menüből is
+    // módosítható, és automatikusan mentődik.
+    "opacity": 92,
+
+    // Per-monitor ablak pozíció és méret. A program bezáráskor automatikusan
+    // menti az aktuális monitor nevéhez. Több monitoron külön-külön
+    // megjegyzi a pozíciót. Ha a mentett monitor nem létezik, az elsődleges
+    // monitorra kerül az ablak.
+    // Formátum: {"<monitor_név>": {"x": .., "y": .., "w": .., "h": ..}}
+    "window_geometry": {}
   }
 }

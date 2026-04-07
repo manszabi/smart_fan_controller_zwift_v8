@@ -217,6 +217,21 @@ A LCARS stílusú HUD ablak viselkedését szabályozó beállítások.
 | `sound_enabled` | bool | true/false | true | LCARS hangeffektek be/kikapcsolása. |
 | `sound_volume` | float | 0.0–1.0 | 0.5 | Hangeffektek hangereje. |
 | `close_at_zwiftapp.exe` | bool | true/false | true | Ha true, a program automatikusan leáll amikor a ZwiftApp.exe kilép. |
+| `opacity` | int | 20–100 | 92 | HUD ablak átlátszósága %-ban. A slider/menüből is módosítható, automatikusan mentődik. |
+| `window_geometry` | object | – | `{}` | Per-monitor ablak pozíció/méret. Automatikusan kezelődik, kézi szerkesztés nem szükséges. |
+
+### Ablak pozíció és átlátszóság
+
+Az `opacity` értéket a slider-rel vagy a jobb-klikk menüből is lehet állítani – a változás automatikusan mentődik a `settings.json`-ba.
+
+A `window_geometry` mező automatikusan kezelődik: bezáráskor a program menti az ablak pozícióját és méretét az aktuális monitor nevéhez. Induláskor visszaállítja az utoljára használt monitor geometriáját. Ha a monitor nem létezik (pl. külső kijelző lecsatlakoztatva), az elsődleges monitorra kerül az ablak. Több monitor esetén mindegyikhez külön pozíció/méret tárolódik:
+
+```json
+"window_geometry": {
+  "HDMI-1": {"x": 100, "y": 50, "w": 400, "h": 500},
+  "DP-2": {"x": 1920, "y": 0, "w": 340, "h": 460}
+}
+```
 
 ### LCARS hangeffektek
 
@@ -245,9 +260,12 @@ Ha `close_at_zwiftapp.exe` értéke `true`, a program ~10 másodpercenként elle
 
 ## Log fájlok
 
-| Fájl | Tartalom |
-|------|----------|
-| `ble_devices.log` | Talált BLE eszközök (deduplikált, csak új eszközök kerülnek bele) |
-| `ant_devices.log` | Talált ANT+ eszközök (deduplikált, device_type + device_id alapján) |
+| Fájl | Tartalom | Max méret |
+|------|----------|-----------|
+| `smart_fan_controller.log` | Teljes alkalmazás log (zónaváltások, csatlakozás, hibák) | 500 KB (rotált, 2 backup) |
+| `ble_devices.log` | Talált BLE eszközök (deduplikált, csak új eszközök kerülnek bele) | – |
+| `ant_devices.log` | Talált ANT+ eszközök (deduplikált, device_type + device_id alapján) | – |
 
-Ezek a fájlok hasznosak a device_name / device_id beállításához: első futás wildcard módban, majd a logból kiolvasható a specifikus eszköz azonosító.
+A log fájlok helye a `global_settings.log_directory` beállítástól függ. Ha nincs megadva vagy nem elérhető, a program könyvtárába kerülnek.
+
+A `ble_devices.log` és `ant_devices.log` fájlok hasznosak a device_name / device_id beállításához: első futás wildcard módban, majd a logból kiolvasható a specifikus eszköz azonosító.
