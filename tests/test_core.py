@@ -594,6 +594,8 @@ class TestHudConfig:
         assert cfg.sound_enabled is True
         assert cfg.sound_volume == 0.5
         assert cfg.close_at_zwiftapp_exe is True
+        assert cfg.opacity == 92
+        assert cfg.window_geometry == {}
 
     def test_from_dict_old_key(self):
         """A régi 'close_at_zwiftapp.exe' kulcs is elfogadott."""
@@ -619,6 +621,45 @@ class TestHudConfig:
         cfg = HudConfig.from_dict({"sound_volume": 1})
         assert cfg.sound_volume == 1.0
         assert isinstance(cfg.sound_volume, float)
+
+    def test_from_dict_opacity(self):
+        cfg = HudConfig.from_dict({"opacity": 75})
+        assert cfg.opacity == 75
+
+    def test_from_dict_opacity_clamped(self):
+        """Tartományon kívüli opacity → default marad."""
+        cfg = HudConfig.from_dict({"opacity": 5})
+        assert cfg.opacity == 92  # default, 5 < 20
+
+    def test_from_dict_opacity_bool_ignored(self):
+        cfg = HudConfig.from_dict({"opacity": True})
+        assert cfg.opacity == 92
+
+    def test_from_dict_window_geometry(self):
+        geo = {"HDMI-1": {"x": 100, "y": 200, "w": 340, "h": 460}}
+        cfg = HudConfig.from_dict({"window_geometry": geo})
+        assert cfg.window_geometry == geo
+
+    def test_from_dict_window_geometry_invalid_rect(self):
+        """Hiányos rect → nem kerül be."""
+        geo = {"HDMI-1": {"x": 100, "y": 200}}  # w, h hiányzik
+        cfg = HudConfig.from_dict({"window_geometry": geo})
+        assert cfg.window_geometry == {}
+
+    def test_from_dict_window_geometry_multi_monitor(self):
+        geo = {
+            "HDMI-1": {"x": 0, "y": 0, "w": 340, "h": 460},
+            "DP-2": {"x": 1920, "y": 100, "w": 400, "h": 500},
+        }
+        cfg = HudConfig.from_dict({"window_geometry": geo})
+        assert len(cfg.window_geometry) == 2
+        assert cfg.window_geometry["DP-2"]["x"] == 1920
+
+    def test_to_dict_includes_opacity_and_geometry(self):
+        cfg = HudConfig(opacity=80, window_geometry={"X": {"x": 1, "y": 2, "w": 3, "h": 4}})
+        d = cfg.to_dict()
+        assert d["opacity"] == 80
+        assert d["window_geometry"]["X"]["w"] == 3
 
 
 # ============================================================
