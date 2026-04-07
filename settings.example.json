@@ -75,6 +75,8 @@
   "hud": {
     "sound_enabled": true,
     "sound_volume": 0.5,
-    "close_at_zwiftapp.exe": true
+    "close_at_zwiftapp.exe": true,
+    "opacity": 92,
+    "window_geometry": {}
   }
 }
