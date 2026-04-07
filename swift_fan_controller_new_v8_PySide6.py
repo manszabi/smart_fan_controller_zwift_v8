@@ -717,6 +717,9 @@ class HudConfig:
     sound_enabled: bool = True
     sound_volume: float = 0.5
     close_at_zwiftapp_exe: bool = True
+    opacity: int = 92
+    # Per-monitor ablak geometria: {"<screen_name>": {"x": .., "y": .., "w": .., "h": ..}}
+    window_geometry: Dict[str, Dict[str, int]] = dataclasses.field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> "HudConfig":
@@ -729,6 +732,22 @@ class HudConfig:
         for key in ("close_at_zwiftapp.exe", "close_at_zwiftapp_exe"):
             if key in raw and isinstance(raw[key], bool):
                 kwargs["close_at_zwiftapp_exe"] = raw[key]
+        if "opacity" in raw:
+            v = raw["opacity"]
+            if isinstance(v, (int, float)) and not isinstance(v, bool) and 20 <= v <= 100:
+                kwargs["opacity"] = int(v)
+        if "window_geometry" in raw and isinstance(raw["window_geometry"], dict):
+            geo: Dict[str, Dict[str, int]] = {}
+            for screen_name, rect in raw["window_geometry"].items():
+                if isinstance(rect, dict) and all(
+                    k in rect and isinstance(rect[k], (int, float))
+                    for k in ("x", "y", "w", "h")
+                ):
+                    geo[str(screen_name)] = {
+                        "x": int(rect["x"]), "y": int(rect["y"]),
+                        "w": int(rect["w"]), "h": int(rect["h"]),
+                    }
+            kwargs["window_geometry"] = geo
         return cls(**kwargs)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -737,6 +756,8 @@ class HudConfig:
             "sound_enabled": self.sound_enabled,
             "sound_volume": self.sound_volume,
             "close_at_zwiftapp.exe": self.close_at_zwiftapp_exe,
+            "opacity": self.opacity,
+            "window_geometry": self.window_geometry,
         }
 
 
@@ -4590,7 +4611,9 @@ class HUDWindow(QWidget):
             | Qt.WindowType.Tool
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)
-        self.setWindowOpacity(0.92)
+        hud_cfg: HudConfig = controller.settings["hud"]
+        self._initial_opacity = max(20, min(100, hud_cfg.opacity))
+        self.setWindowOpacity(self._initial_opacity / 100.0)
         self.setGeometry(20, 20, self._base_width, self._base_height)
         self.setMinimumSize(220, 350)
         self.setStyleSheet(f"background-color: {self.BG};")
@@ -4710,7 +4733,7 @@ class HUDWindow(QWidget):
 
         self._alpha_slider = QSlider(Qt.Orientation.Horizontal)
         self._alpha_slider.setRange(20, 100)
-        self._alpha_slider.setValue(92)
+        self._alpha_slider.setValue(self._initial_opacity)
         self._alpha_slider.setStyleSheet(
             f"QSlider::groove:horizontal {{"
             f"  background: #002244; height: 14px; border-radius: 2px;"
@@ -4723,7 +4746,7 @@ class HUDWindow(QWidget):
         self._alpha_slider.valueChanged.connect(self._on_alpha_change)
         slider_layout.addWidget(self._alpha_slider, 1)
 
-        self._alpha_value = QLabel("92%")
+        self._alpha_value = QLabel(f"{self._initial_opacity}%")
         self._alpha_value.setStyleSheet(
             f"color: {self.LCARS_CYAN}; background-color: {self.PANEL_BG}; "
             f"font-family: '{self._font_family}'; font-size: 11pt; font-weight: bold;"
@@ -4930,10 +4953,12 @@ class HUDWindow(QWidget):
         self.setWindowOpacity(percent / 100.0)
         self._alpha_slider.setValue(percent)
         self._alpha_value.setText(f"{percent}%")
+        self._save_hud_setting("opacity", percent)
 
     def _on_alpha_change(self, value: int) -> None:
         self.setWindowOpacity(value / 100.0)
         self._alpha_value.setText(f"{value}%")
+        self._save_hud_setting("opacity", value)
 
     # ────────── KONTEXTUS MENÜ ──────────
 
@@ -5384,9 +5409,72 @@ class HUDWindow(QWidget):
         """Publikus interfész a hangrendszer felszabadításához."""
         self._sound.cleanup()
 
+    # ────────── MONITOR GEOMETRIA ──────────
+
+    def _current_screen_name(self) -> str:
+        """Az ablak aktuális képernyőjének neve (vagy üres ha nem elérhető)."""
+        screen = self.screen()
+        if screen is not None:
+            return screen.name()
+        return ""
+
+    def _restore_geometry(self) -> None:
+        """Visszaállítja az ablak pozícióját/méretét az utoljára használt monitorhoz.
+
+        Ha a mentett monitor nem létezik, az aktív (elsődleges) monitorra helyezi.
+        """
+        hud_cfg: HudConfig = self._ctrl.settings["hud"]
+        geo_map = hud_cfg.window_geometry
+        if not geo_map:
+            return
+
+        # Elérhető monitorok nevei
+        available = {}
+        for s in self._app.screens():
+            available[s.name()] = s
+
+        # Megpróbáljuk az utolsó használt monitort (a dict utolsó kulcsa)
+        last_screen_name = list(geo_map.keys())[-1] if geo_map else ""
+        if last_screen_name in available and last_screen_name in geo_map:
+            rect = geo_map[last_screen_name]
+            target_screen = available[last_screen_name]
+        else:
+            # Monitor nem létezik → aktív (elsődleges) monitor, ha van rá mentett geom
+            primary = self._app.primaryScreen()
+            if primary is None:
+                return
+            pname = primary.name()
+            if pname in geo_map:
+                rect = geo_map[pname]
+            else:
+                # Nincs semmilyen mentett geometria ehhez a monitorhoz
+                return
+            target_screen = primary
+
+        # Validáljuk, hogy a pozíció a monitor területén belül van
+        sg = target_screen.availableGeometry()
+        x = max(sg.x(), min(rect["x"], sg.x() + sg.width() - 100))
+        y = max(sg.y(), min(rect["y"], sg.y() + sg.height() - 100))
+        w = max(self.minimumWidth(), min(rect["w"], sg.width()))
+        h = max(self.minimumHeight(), min(rect["h"], sg.height()))
+        self.setGeometry(x, y, w, h)
+        self._scale = w / self._base_width
+
+    def _save_geometry(self) -> None:
+        """Elmenti az ablak pozícióját/méretét az aktuális monitorhoz."""
+        screen_name = self._current_screen_name()
+        if not screen_name:
+            return
+        geo = self.geometry()
+        rect = {"x": geo.x(), "y": geo.y(), "w": geo.width(), "h": geo.height()}
+        hud_cfg: HudConfig = self._ctrl.settings["hud"]
+        hud_cfg.window_geometry[screen_name] = rect
+        self._save_hud_setting("window_geometry", hud_cfg.window_geometry)
+
     # ────────── RUN / CLOSE ──────────
 
     def run(self) -> None:
+        self._restore_geometry()
         self.show()
         self._sound.play("hud_startup")
         self._app.exec()
@@ -5403,6 +5491,7 @@ class HUDWindow(QWidget):
             event.ignore()
             return
         self._closing = True
+        self._save_geometry()
         event.ignore()
         self._timer.stop()
         self._sound.play("hud_shutdown")
