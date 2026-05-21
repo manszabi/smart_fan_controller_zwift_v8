@@ -1962,10 +1962,10 @@ class BLEFanOutputController:
             self._retry_reset_time = None
             self.last_sent = None
             user_logger.info(f"✓ BLE Fan csatlakozva: {self._device_address}")
-        try:
-            await self._write_raw("ROLLER:1")
-            user_logger.info("✓ ROLLER:1 elküldve")
-        except Exception as exc:
+            try:
+                await self._write_raw("ROLLER:1")
+                user_logger.info("✓ ROLLER:1 elküldve")
+            except Exception as exc:
                 logger.warning(f"ROLLER:1 küldési hiba: {exc}")  
             return True
 
