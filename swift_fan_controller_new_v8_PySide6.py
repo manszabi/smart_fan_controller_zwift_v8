@@ -1962,6 +1962,11 @@ class BLEFanOutputController:
             self._retry_reset_time = None
             self.last_sent = None
             user_logger.info(f"✓ BLE Fan csatlakozva: {self._device_address}")
+            try:
+                  await self._write_raw("ROLLER:1")
+                  user_logger.info("✓ ROLLER:1 elküldve")
+              except Exception as exc:
+                  logger.warning(f"ROLLER:1 küldési hiba: {exc}")
             return True
 
         except Exception as exc:
@@ -2175,7 +2180,24 @@ class BLEFanOutputController:
             except Exception as exc2:
                 logger.debug(f"BLE disconnect hiba küldési hiba után: {exc2}")
             self._client = None
-
+          
+    async def _write_raw(self, command: str) -> None:
+        """Tetszőleges parancs küldése a BLE GATT karakterisztikára."""
+        client = self._client
+        if client is None or not client.is_connected:
+            return
+        try:
+            await asyncio.wait_for(
+                client.write_gatt_char(
+                    self.characteristic_uuid,
+                    command.encode("utf-8"),
+                ),
+                timeout=self.command_timeout,
+            )
+            logger.info(f"BLE Fan raw parancs elküldve: {command}")
+        except Exception as exc:
+            logger.warning(f"BLE Fan raw parancs küldési hiba ({command}): {exc}")
+          
     async def disconnect(self) -> None:
         """Bontja a BLE kapcsolatot és felszabadítja a klienst."""
         client = self._client
@@ -4134,6 +4156,11 @@ class FanController:
                     user_logger.info("✓ Ventilátor leállítva (LEVEL:0)")
                 except Exception as exc:
                     logger.warning(f"LEVEL:0 küldése sikertelen leállításkor: {exc}")
+                try:
+                    await self._ble_fan._write_raw("ROLLER:0")
+                    user_logger.info("✓ Görgő leállítva (ROLLER:0)")
+                except Exception as exc:
+                    logger.warning(f"ROLLER:0 küldése sikertelen leállításkor: {exc}")
                 await self._ble_fan.disconnect()
                 self._ble_fan = None
             # Fix #13: ANT+ leállítás a stop()-ban történik, nem duplikáljuk itt
