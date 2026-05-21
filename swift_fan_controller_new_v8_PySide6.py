@@ -1966,7 +1966,7 @@ class BLEFanOutputController:
                 await self._write_raw("ROLLER:1")
                 user_logger.info("✓ ROLLER:1 elküldve")
             except Exception as exc:
-                logger.warning(f"ROLLER:1 küldési hiba: {exc}")  
+                logger.warning(f"ROLLER:1 küldési hiba: {exc}")
             return True
 
         except Exception as exc:
