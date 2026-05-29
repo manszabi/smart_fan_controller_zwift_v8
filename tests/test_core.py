@@ -793,3 +793,174 @@ class TestHeadlessImport:
             f"Headless import elhasalt:\nstdout={result.stdout}\nstderr={result.stderr}"
         )
         assert "OK" in result.stdout
+
+
+# ============================================================
+# Default settings betöltés / másolás (settings.default.json)
+# ============================================================
+
+class TestDefaultSettingsCopy:
+    """A load_settings() / _ensure_default_settings_file() másolási logikája.
+
+    Viselkedés:
+      - Ha settings.json nincs, de settings.default.json elérhető → másol.
+      - CWD-beli settings.default.json elsőbbséget élvez a package data-val szemben.
+      - Meglévő settings.json-t nem ír felül.
+      - Nem másol fájlt önmagára.
+    """
+
+    def _import_loader(self):
+        from smart_fan_controller.config import loader
+        return loader
+
+    def test_copies_package_default_when_missing(self, tmp_path, monkeypatch):
+        """Üres CWD: a beépített package data default másolódik settings.json-né."""
+        loader = self._import_loader()
+        monkeypatch.chdir(tmp_path)
+
+        target = tmp_path / "settings.json"
+        assert not target.exists()
+
+        settings = loader.load_settings(str(target))
+
+        assert target.exists(), "settings.json-t létre kellett volna hozni a package default-ból"
+        # A package default ftp=200 (lásd schemas.PowerZonesConfig)
+        assert settings["power_zones"].ftp == 200
+
+    def test_cwd_default_takes_priority(self, tmp_path, monkeypatch):
+        """A CWD-beli settings.default.json elsőbbséget élvez a package data-val szemben."""
+        import json
+        loader = self._import_loader()
+        monkeypatch.chdir(tmp_path)
+
+        # Saját sablon a CWD-ben, eltérő (de érvényes) ftp-vel
+        custom = {"power_zones": {"ftp": 300}}
+        (tmp_path / "settings.default.json").write_text(
+            json.dumps(custom), encoding="utf-8"
+        )
+
+        target = tmp_path / "settings.json"
+        settings = loader.load_settings(str(target))
+
+        assert target.exists()
+        assert settings["power_zones"].ftp == 300, "A CWD-beli sablonból kellett volna töltenie"
+
+    def test_existing_settings_not_overwritten(self, tmp_path, monkeypatch):
+        """Meglévő settings.json-t nem írja felül a default."""
+        import json
+        loader = self._import_loader()
+        monkeypatch.chdir(tmp_path)
+
+        target = tmp_path / "settings.json"
+        target.write_text(json.dumps({"power_zones": {"ftp": 400}}), encoding="utf-8")
+
+        settings = loader.load_settings(str(target))
+
+        assert settings["power_zones"].ftp == 400, "A meglévő settings.json-t nem szabad felülírni"
+
+    def test_no_copy_onto_self(self, tmp_path, monkeypatch):
+        """_ensure_default_settings_file nem másolja a fájlt önmagára."""
+        import json
+        loader = self._import_loader()
+        monkeypatch.chdir(tmp_path)
+
+        # A settings_path maga a CWD-beli settings.default.json
+        default_in_cwd = tmp_path / "settings.default.json"
+        default_in_cwd.write_text(json.dumps({"power_zones": {"ftp": 250}}), encoding="utf-8")
+
+        # Nem dobhat hibát, és nem ronthatja el a fájlt (self-copy guard)
+        loader._ensure_default_settings_file(str(default_in_cwd))
+
+        data = json.loads(default_in_cwd.read_text(encoding="utf-8"))
+        assert data == {"power_zones": {"ftp": 250}}
+
+    def test_missing_target_when_no_default_available(self, tmp_path, monkeypatch):
+        """Ha sem CWD, sem (elérhetetlen) package default nincs, a hardcoded
+        DEFAULT_SETTINGS fallback érvényesül és nem dob hibát."""
+        loader = self._import_loader()
+        monkeypatch.chdir(tmp_path)
+
+        # A package data elérhetetlenné tétele: a DEFAULT_SETTINGS_PATH-t nem létezőre állítjuk
+        monkeypatch.setattr(
+            loader, "DEFAULT_SETTINGS_PATH", str(tmp_path / "nincs_ilyen.json")
+        )
+
+        target = tmp_path / "settings.json"
+        settings = loader.load_settings(str(target))
+
+        # Nincs sablon → nem jött létre fájl, de a hardcoded default visszajött
+        assert not target.exists()
+        assert settings["power_zones"].ftp == 200
+
+
+# ============================================================
+# Az example sablonok tükrözik a default-ot
+# ============================================================
+
+class TestExampleFilesMirrorDefault:
+    """A settings.example.json / .jsonc a settings.default.json-t tükrözi.
+
+    Ezek a guard tesztek elkapják, ha a default megváltozik, de az example
+    sablonok frissítését elfelejtik – így a dokumentációs sablonok soha nem
+    csúsznak el a tényleges default-tól.
+    """
+
+    @staticmethod
+    def _repo_root():
+        return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+    @staticmethod
+    def _load_json(path):
+        import json
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+
+    @staticmethod
+    def _strip_comments(obj):
+        """Rekurzívan eltávolítja a "_comment*" kulcsokat (csak dokumentáció)."""
+        if isinstance(obj, dict):
+            return {
+                k: TestExampleFilesMirrorDefault._strip_comments(v)
+                for k, v in obj.items()
+                if not k.startswith("_comment")
+            }
+        if isinstance(obj, list):
+            return [TestExampleFilesMirrorDefault._strip_comments(v) for v in obj]
+        return obj
+
+    @staticmethod
+    def _parse_jsonc(path):
+        """Minimális JSONC → dict: sor-/blokk-kommentek és trailing commák eltávolítása."""
+        import json
+        import re
+        raw = open(path, encoding="utf-8").read()
+        raw = re.sub(r"(?m)//.*$", "", raw)            # // sorkommentek
+        raw = re.sub(r"/\*.*?\*/", "", raw, flags=re.S)  # /* */ blokkok
+        raw = re.sub(r",(\s*[}\]])", r"\1", raw)         # trailing commák
+        return json.loads(raw)
+
+    def test_example_json_equals_default(self):
+        """settings.example.json bájtra azonos a default sablonnal."""
+        root = self._repo_root()
+        default = self._load_json(
+            os.path.join(root, "smart_fan_controller", "config", "settings.default.json")
+        )
+        example = self._load_json(os.path.join(root, "settings.example.json"))
+        assert example == default, (
+            "settings.example.json elcsúszott a default-tól – frissítsd "
+            "(cp smart_fan_controller/config/settings.default.json settings.example.json)"
+        )
+
+    def test_example_jsonc_mirrors_default(self):
+        """settings.example.jsonc értékei (kommentek nélkül) megegyeznek a default-tal."""
+        root = self._repo_root()
+        default = self._load_json(
+            os.path.join(root, "smart_fan_controller", "config", "settings.default.json")
+        )
+        jsonc = self._strip_comments(
+            self._parse_jsonc(os.path.join(root, "settings.example.jsonc"))
+        )
+        assert jsonc == default, (
+            "settings.example.jsonc értékei elcsúsztak a default-tól – frissítsd "
+            "az értékeket (a kommentek maradhatnak)"
+        )
