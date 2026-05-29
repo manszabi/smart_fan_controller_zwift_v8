@@ -367,29 +367,134 @@ class TestPowerZonesConfig:
         cfg = PowerZonesConfig.from_dict({"ftp": "two hundred"})
         assert cfg.ftp == 200
 
+    # --- from_dict: min_watt / max_watt érvényes és érvénytelen ---
+
+    def test_from_dict_min_max_watt_valid(self):
+        """Érvényes min_watt/max_watt → átveszi."""
+        cfg = PowerZonesConfig.from_dict({"min_watt": 50, "max_watt": 800})
+        assert cfg.min_watt == 50
+        assert cfg.max_watt == 800
+
+    def test_from_dict_min_watt_out_of_range_ignored(self):
+        """min_watt > 1000 → from_dict figyelmen kívül hagyja (default marad)."""
+        cfg = PowerZonesConfig.from_dict({"min_watt": 5000})
+        assert cfg.min_watt == 0  # default
+
+    def test_from_dict_min_watt_negative_ignored(self):
+        """Negatív min_watt → default marad."""
+        cfg = PowerZonesConfig.from_dict({"min_watt": -10})
+        assert cfg.min_watt == 0  # default
+
+    def test_from_dict_max_watt_out_of_range_ignored(self):
+        """max_watt > 1000 → default marad."""
+        cfg = PowerZonesConfig.from_dict({"max_watt": 9999})
+        assert cfg.max_watt == 1000  # default
+
+    def test_from_dict_min_watt_bool_ignored(self):
+        """Bool min_watt → default marad."""
+        cfg = PowerZonesConfig.from_dict({"min_watt": True})
+        assert cfg.min_watt == 0
+
+    def test_from_dict_max_watt_string_ignored(self):
+        """String max_watt → default marad."""
+        cfg = PowerZonesConfig.from_dict({"max_watt": "ezer"})
+        assert cfg.max_watt == 1000
+
+    # --- from_dict: z1 / z2 érvénytelen ---
+
+    def test_from_dict_z1_out_of_range_ignored(self):
+        """z1_max_percent > 100 → default marad (60)."""
+        cfg = PowerZonesConfig.from_dict({"z1_max_percent": 150})
+        assert cfg.z1_max_percent == 60
+
+    def test_from_dict_z1_zero_ignored(self):
+        """z1_max_percent = 0 (tartományon kívül) → default marad (60)."""
+        cfg = PowerZonesConfig.from_dict({"z1_max_percent": 0})
+        assert cfg.z1_max_percent == 60
+
+    def test_from_dict_z2_bool_ignored(self):
+        """Bool z2_max_percent → default marad (89)."""
+        cfg = PowerZonesConfig.from_dict({"z2_max_percent": True})
+        assert cfg.z2_max_percent == 89
+
+    def test_from_dict_logical_swap_corrected(self):
+        """from_dict érvényes z1>z2 értékeket átvesz, majd __post_init__ defaultra állít."""
+        cfg = PowerZonesConfig.from_dict({"z1_max_percent": 90, "z2_max_percent": 50})
+        # mindkettő érvényes tartományban → from_dict átveszi,
+        # de a logikai check (__post_init__) defaultra állítja
+        assert cfg.z1_max_percent == 60
+        assert cfg.z2_max_percent == 89
+
     def test_post_init_min_gt_max(self):
-        """min_watt > max_watt → beide auf Defaults zurückgesetzt."""
+        """min_watt > max_watt → mindkettő alapértelmezésre áll."""
         cfg = PowerZonesConfig(ftp=200, min_watt=500, max_watt=100)
         assert cfg.min_watt == 0  # default
         assert cfg.max_watt == 1000  # default
 
     def test_post_init_min_eq_max(self):
-        """min_watt == max_watt → beide auf Defaults zurückgesetzt."""
+        """min_watt == max_watt → mindkettő alapértelmezésre áll."""
         cfg = PowerZonesConfig(ftp=200, min_watt=100, max_watt=100)
         assert cfg.min_watt == 0  # default
         assert cfg.max_watt == 1000  # default
 
     def test_post_init_z1_ge_z2(self):
-        """z1 >= z2 → beide auf Defaults zurückgesetzt."""
+        """z1 >= z2 → mindkettő alapértelmezésre áll."""
         cfg = PowerZonesConfig(ftp=200, z1_max_percent=90, z2_max_percent=60)
         assert cfg.z1_max_percent == 60  # default
         assert cfg.z2_max_percent == 89  # default
 
     def test_post_init_z1_eq_z2(self):
-        """z1 == z2 → beide auf Defaults zurückgesetzt."""
+        """z1 == z2 → mindkettő alapértelmezésre áll."""
         cfg = PowerZonesConfig(ftp=200, z1_max_percent=80, z2_max_percent=80)
         assert cfg.z1_max_percent == 60  # default
         assert cfg.z2_max_percent == 89  # default
+
+    # --- __post_init__ tartomány-ellenőrzés (0–1000 watt) ---
+
+    def test_post_init_ftp_negative(self):
+        """Negatív ftp → alapértelmezés (200)."""
+        cfg = PowerZonesConfig(ftp=-50)
+        assert cfg.ftp == 200
+
+    def test_post_init_ftp_too_high(self):
+        """ftp > 1000 → alapértelmezés (200)."""
+        cfg = PowerZonesConfig(ftp=2000)
+        assert cfg.ftp == 200
+
+    def test_post_init_min_watt_negative(self):
+        """Negatív min_watt → 0-ra javítva."""
+        cfg = PowerZonesConfig(min_watt=-10)
+        assert cfg.min_watt == 0
+
+    def test_post_init_min_watt_too_high(self):
+        """min_watt > 1000 → 0-ra javítva (és így < max_watt)."""
+        cfg = PowerZonesConfig(min_watt=2000)
+        assert cfg.min_watt == 0
+
+    def test_post_init_max_watt_negative(self):
+        """Negatív max_watt → 1000-re javítva."""
+        cfg = PowerZonesConfig(max_watt=-10)
+        assert cfg.max_watt == 1000
+
+    def test_post_init_max_watt_too_high(self):
+        """max_watt > 1000 → 1000-re javítva."""
+        cfg = PowerZonesConfig(max_watt=5000)
+        assert cfg.max_watt == 1000
+
+    def test_post_init_z1_zero(self):
+        """z1_max_percent = 0 (tartományon kívül) → alapértelmezés (60)."""
+        cfg = PowerZonesConfig(z1_max_percent=0)
+        assert cfg.z1_max_percent == 60
+
+    def test_post_init_z1_too_high(self):
+        """z1_max_percent > 100 → alapértelmezés (60)."""
+        cfg = PowerZonesConfig(z1_max_percent=150)
+        assert cfg.z1_max_percent == 60
+
+    def test_post_init_z2_too_high(self):
+        """z2_max_percent > 100 → alapértelmezés (89)."""
+        cfg = PowerZonesConfig(z2_max_percent=150)
+        assert cfg.z2_max_percent == 89
 
     def test_to_dict(self):
         cfg = PowerZonesConfig()
