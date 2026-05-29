@@ -98,18 +98,20 @@ class PowerZonesConfig:
 
         # --- z1_max_percent / z2_max_percent tartomány-check: 1–100 ---
         if self.z1_max_percent < 1 or self.z1_max_percent > 100:
+            default_z1 = PowerZonesConfig.__dataclass_fields__['z1_max_percent'].default
             user_logger.warning(
                 f"⚠ Érvénytelen 'z1_max_percent' érték: {self.z1_max_percent} (1–100 közötti kell). "
-                f"Javítva: 99-re."
+                f"Javítva: default {default_z1}-re."
             )
-            self.z1_max_percent = 99
+            self.z1_max_percent = default_z1
 
         if self.z2_max_percent < 1 or self.z2_max_percent > 100:
+            default_z2 = PowerZonesConfig.__dataclass_fields__['z2_max_percent'].default
             user_logger.warning(
                 f"⚠ Érvénytelen 'z2_max_percent' érték: {self.z2_max_percent} (1–100 közötti kell). "
-                f"Javítva: 100-ra."
+                f"Javítva: default {default_z2}-re."
             )
-            self.z2_max_percent = 100
+            self.z2_max_percent = default_z2
 
         # --- z1_max_percent < z2_max_percent logikai check ---
         if self.z1_max_percent >= self.z2_max_percent:
