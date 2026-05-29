@@ -66,7 +66,12 @@ A program a `settings.json` fájlból olvassa a beállításokat. Ha ez a fájl 
 - **Z2:** FTP × z1_max_percent% + 1 – FTP × z2_max_percent%
 - **Z3:** FTP × z2_max_percent% + 1 – max_watt
 
-**Validáció:** a program automatikusan javítja ha `min_watt >= max_watt` vagy `z1_max_percent >= z2_max_percent`.
+**Validáció:** 
+- A program automatikusan javítja ha `min_watt >= max_watt` vagy `z1_max_percent >= z2_max_percent`.
+- A `zero_power_immediate` mező szigorú típusellenőrzés alatt áll: csak a `true` és `false` logikai értékek (JSON boolean) elfogadottak. 
+  - **Hibás érték:** `"true"` (string), `"tue"` (typo), `1` vagy `0` (egész szám), `null`, vagy bármilyen egyéb érték
+  - **Viselkedés:** a hibás érték figyelmeztetéssel (`⚠ Érvénytelen 'zero_power_immediate' érték: ...`) az alapértelmezés (false) marad, és a többi beállítás betöltődik
+  - **Helyes formátum:** `"zero_power_immediate": true` vagy `"zero_power_immediate": false` (JSON boolean, nem string)
 
 ---
 
@@ -96,6 +101,12 @@ A program a `settings.json` fájlból olvassa a beállításokat. Ha ez a fájl 
 - **Z1:** resting_hr – max_hr × z1_max_percent%
 - **Z2:** max_hr × z1_max_percent% + 1 – max_hr × z2_max_percent%
 - **Z3:** max_hr × z2_max_percent% felett
+
+**Validáció:**
+- Az `enabled` és `zero_hr_immediate` mezők szigorú típusellenőrzés alatt állnak: csak a `true` és `false` logikai értékek (JSON boolean) elfogadottak.
+  - **Helyes formátum:** `"enabled": true` vagy `"zero_hr_immediate": false` (JSON boolean, nem string)
+  - **Hibás érték:** `"true"` (string), `1` vagy `0` (egész szám), `null`, vagy bármilyen egyéb érték
+  - **Viselkedés:** a hibás érték figyelmeztetéssel az alapértelmezés marad, és a többi beállítás betöltődik
 
 ---
 

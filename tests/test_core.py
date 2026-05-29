@@ -399,6 +399,56 @@ class TestPowerZonesConfig:
         cfg = PowerZonesConfig.from_dict({})
         assert cfg == PowerZonesConfig()
 
+    def test_from_dict_zero_power_immediate_valid_true(self):
+        """zero_power_immediate = true → True."""
+        cfg = PowerZonesConfig.from_dict({"zero_power_immediate": True})
+        assert cfg.zero_power_immediate is True
+
+    def test_from_dict_zero_power_immediate_valid_false(self):
+        """zero_power_immediate = false → False."""
+        cfg = PowerZonesConfig.from_dict({"zero_power_immediate": False})
+        assert cfg.zero_power_immediate is False
+
+    def test_from_dict_zero_power_immediate_string_typo_tue(self):
+        """zero_power_immediate = 'tue' (typo) → False (warning logged)."""
+        cfg = PowerZonesConfig.from_dict({"zero_power_immediate": "tue"})
+        assert cfg.zero_power_immediate is False
+
+    def test_from_dict_zero_power_immediate_string_typo_fales(self):
+        """zero_power_immediate = 'fales' (typo) → False (warning logged)."""
+        cfg = PowerZonesConfig.from_dict({"zero_power_immediate": "fales"})
+        assert cfg.zero_power_immediate is False
+
+    def test_from_dict_zero_power_immediate_string_true(self):
+        """zero_power_immediate = 'true' (string, not bool) → False (warning logged)."""
+        cfg = PowerZonesConfig.from_dict({"zero_power_immediate": "true"})
+        assert cfg.zero_power_immediate is False
+
+    def test_from_dict_zero_power_immediate_string_false(self):
+        """zero_power_immediate = 'false' (string, not bool) → False (warning logged)."""
+        cfg = PowerZonesConfig.from_dict({"zero_power_immediate": "false"})
+        assert cfg.zero_power_immediate is False
+
+    def test_from_dict_zero_power_immediate_integer_1(self):
+        """zero_power_immediate = 1 (integer) → False (warning logged)."""
+        cfg = PowerZonesConfig.from_dict({"zero_power_immediate": 1})
+        assert cfg.zero_power_immediate is False
+
+    def test_from_dict_zero_power_immediate_integer_0(self):
+        """zero_power_immediate = 0 (integer) → False (warning logged)."""
+        cfg = PowerZonesConfig.from_dict({"zero_power_immediate": 0})
+        assert cfg.zero_power_immediate is False
+
+    def test_from_dict_zero_power_immediate_none(self):
+        """zero_power_immediate = None → False (warning logged)."""
+        cfg = PowerZonesConfig.from_dict({"zero_power_immediate": None})
+        assert cfg.zero_power_immediate is False
+
+    def test_from_dict_zero_power_immediate_random_string(self):
+        """zero_power_immediate = 'anything' → False (warning logged)."""
+        cfg = PowerZonesConfig.from_dict({"zero_power_immediate": "anything"})
+        assert cfg.zero_power_immediate is False
+
 
 # ============================================================
 # GlobalSettingsConfig dataclass
