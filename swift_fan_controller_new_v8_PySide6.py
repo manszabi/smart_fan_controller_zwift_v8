@@ -134,8 +134,22 @@ try:
 
     _PYSIDE6_AVAILABLE = True  # type: ignore[misc]
 except ImportError:
+    # Headless mód (PySide6 nincs telepítve, pl. Raspberry Pi terminál):
+    # A HUD osztályok modul-szinten definiálódnak (class X(QWidget)), ezért a
+    # QWidget-nek subclass-olhatónak kell lennie, különben az import elhasal
+    # (TypeError: NoneType takes no arguments). A HUD soha nem példányosul
+    # headless módban (main() a _PYSIDE6_AVAILABLE flag-et ellenőrzi), így egy
+    # üres stub bázisosztály elegendő – a példányosítás egyértelmű hibát ad.
+    class _HeadlessQtWidgetStub:
+        """Üres QWidget-helyettesítő headless módhoz – nem példányosítható."""
+
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            raise RuntimeError(
+                "PySide6 nincs telepítve – a HUD nem használható headless módban."
+            )
+
     QApplication: Any = None
-    QWidget: Any = None
+    QWidget: Any = _HeadlessQtWidgetStub
     QLabel: Any = None
     QHBoxLayout: Any = None
     QVBoxLayout: Any = None
