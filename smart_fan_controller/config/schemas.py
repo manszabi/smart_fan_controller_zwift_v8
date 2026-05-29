@@ -96,19 +96,28 @@ class PowerZonesConfig:
             )
             self.min_watt = 0
 
-        # z1/z2 százalék kereszt-validáció
-        if self.z1_max_percent >= self.z2_max_percent:
-            low, high = min(self.z1_max_percent, self.z2_max_percent), max(self.z1_max_percent, self.z2_max_percent)
-            if low == high:
-                if low >= 100:
-                    low, high = 99, 100
-                else:
-                    high = low + 1
+        # --- z1_max_percent / z2_max_percent tartomány-check: 1–100 ---
+        if self.z1_max_percent < 1 or self.z1_max_percent > 100:
             user_logger.warning(
-                f"⚠ Érvénytelen power zóna százalékok (z1={self.z1_max_percent}, z2={self.z2_max_percent}). "
-                f"Javítva: z1={low}, z2={high}."
+                f"⚠ Érvénytelen 'z1_max_percent' érték: {self.z1_max_percent} (1–100 közötti kell). "
+                f"Javítva: 99-re."
             )
-            self.z1_max_percent, self.z2_max_percent = low, high
+            self.z1_max_percent = 99
+
+        if self.z2_max_percent < 1 or self.z2_max_percent > 100:
+            user_logger.warning(
+                f"⚠ Érvénytelen 'z2_max_percent' érték: {self.z2_max_percent} (1–100 közötti kell). "
+                f"Javítva: 100-ra."
+            )
+            self.z2_max_percent = 100
+
+        # --- z1_max_percent < z2_max_percent logikai check ---
+        if self.z1_max_percent >= self.z2_max_percent:
+            user_logger.warning(
+                f"⚠ Érvénytelen HR zóna százalékok: z1_max_percent ({self.z1_max_percent}) >= z2_max_percent ({self.z2_max_percent}). "
+                f"z2_max_percent {self.z1_max_percent + 1}-re állítva."
+            )
+            self.z2_max_percent = self.z1_max_percent + 1
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any], defaults: "PowerZonesConfig | None" = None) -> "PowerZonesConfig":
