@@ -1053,6 +1053,110 @@ class TestDefaultSettingsCopy:
 
 
 # ============================================================
+# Hibás JSON szintaxis → teljes default (ESET B)
+# ============================================================
+
+class TestMalformedJsonFallback:
+    """Szintaktikailag hibás settings.json → teljes alapértelmezés.
+
+    Ellentétben a mezőnkénti validációval (rossz ÉRTÉK egy mezőben, de
+    érvényes JSON → csak az a mező áll defaultra), a hibás JSON SZINTAXIS
+    az egész fájlt értelmezhetetlenné teszi, ezért minden szekció a hardcoded
+    DEFAULT_SETTINGS-re esik vissza – a fájlban szereplő jó értékek is elvesznek.
+    """
+
+    def _import_loader(self):
+        from smart_fan_controller.config import loader
+        return loader
+
+    def test_missing_comma_full_default(self, tmp_path):
+        """Hiányzó vessző → az egész fájl eldobva, teljes default."""
+        loader = self._import_loader()
+        target = tmp_path / "settings.json"
+        # 'ftp': 999 után HIÁNYZIK a vessző – ha mezőnként mentene, ftp=999 lenne
+        target.write_text(
+            '{\n  "power_zones": {\n    "ftp": 999\n    "min_watt": 10\n  }\n}',
+            encoding="utf-8",
+        )
+
+        settings = loader.load_settings(str(target))
+
+        # Nem 999, hanem a hardcoded default (200) → az egész fájl eldobva
+        assert settings["power_zones"].ftp == 200
+        assert settings["power_zones"].min_watt == 0
+
+    def test_missing_closing_brace_full_default(self, tmp_path):
+        """Hiányzó záró kapcsos zárójel → teljes default."""
+        loader = self._import_loader()
+        target = tmp_path / "settings.json"
+        target.write_text('{"power_zones": {"ftp": 333}', encoding="utf-8")
+
+        settings = loader.load_settings(str(target))
+
+        assert settings["power_zones"].ftp == 200
+
+    def test_unclosed_string_full_default(self, tmp_path):
+        """Lezáratlan idézőjel → teljes default."""
+        loader = self._import_loader()
+        target = tmp_path / "settings.json"
+        target.write_text('{"ble": {"device_name": "Ventilator}}', encoding="utf-8")
+
+        settings = loader.load_settings(str(target))
+
+        assert settings["power_zones"].ftp == 200
+        assert settings["ble"].device_name is None
+
+    def test_not_json_at_all_full_default(self, tmp_path):
+        """Egyáltalán nem JSON (sima szöveg) → teljes default."""
+        loader = self._import_loader()
+        target = tmp_path / "settings.json"
+        target.write_text("ez nem egy json fajl", encoding="utf-8")
+
+        settings = loader.load_settings(str(target))
+
+        assert settings["power_zones"].ftp == 200
+
+    def test_empty_file_full_default(self, tmp_path):
+        """Teljesen üres fájl → teljes default."""
+        loader = self._import_loader()
+        target = tmp_path / "settings.json"
+        target.write_text("", encoding="utf-8")
+
+        settings = loader.load_settings(str(target))
+
+        assert settings["power_zones"].ftp == 200
+
+    def test_trailing_comma_full_default(self, tmp_path):
+        """Felesleges záró vessző (JSON-ban nem megengedett) → teljes default."""
+        loader = self._import_loader()
+        target = tmp_path / "settings.json"
+        target.write_text('{"power_zones": {"ftp": 250,}}', encoding="utf-8")
+
+        settings = loader.load_settings(str(target))
+
+        assert settings["power_zones"].ftp == 200
+
+    def test_good_values_lost_when_syntax_broken(self, tmp_path):
+        """Megerősítés: a hibás szintaxis miatt a más szekciókban szereplő
+        ÉRVÉNYES értékek is elvesznek (nem mentődnek mezőnként)."""
+        loader = self._import_loader()
+        target = tmp_path / "settings.json"
+        # global_settings.cooldown_seconds=60 érvényes lenne, de a power_zones
+        # blokkban hiányzó vessző miatt az egész fájl olvashatatlan
+        target.write_text(
+            '{\n  "global_settings": {"cooldown_seconds": 60},\n'
+            '  "power_zones": {"ftp": 250 "min_watt": 5}\n}',
+            encoding="utf-8",
+        )
+
+        settings = loader.load_settings(str(target))
+
+        # A jó cooldown_seconds=60 is elveszett → default 120
+        assert settings["global_settings"].cooldown_seconds == 120
+        assert settings["power_zones"].ftp == 200
+
+
+# ============================================================
 # Az example sablonok tükrözik a default-ot
 # ============================================================
 

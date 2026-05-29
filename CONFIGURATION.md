@@ -23,6 +23,20 @@ A program a `settings.json` fájlból olvassa a beállításokat. Ha ez a fájl 
 
 > ℹ️ A `settings.example.json` és `.jsonc` mindig a `settings.default.json`-t tükrözi; ezt automatikus teszt is őrzi, így a sablonok nem csúsznak el a tényleges alapértelmezésektől.
 
+### Kétféle hiba – kétféle hatókör
+
+A program kétféleképpen reagál a hibákra, attól függően, hogy **érték-hiba** vagy **szintaxis-hiba** történt:
+
+| | **Rossz ÉRTÉK** (érvényes JSON) | **Rossz JSON SZINTAXIS** |
+|---|---|---|
+| **Példa** | `"ftp": "kétszáz"` (szöveg szám helyett) | hiányzó vessző, zárójel, lezáratlan idézőjel |
+| **JSON értelmezhető?** | ✅ Igen | ❌ Nem |
+| **Hatókör** | Csak az érintett **mező** | A **teljes fájl** |
+| **Jó értékek sorsa** | ✅ Megmaradnak | ❌ Mind elvész (teljes default) |
+| **Log** | mezőnként figyelmeztetés | egyetlen "beolvasási hiba" + sor/oszlop |
+
+> ⚠️ **Gyakorlati tanács:** ha JSON szintaxis hibát látsz a logban, és váratlanul **minden** alapértelmezett, akkor egyetlen elgépelés (hiányzó vessző, zárójel, lezáratlan idézőjel) az egész fájlt blokkolja. A hibaüzenet megadja a pontos sort és oszlopot (pl. `Expecting ',' delimiter: line 5 column 5`) – érdemes JSON-validátorral vagy a megadott sor/oszlop alapján ellenőrizni.
+
 ---
 
 ## Gyors kezdés
