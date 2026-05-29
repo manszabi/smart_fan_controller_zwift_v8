@@ -891,3 +891,76 @@ class TestDefaultSettingsCopy:
         # Nincs sablon → nem jött létre fájl, de a hardcoded default visszajött
         assert not target.exists()
         assert settings["power_zones"].ftp == 200
+
+
+# ============================================================
+# Az example sablonok tükrözik a default-ot
+# ============================================================
+
+class TestExampleFilesMirrorDefault:
+    """A settings.example.json / .jsonc a settings.default.json-t tükrözi.
+
+    Ezek a guard tesztek elkapják, ha a default megváltozik, de az example
+    sablonok frissítését elfelejtik – így a dokumentációs sablonok soha nem
+    csúsznak el a tényleges default-tól.
+    """
+
+    @staticmethod
+    def _repo_root():
+        return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+    @staticmethod
+    def _load_json(path):
+        import json
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+
+    @staticmethod
+    def _strip_comments(obj):
+        """Rekurzívan eltávolítja a "_comment*" kulcsokat (csak dokumentáció)."""
+        if isinstance(obj, dict):
+            return {
+                k: TestExampleFilesMirrorDefault._strip_comments(v)
+                for k, v in obj.items()
+                if not k.startswith("_comment")
+            }
+        if isinstance(obj, list):
+            return [TestExampleFilesMirrorDefault._strip_comments(v) for v in obj]
+        return obj
+
+    @staticmethod
+    def _parse_jsonc(path):
+        """Minimális JSONC → dict: sor-/blokk-kommentek és trailing commák eltávolítása."""
+        import json
+        import re
+        raw = open(path, encoding="utf-8").read()
+        raw = re.sub(r"(?m)//.*$", "", raw)            # // sorkommentek
+        raw = re.sub(r"/\*.*?\*/", "", raw, flags=re.S)  # /* */ blokkok
+        raw = re.sub(r",(\s*[}\]])", r"\1", raw)         # trailing commák
+        return json.loads(raw)
+
+    def test_example_json_equals_default(self):
+        """settings.example.json bájtra azonos a default sablonnal."""
+        root = self._repo_root()
+        default = self._load_json(
+            os.path.join(root, "smart_fan_controller", "config", "settings.default.json")
+        )
+        example = self._load_json(os.path.join(root, "settings.example.json"))
+        assert example == default, (
+            "settings.example.json elcsúszott a default-tól – frissítsd "
+            "(cp smart_fan_controller/config/settings.default.json settings.example.json)"
+        )
+
+    def test_example_jsonc_mirrors_default(self):
+        """settings.example.jsonc értékei (kommentek nélkül) megegyeznek a default-tal."""
+        root = self._repo_root()
+        default = self._load_json(
+            os.path.join(root, "smart_fan_controller", "config", "settings.default.json")
+        )
+        jsonc = self._strip_comments(
+            self._parse_jsonc(os.path.join(root, "settings.example.jsonc"))
+        )
+        assert jsonc == default, (
+            "settings.example.jsonc értékei elcsúsztak a default-tól – frissítsd "
+            "az értékeket (a kommentek maradhatnak)"
+        )
