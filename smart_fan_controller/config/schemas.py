@@ -112,24 +112,24 @@ class PowerZonesConfig:
 
         if "ftp" in raw:
             v = raw["ftp"]
-            if isinstance(v, int) and not isinstance(v, bool) and 100 <= v <= 500:
+            if isinstance(v, int) and not isinstance(v, bool) and 0 <= v <= 1000:
                 ftp = v
             else:
-                user_logger.warning(f"⚠ Érvénytelen 'ftp' érték: {v} (100–500 közötti egész kell)")
+                user_logger.warning(f"⚠ Érvénytelen 'ftp' érték: {v} (0–1000 közötti egész kell, default: {d.ftp})")
 
         if "min_watt" in raw:
             v = raw["min_watt"]
-            if isinstance(v, int) and not isinstance(v, bool) and 0 <= v <= 9999:
+            if isinstance(v, int) and not isinstance(v, bool) and 0 <= v <= 1000:
                 min_watt = v
             else:
-                user_logger.warning(f"⚠ Érvénytelen 'min_watt' érték: {v} (0–9999 közötti egész kell)")
+                user_logger.warning(f"⚠ Érvénytelen 'min_watt' érték: {v} (0–1000 közötti egész kell, default: {d.min_watt})")
 
         if "max_watt" in raw:
             v = raw["max_watt"]
-            if isinstance(v, int) and not isinstance(v, bool) and 1 <= v <= 100000:
+            if isinstance(v, int) and not isinstance(v, bool) and 0 <= v <= 1000:
                 max_watt = v
             else:
-                user_logger.warning(f"⚠ Érvénytelen 'max_watt' érték: {v} (1–100000 közötti egész kell)")
+                user_logger.warning(f"⚠ Érvénytelen 'max_watt' érték: {v} (0–1000 közötti egész kell, default: {d.max_watt})")
 
         if "z1_max_percent" in raw:
             v = raw["z1_max_percent"]
