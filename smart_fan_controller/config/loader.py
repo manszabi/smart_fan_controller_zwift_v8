@@ -144,29 +144,35 @@ def _settings_to_serializable(settings: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 
+# A versiókövetett default sablonfájl a config package-en belül van
+# (package data) – a kódhoz tartozik, ami használja.
+DEFAULT_SETTINGS_FILENAME = "settings.default.json"
+DEFAULT_SETTINGS_PATH = os.path.join(os.path.dirname(__file__), DEFAULT_SETTINGS_FILENAME)
+
+
 def _ensure_default_settings_file(settings_path: str) -> None:
-    """Ha ``settings_path`` nem létezik, de ``settings.default.json`` van,
-    mássolja azt ``settings_path`` helyére.
+    """Ha ``settings_path`` nem létezik, de a ``settings.default.json`` sablon
+    elérhető, mássolja azt ``settings_path`` helyére.
 
-    A ``settings.default.json`` szokásos helyei:
-      - Az aktuális munkakönyvtár (CWD)
-      - A szokásos helyeken (egymás után vizsgálja őket)
+    A ``settings.default.json`` keresési sorrendje:
+      1. A felhasználó aktuális munkakönyvtára (CWD) – ide tehet saját sablont.
+      2. A config package data (``smart_fan_controller/config/settings.default.json``)
+         – a verziókövetett, beépített alapértelmezés.
 
-    Ezt akkor hasznos, ha a felhasználó még nem készített ``settings.json``
-    fájlt, de szeretne egy érvényes alapértelmezésből indulni.
+    Akkor hasznos, ha a felhasználó még nem készített ``settings.json`` fájlt,
+    de szeretne egy érvényes alapértelmezésből indulni.
     """
     if os.path.exists(settings_path):
         # Már van settings.json → nincs mit csinálni
         return
 
-    # Keressük meg a settings.default.json-t
     default_candidates = [
-        "settings.default.json",  # az aktuális CWD-ben
-        os.path.join(os.path.dirname(__file__), "..", "..", "settings.default.json"),  # repo gyökere
+        os.path.join(os.getcwd(), DEFAULT_SETTINGS_FILENAME),  # CWD-beli felülíró sablon
+        DEFAULT_SETTINGS_PATH,                                  # beépített package data
     ]
 
     for default_path in default_candidates:
-        if os.path.exists(default_path):
+        if os.path.exists(default_path) and os.path.abspath(default_path) != os.path.abspath(settings_path):
             try:
                 shutil.copy2(default_path, settings_path)
                 user_logger.info(
