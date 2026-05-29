@@ -745,3 +745,51 @@ class TestEnums:
         """str(enum) is hasonlítható raw string-gel (str öröklés)."""
         assert ZoneMode.HIGHER_WINS == "higher_wins"
         assert "higher_wins" == ZoneMode.HIGHER_WINS
+
+
+# ============================================================
+# Headless import (PySide6 nélkül)
+# ============================================================
+
+class TestHeadlessImport:
+    """A modulnak importálhatónak kell lennie PySide6 nélkül is.
+
+    A conftest stubokat injektál, ezért a PySide6-mentes utat külön
+    alfolyamatban kell ellenőrizni, ahol sem a valódi PySide6, sem a
+    conftest stubjai nincsenek a sys.modules-ban.
+    """
+
+    def _subprocess_import(self, block_pyside6: bool):
+        import subprocess
+        import sys
+        import os
+
+        repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        # Tiszta import: ha block_pyside6, akkor a PySide6 import ImportError-t
+        # dob (a sys.path-ról kitiltjuk a meta_path finder-rel).
+        code = (
+            "import sys\n"
+            "if {block}:\n"
+            "    class _Blocker:\n"
+            "        # MetaPathFinder.find_spec protokoll (modern import rendszer)\n"
+            "        def find_spec(self, name, path=None, target=None):\n"
+            "            if name == 'PySide6' or name.startswith('PySide6.'):\n"
+            "                raise ModuleNotFoundError(name)\n"
+            "            return None\n"
+            "    sys.meta_path.insert(0, _Blocker())\n"
+            "import swift_fan_controller_new_v8_PySide6 as m\n"
+            "assert m._PYSIDE6_AVAILABLE is (not {block})\n"
+            "print('OK')\n"
+        ).format(block=block_pyside6)
+        return subprocess.run(
+            [sys.executable, "-c", code],
+            cwd=repo_root, capture_output=True, text=True,
+        )
+
+    def test_import_without_pyside6(self):
+        """PySide6 nélkül a modul importja nem hasal el (headless mód)."""
+        result = self._subprocess_import(block_pyside6=True)
+        assert result.returncode == 0, (
+            f"Headless import elhasalt:\nstdout={result.stdout}\nstderr={result.stderr}"
+        )
+        assert "OK" in result.stdout
