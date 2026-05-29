@@ -90,11 +90,14 @@ class PowerZonesConfig:
 
         # --- min_watt < max_watt logikai check ---
         if self.min_watt >= self.max_watt:
+            default_min = PowerZonesConfig.__dataclass_fields__['min_watt'].default
+            default_max = PowerZonesConfig.__dataclass_fields__['max_watt'].default
             user_logger.warning(
                 f"⚠ Érvénytelen watt tartomány: min_watt ({self.min_watt}) >= max_watt ({self.max_watt}). "
-                f"min_watt 0-ra állítva."
+                f"Alapértelmezésre állítva: min_watt={default_min}, max_watt={default_max}."
             )
-            self.min_watt = 0
+            self.min_watt = default_min
+            self.max_watt = default_max
 
         # --- z1_max_percent / z2_max_percent tartomány-check: 1–100 ---
         if self.z1_max_percent < 1 or self.z1_max_percent > 100:
@@ -115,11 +118,14 @@ class PowerZonesConfig:
 
         # --- z1_max_percent < z2_max_percent logikai check ---
         if self.z1_max_percent >= self.z2_max_percent:
+            default_z1 = PowerZonesConfig.__dataclass_fields__['z1_max_percent'].default
+            default_z2 = PowerZonesConfig.__dataclass_fields__['z2_max_percent'].default
             user_logger.warning(
-                f"⚠ Érvénytelen HR zóna százalékok: z1_max_percent ({self.z1_max_percent}) >= z2_max_percent ({self.z2_max_percent}). "
-                f"z2_max_percent {self.z1_max_percent + 1}-re állítva."
+                f"⚠ Érvénytelen zóna százalékok: z1_max_percent ({self.z1_max_percent}) >= z2_max_percent ({self.z2_max_percent}). "
+                f"Alapértelmezésre állítva: z1_max_percent={default_z1}, z2_max_percent={default_z2}."
             )
-            self.z2_max_percent = self.z1_max_percent + 1
+            self.z1_max_percent = default_z1
+            self.z2_max_percent = default_z2
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any], defaults: "PowerZonesConfig | None" = None) -> "PowerZonesConfig":

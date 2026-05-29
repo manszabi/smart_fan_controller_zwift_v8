@@ -368,25 +368,28 @@ class TestPowerZonesConfig:
         assert cfg.ftp == 200
 
     def test_post_init_min_gt_max(self):
-        """min_watt > max_watt → min_watt = 0."""
+        """min_watt > max_watt → beide auf Defaults zurückgesetzt."""
         cfg = PowerZonesConfig(ftp=200, min_watt=500, max_watt=100)
-        assert cfg.min_watt == 0
-        assert cfg.max_watt == 100
+        assert cfg.min_watt == 0  # default
+        assert cfg.max_watt == 1000  # default
 
     def test_post_init_min_eq_max(self):
-        """min_watt == max_watt → min_watt = 0."""
+        """min_watt == max_watt → beide auf Defaults zurückgesetzt."""
         cfg = PowerZonesConfig(ftp=200, min_watt=100, max_watt=100)
-        assert cfg.min_watt == 0
-        assert cfg.max_watt == 100
+        assert cfg.min_watt == 0  # default
+        assert cfg.max_watt == 1000  # default
 
     def test_post_init_z1_ge_z2(self):
-        """z1 >= z2 → rendezés és legalább 1% különbség."""
+        """z1 >= z2 → beide auf Defaults zurückgesetzt."""
         cfg = PowerZonesConfig(ftp=200, z1_max_percent=90, z2_max_percent=60)
-        assert cfg.z1_max_percent < cfg.z2_max_percent
+        assert cfg.z1_max_percent == 60  # default
+        assert cfg.z2_max_percent == 89  # default
 
     def test_post_init_z1_eq_z2(self):
+        """z1 == z2 → beide auf Defaults zurückgesetzt."""
         cfg = PowerZonesConfig(ftp=200, z1_max_percent=80, z2_max_percent=80)
-        assert cfg.z1_max_percent < cfg.z2_max_percent
+        assert cfg.z1_max_percent == 60  # default
+        assert cfg.z2_max_percent == 89  # default
 
     def test_to_dict(self):
         cfg = PowerZonesConfig()
