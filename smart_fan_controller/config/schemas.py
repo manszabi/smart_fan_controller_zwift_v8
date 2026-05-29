@@ -64,19 +64,37 @@ class PowerZonesConfig:
     zero_power_immediate: bool = False
 
     def __post_init__(self) -> None:
-        # min_watt / max_watt kereszt-validáció
-        if self.min_watt > self.max_watt:
+        # --- ftp tartomány-check: 0–1000 ---
+        if self.ftp < 0 or self.ftp > 1000:
             user_logger.warning(
-                f"⚠ Érvénytelen watt tartomány (min_watt={self.min_watt}, max_watt={self.max_watt}). "
-                f"Feltételezett felcserélés, értékek megfordítva."
+                f"⚠ Érvénytelen 'ftp' érték: {self.ftp} (0–1000 közötti kell). "
+                f"Javítva: default {PowerZonesConfig.__dataclass_fields__['ftp'].default}-ra."
             )
-            self.min_watt, self.max_watt = self.max_watt, self.min_watt
-        elif self.min_watt == self.max_watt:
+            self.ftp = PowerZonesConfig.__dataclass_fields__['ftp'].default
+
+        # --- min_watt tartomány-check: 0–1000 ---
+        if self.min_watt < 0 or self.min_watt > 1000:
             user_logger.warning(
-                f"⚠ min_watt és max_watt azonos értékű ({self.min_watt}). "
-                f"max_watt {self.min_watt + 1}-re állítva."
+                f"⚠ Érvénytelen 'min_watt' érték: {self.min_watt} (0–1000 közötti kell). "
+                f"Javítva: 0-ra."
             )
-            self.max_watt = self.min_watt + 1
+            self.min_watt = 0
+
+        # --- max_watt tartomány-check: 0–1000 ---
+        if self.max_watt < 0 or self.max_watt > 1000:
+            user_logger.warning(
+                f"⚠ Érvénytelen 'max_watt' érték: {self.max_watt} (0–1000 közötti kell). "
+                f"Javítva: 1000-re."
+            )
+            self.max_watt = 1000
+
+        # --- min_watt < max_watt logikai check ---
+        if self.min_watt >= self.max_watt:
+            user_logger.warning(
+                f"⚠ Érvénytelen watt tartomány: min_watt ({self.min_watt}) >= max_watt ({self.max_watt}). "
+                f"min_watt 0-ra állítva."
+            )
+            self.min_watt = 0
 
         # z1/z2 százalék kereszt-validáció
         if self.z1_max_percent >= self.z2_max_percent:

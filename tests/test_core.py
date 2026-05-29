@@ -367,16 +367,17 @@ class TestPowerZonesConfig:
         cfg = PowerZonesConfig.from_dict({"ftp": "two hundred"})
         assert cfg.ftp == 200
 
-    def test_post_init_swaps_min_max(self):
-        """min_watt > max_watt → felcserélés."""
+    def test_post_init_min_gt_max(self):
+        """min_watt > max_watt → min_watt = 0."""
         cfg = PowerZonesConfig(ftp=200, min_watt=500, max_watt=100)
-        assert cfg.min_watt == 100
-        assert cfg.max_watt == 500
+        assert cfg.min_watt == 0
+        assert cfg.max_watt == 100
 
-    def test_post_init_equal_min_max(self):
-        """min_watt == max_watt → max_watt += 1."""
+    def test_post_init_min_eq_max(self):
+        """min_watt == max_watt → min_watt = 0."""
         cfg = PowerZonesConfig(ftp=200, min_watt=100, max_watt=100)
-        assert cfg.max_watt == 101
+        assert cfg.min_watt == 0
+        assert cfg.max_watt == 100
 
     def test_post_init_z1_ge_z2(self):
         """z1 >= z2 → rendezés és legalább 1% különbség."""
