@@ -4383,19 +4383,26 @@ class HUDWindow(QWidget):
         self._save_hud_setting("sound_volume", round(volume, 2))
 
     def _save_hud_setting(self, key: str, value: Any) -> None:
-        """Egy HUD beállítás mentése a settings.json fájlba."""
+        """Egy HUD beállítás frissítése és mentése (csak ha save_hud_settings=True).
+
+        Frissíti a HUD beállítást a memóriában, majd ha save_hud_settings engedélyezett,
+        csak a "hud" szekciót menti a JSON-ba (nem az egész settings-et, így az egyéb
+        szekciók kézi szerkesztéseit megőrzi).
+        """
         settings = self._ctrl.settings
         hud_cfg: HudConfig = settings["hud"]
         # Map old key names to dataclass attribute names
         attr = key.replace(".", "_") if "." in key else key
         if hasattr(hud_cfg, attr):
             setattr(hud_cfg, attr, value)
-        try:
-            with open(self._ctrl.settings_file, "w", encoding="utf-8") as f:
-                json.dump(_settings_to_serializable(settings), f, indent=2, ensure_ascii=False)
-            logger.info(f"HUD beállítás mentve: hud.{key} = {value}")
-        except OSError as exc:
-            logger.warning(f"Settings mentési hiba: {exc}")
+            # Mentés: csak a "hud" szekciót frissítjük, és csak ha engedélyezett
+            from smart_fan_controller.config.loader import save_hud_settings_only
+            if save_hud_settings_only(self._ctrl.settings_file, hud_cfg):
+                logger.info(f"HUD beállítás mentve: hud.{key} = {value}")
+            elif hud_cfg.save_hud_settings:
+                # save_hud_settings=True volt, de valamilyen hiba történt az íráskor
+                logger.warning(f"HUD beállítás nem sikerült menteni: hud.{key} = {value}")
+            # Ha save_hud_settings=False, nincs log üzenet (szándékos)
 
     # ────────── LABEL FRISSÍTÉS SEGÉD ──────────
 

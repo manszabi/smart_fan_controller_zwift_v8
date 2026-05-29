@@ -511,6 +511,7 @@ class DatasourceConfig:
 class HudConfig:
     """HUD beállítások – típusbiztos."""
 
+    save_hud_settings: bool = False
     sound_enabled: bool = True
     sound_volume: float = 0.5
     close_at_zwiftapp_exe: bool = True
@@ -521,6 +522,8 @@ class HudConfig:
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> "HudConfig":
         kwargs: dict[str, Any] = {}
+        if "save_hud_settings" in raw and isinstance(raw["save_hud_settings"], bool):
+            kwargs["save_hud_settings"] = raw["save_hud_settings"]
         if "sound_enabled" in raw and isinstance(raw["sound_enabled"], bool):
             kwargs["sound_enabled"] = raw["sound_enabled"]
         if "sound_volume" in raw and isinstance(raw["sound_volume"], (int, float)):
@@ -550,6 +553,7 @@ class HudConfig:
     def to_dict(self) -> Dict[str, Any]:
         """JSON-kompatibilis dict (régi kulcsnévvel a kompatibilitásért)."""
         return {
+            "save_hud_settings": self.save_hud_settings,
             "sound_enabled": self.sound_enabled,
             "sound_volume": self.sound_volume,
             "close_at_zwiftapp.exe": self.close_at_zwiftapp_exe,

@@ -227,6 +227,44 @@ def _backup_incorrect_settings(settings_path: str) -> str | None:
         return None
 
 
+def save_hud_settings_only(settings_file: str, hud_config: HudConfig) -> bool:
+    """Csak a "hud" szekciót frissíti a settings.json-ban (teljes felülírás nélkül).
+
+    Ez a funkció arra szolgál, hogy a HUD beállítások (opacity, sound_volume,
+    window_geometry) csak akkor kerüljenek mentésre, ha ``save_hud_settings=True``.
+    Így a felhasználó kézi szerkesztéseit (ftp, device_name stb.) a program
+    nem írja felül egy HUD-pozíció-mentéssel.
+
+    Args:
+        settings_file: A settings.json fájl elérési útja.
+        hud_config: Az aktuálisan használt HudConfig objektum.
+
+    Returns:
+        True ha sikeres, False ha hiba történt.
+    """
+    if not hud_config.save_hud_settings:
+        # A felhasználó letiltotta a HUD mentést
+        return False
+
+    try:
+        with open(settings_file, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError, OSError) as exc:
+        user_logger.warning(f"⚠ HUD beállítások mentési hiba (olvasás): {exc}")
+        return False
+
+    # Csak a "hud" szekciót frissítjük
+    data["hud"] = hud_config.to_dict()
+
+    try:
+        with open(settings_file, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+        return True
+    except OSError as exc:
+        user_logger.warning(f"⚠ HUD beállítások mentési hiba (írás): {exc}")
+        return False
+
+
 # ============================================================
 # SZÁRMAZTATOTT LEKÉRDEZÉSEK
 # ============================================================

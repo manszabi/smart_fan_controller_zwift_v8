@@ -820,6 +820,107 @@ class TestHudConfig:
         assert d["opacity"] == 80
         assert d["window_geometry"]["X"]["w"] == 3
 
+    def test_save_hud_settings_default_false(self):
+        """save_hud_settings default értéke False."""
+        cfg = HudConfig()
+        assert cfg.save_hud_settings is False
+
+    def test_from_dict_save_hud_settings(self):
+        """save_hud_settings értékét from_dict-ből lehet beállítani."""
+        cfg = HudConfig.from_dict({"save_hud_settings": True})
+        assert cfg.save_hud_settings is True
+
+    def test_to_dict_includes_save_hud_settings(self):
+        """to_dict() tartalmazni kell a save_hud_settings értéket."""
+        cfg = HudConfig(save_hud_settings=True)
+        d = cfg.to_dict()
+        assert d["save_hud_settings"] is True
+
+
+# ============================================================
+# HUD-csak mentés (save_hud_settings_only)
+# ============================================================
+
+class TestSaveHudSettingsOnly:
+    """A save_hud_settings_only() csak a 'hud' szekciót frissíti."""
+
+    def _import_loader(self):
+        from smart_fan_controller.config import loader
+        return loader
+
+    def test_enabled_saves_only_hud_section(self, tmp_path):
+        """save_hud_settings=True → csak a 'hud' szekciót frissíti."""
+        loader = self._import_loader()
+        import json
+
+        target = tmp_path / "settings.json"
+        original = {
+            "power_zones": {"ftp": 285, "min_watt": 15},  # felhasználó szerkesztése
+            "hud": {"save_hud_settings": True, "opacity": 92},
+        }
+        target.write_text(json.dumps(original), encoding="utf-8")
+
+        # HUD frissítés
+        from smart_fan_controller.config.schemas import HudConfig
+        hud_cfg = HudConfig(save_hud_settings=True, opacity=75)
+        result = loader.save_hud_settings_only(str(target), hud_cfg)
+
+        assert result is True
+        updated = json.loads(target.read_text(encoding="utf-8"))
+        # power_zones megmaradt
+        assert updated["power_zones"]["ftp"] == 285
+        # hud frissítve
+        assert updated["hud"]["opacity"] == 75
+
+    def test_disabled_does_not_save(self, tmp_path):
+        """save_hud_settings=False → nem ír a JSON-ba."""
+        loader = self._import_loader()
+        import json
+
+        target = tmp_path / "settings.json"
+        original = {
+            "hud": {"save_hud_settings": False, "opacity": 92},
+        }
+        target.write_text(json.dumps(original), encoding="utf-8")
+
+        from smart_fan_controller.config.schemas import HudConfig
+        hud_cfg = HudConfig(save_hud_settings=False, opacity=75)
+        result = loader.save_hud_settings_only(str(target), hud_cfg)
+
+        assert result is False
+        updated = json.loads(target.read_text(encoding="utf-8"))
+        assert updated["hud"]["opacity"] == 92  # nem változott
+
+    def test_preserves_other_sections_on_error(self, tmp_path):
+        """Olvasási hiba → nem írja felül a fájlt, mas szekciók megmaradnak."""
+        loader = self._import_loader()
+        import json
+
+        target = tmp_path / "settings.json"
+        original = {"power_zones": {"ftp": 285}}
+        target.write_text(json.dumps(original), encoding="utf-8")
+
+        # A fájlba írható, de a hud szekció nincs benne
+        from smart_fan_controller.config.schemas import HudConfig
+        hud_cfg = HudConfig(save_hud_settings=True, opacity=75)
+        result = loader.save_hud_settings_only(str(target), hud_cfg)
+
+        assert result is True
+        updated = json.loads(target.read_text(encoding="utf-8"))
+        assert updated["power_zones"]["ftp"] == 285  # megmaradt
+        assert updated["hud"]["opacity"] == 75  # hozzáadva
+
+    def test_missing_file_error(self, tmp_path):
+        """Nem létezik fájl → False."""
+        loader = self._import_loader()
+        target = tmp_path / "settings.json"
+
+        from smart_fan_controller.config.schemas import HudConfig
+        hud_cfg = HudConfig(save_hud_settings=True)
+        result = loader.save_hud_settings_only(str(target), hud_cfg)
+
+        assert result is False
+
 
 # ============================================================
 # _resolve_log_dir

@@ -262,15 +262,19 @@ A LCARS stílusú HUD ablak viselkedését szabályozó beállítások.
 
 | Mező | Típus | Értékek | Alapértelmezett | Leírás |
 |------|-------|---------|-----------------|--------|
+| `save_hud_settings` | bool | true/false | false | Ha true, az ablak pozíciója, mérete, átlátszósága és hangerő mentésre kerül a fájlba (ez a flag engedélyezi az automatikus mentést). Ha false, a HUD-on végzett módosítások a memóriában maradnak, fájl nem íródik – a kézi szerkesztések nem lesznek felülírva egy ablak-elhúzással. |
 | `sound_enabled` | bool | true/false | true | LCARS hangeffektek be/kikapcsolása. |
-| `sound_volume` | float | 0.0–1.0 | 0.5 | Hangeffektek hangereje. |
+| `sound_volume` | float | 0.0–1.0 | 0.5 | Hangeffektek hangereje. Csak akkor mentésre kerül, ha `save_hud_settings=true`. |
 | `close_at_zwiftapp.exe` | bool | true/false | true | Ha true, a program automatikusan leáll amikor a ZwiftApp.exe kilép. |
-| `opacity` | int | 20–100 | 92 | HUD ablak átlátszósága %-ban. A slider/menüből is módosítható, automatikusan mentődik. |
-| `window_geometry` | object | – | `{}` | Per-monitor ablak pozíció/méret. Automatikusan kezelődik, kézi szerkesztés nem szükséges. |
+| `opacity` | int | 20–100 | 92 | HUD ablak átlátszósága %-ban. A slider/menüből is módosítható. Csak akkor mentésre kerül, ha `save_hud_settings=true`. |
+| `window_geometry` | object | – | `{}` | Per-monitor ablak pozíció/méret. Csak akkor kerül mentésre, ha `save_hud_settings=true`. |
 
-### Ablak pozíció és átlátszóság
+### Ablak pozíció, átlátszóság és hangerő mentése
 
-Az `opacity` értéket a slider-rel vagy a jobb-klikk menüből is lehet állítani – a változás automatikusan mentődik a `settings.json`-ba.
+Az `opacity`, `sound_volume` és `window_geometry` értékek változása **csak akkor** kerül a `settings.json`-ba, ha `save_hud_settings=true`. Ez a mód biztosítja, hogy:
+
+- **Ha `save_hud_settings=true`:** a HUD-on végzett módosítások (ablak elhúzása, átlátszóság állítás, hangerő) automatikusan mentődnek – az elvárt működés.
+- **Ha `save_hud_settings=false` (alapértelmezés):** a HUD-on végzett módosítások NEM írják felül a `settings.json`-t – így a kézi szerkesztéseid (pl. egyéb szekciók: `power_zones.ftp`, `ble.device_name` stb.) nem vesznek el egy ablak-elhúzással vagy átlátszóság állítással.
 
 A `window_geometry` mező automatikusan kezelődik: bezáráskor a program menti az ablak pozícióját és méretét az aktuális monitor nevéhez. Induláskor visszaállítja az utoljára használt monitor geometriáját. Ha a monitor nem létezik (pl. külső kijelző lecsatlakoztatva), az elsődleges monitorra kerül az ablak. Több monitor esetén mindegyikhez külön pozíció/méret tárolódik:
 
