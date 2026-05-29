@@ -28,3 +28,7 @@ all = [
 
 [project.scripts]
 smart-fan-controller = "swift_fan_controller_new_v8_PySide6:main"
+
+[tool.setuptools.package-data]
+# A config package versiókövetett default sablonja a pip-install csomagba is kerüljön.
+"smart_fan_controller.config" = ["settings.default.json"]

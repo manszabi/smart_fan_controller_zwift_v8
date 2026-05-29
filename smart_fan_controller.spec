@@ -14,6 +14,9 @@ main_a = Analysis(
     datas=[
         ('settings.example.json', '.'),
         ('settings.example.jsonc', '.'),
+        # Config package data: a verziókövetett default sablon. A loader.py a
+        # __file__-hez képest keresi, ezért a package-beli helyre kell tenni.
+        ('smart_fan_controller/config/settings.default.json', 'smart_fan_controller/config'),
     ],
     hiddenimports=[
         'PySide6',
