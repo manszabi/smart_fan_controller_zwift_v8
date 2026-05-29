@@ -1,10 +1,13 @@
 """Beállítások betöltése, mentése és származtatott lekérdezések.
 
 Ez a modul felel a ``settings.json`` beolvasásáért és validálásáért
-(``load_settings``), az alapértelmezett fájl létrehozásáért, valamint néhány
-származtatott segédfüggvényért (``get_effective_zone_mode``,
-``_resolve_buffer_settings``), amelyek a betöltött beállítások dict-jén
-dolgoznak.
+(``load_settings``), valamint néhány származtatott segédfüggvényért
+(``get_effective_zone_mode``, ``_resolve_buffer_settings``).
+
+**Default settings:** a ``settings.default.json`` (verziókövetett sablonfájl)
+tartalmazza az összes mező alapértelmezett értékét. Ha a felhasználó
+``settings.json`` még nem létezik, a program automatikusan mássolja a
+``settings.default.json``-t, így a felhasználó egyből a default-okból indulhat.
 
 A beállítás-modellek (dataclass-ek, enumok) a testvér ``schemas`` modulban
 találhatók.
@@ -15,6 +18,8 @@ import copy
 import dataclasses
 import json
 import logging
+import os
+import shutil
 from typing import Any, Dict
 
 from .schemas import (
@@ -41,11 +46,14 @@ user_logger = logging.getLogger("user")
 def load_settings(settings_file: str = "settings.json") -> Dict[str, Any]:
     """Betölti és validálja a JSON beállítási fájlt.
 
-    Alapértelmezett értékekből indul ki (DEFAULT_SETTINGS), majd felülírja
-    az érvényes, fájlból betöltött értékekkel. Hibás mezőnél az alapértelmezett
-    marad érvényben (figyelmeztetéssel).
-
-    Ha a fájl nem létezik, automatikusan létrehozza az alapértelmezettekkel.
+    Logika:
+      1. Ha ``settings_file`` nem létezik, de ``settings.default.json``
+         (a szokásos helyén az aktuális könyvtárban) van, mássolja azt
+         az ``settings_file`` helyére.
+      2. Beolvassa az ``settings_file``-t, az értékeket validálja a dataclass-ek
+         ``from_dict()`` metódusaival. Hibás mező → az alapértelmezett marad (warning).
+      3. Ha még mindig nincs ``settings_file``, fallback a ``DEFAULT_SETTINGS``
+         hardcoded dict-re.
 
     Args:
         settings_file: A JSON beállítások fájl elérési útja.
@@ -55,6 +63,9 @@ def load_settings(settings_file: str = "settings.json") -> Dict[str, Any]:
     """
     settings = copy.deepcopy(DEFAULT_SETTINGS)
 
+    # Ha nincs settings.json, de van settings.default.json → másold
+    _ensure_default_settings_file(settings_file)
+
     try:
         with open(settings_file, "r", encoding="utf-8") as f:
             loaded = json.load(f)
@@ -62,7 +73,6 @@ def load_settings(settings_file: str = "settings.json") -> Dict[str, Any]:
         user_logger.warning(
             f"⚠ '{settings_file}' nem található, alapértelmezett beállítások használata."
         )
-        _save_default_settings(settings_file, settings)
         return settings
     except (json.JSONDecodeError, OSError) as exc:
         user_logger.warning(f"⚠ '{settings_file}' beolvasási hiba: {exc}. Alapértelmezés használata.")
@@ -134,14 +144,42 @@ def _settings_to_serializable(settings: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 
-def _save_default_settings(path: str, settings: Dict[str, Any]) -> None:
-    """Létrehozza az alapértelmezett settings.json fájlt."""
-    try:
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(_settings_to_serializable(settings), f, indent=2, ensure_ascii=False)
-        user_logger.info(f"✓ Alapértelmezett '{path}' létrehozva.")
-    except OSError as exc:
-        user_logger.warning(f"✗ Nem sikerült létrehozni a '{path}' fájlt: {exc}")
+def _ensure_default_settings_file(settings_path: str) -> None:
+    """Ha ``settings_path`` nem létezik, de ``settings.default.json`` van,
+    mássolja azt ``settings_path`` helyére.
+
+    A ``settings.default.json`` szokásos helyei:
+      - Az aktuális munkakönyvtár (CWD)
+      - A szokásos helyeken (egymás után vizsgálja őket)
+
+    Ezt akkor hasznos, ha a felhasználó még nem készített ``settings.json``
+    fájlt, de szeretne egy érvényes alapértelmezésből indulni.
+    """
+    if os.path.exists(settings_path):
+        # Már van settings.json → nincs mit csinálni
+        return
+
+    # Keressük meg a settings.default.json-t
+    default_candidates = [
+        "settings.default.json",  # az aktuális CWD-ben
+        os.path.join(os.path.dirname(__file__), "..", "..", "settings.default.json"),  # repo gyökere
+    ]
+
+    for default_path in default_candidates:
+        if os.path.exists(default_path):
+            try:
+                shutil.copy2(default_path, settings_path)
+                user_logger.info(
+                    f"✓ '{default_path}' → '{settings_path}' másolva. "
+                    f"Szerkeszd ezt a fájlt az igényeidnek megfelelően."
+                )
+                return
+            except OSError as exc:
+                user_logger.warning(f"⚠ Nem sikerült másolni '{default_path}' → '{settings_path}': {exc}")
+                return
+
+    # Ha nincs settings.default.json, nincs mit tennünk
+    # (a fallback a DEFAULT_SETTINGS hardcoded dict lesz)
 
 
 # ============================================================
