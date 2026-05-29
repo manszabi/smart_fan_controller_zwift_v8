@@ -1386,3 +1386,30 @@ class TestExampleFilesMirrorDefault:
             "settings.example.jsonc értékei elcsúsztak a default-tól – frissítsd "
             "az értékeket (a kommentek maradhatnak)"
         )
+
+    def test_default_json_matches_dataclass_defaults(self):
+        """A settings.default.json NYERS tartalma a dataclass default-okat tükrözi.
+
+        Ez a guard elkapja, ha egy dataclass-hoz új mezőt adunk (vagy default-ot
+        változtatunk), de a settings.default.json frissítését elfelejtjük – pl.
+        ha a HudConfig kap egy új 'save_hud_settings' mezőt, ami kimaradna a sablonból.
+
+        Fontos: a NYERS JSON-t hasonlítjuk (nem a load_settings eredményét), mert
+        a from_dict() a hiányzó mezőket automatikusan default-ra töltené, így
+        elfedné a fájl-szintű hiányt.
+        """
+        from smart_fan_controller.config.loader import _settings_to_serializable
+        from smart_fan_controller.config.schemas import DEFAULT_SETTINGS
+
+        root = self._repo_root()
+        raw = self._load_json(
+            os.path.join(root, "smart_fan_controller", "config", "settings.default.json")
+        )
+        # Amit a program a DEFAULT_SETTINGS-ből a fájlba írna (kulcsok + értékek)
+        expected = _settings_to_serializable(DEFAULT_SETTINGS)
+
+        assert raw == expected, (
+            "A settings.default.json elcsúszott a dataclass default-októl "
+            "(hiányzó/extra mező vagy eltérő érték). Frissítsd a "
+            "settings.default.json-t (és a settings.example.json / .jsonc fájlokat)."
+        )
