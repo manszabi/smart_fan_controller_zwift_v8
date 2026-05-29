@@ -311,7 +311,6 @@ from smart_fan_controller.config import (
 from smart_fan_controller.config.schemas import _from_dict_int
 from smart_fan_controller.config.loader import (
     _settings_to_serializable,
-    _save_default_settings,
     _resolve_buffer_settings,
 )
 
