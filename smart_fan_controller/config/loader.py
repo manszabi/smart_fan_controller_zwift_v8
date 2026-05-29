@@ -74,7 +74,21 @@ def load_settings(settings_file: str = "settings.json") -> Dict[str, Any]:
             f"⚠ '{settings_file}' nem található, alapértelmezett beállítások használata."
         )
         return settings
-    except (json.JSONDecodeError, OSError) as exc:
+    except json.JSONDecodeError as exc:
+        # Szintaxis-hiba: a fájl értelmezhetetlen → teljes default. Mentés előtt
+        # a hibás fájlt félretesszük '.incorrect' néven, hogy a kézi szerkesztések
+        # (amiket egy apró elgépelés tett olvashatatlanná) ne vesszenek el, amikor
+        # a program később felülírja a settings.json-t a default értékekkel.
+        backup = _backup_incorrect_settings(settings_file)
+        msg = f"⚠ '{settings_file}' JSON szintaxis hiba: {exc}. Alapértelmezés használata."
+        if backup:
+            msg += (
+                f" A hibás fájl elmentve ide: '{backup}' – javítsd ki ott a hibát "
+                f"(lásd a fenti sor/oszlop infót), majd nevezd vissza 'settings.json'-ra."
+            )
+        user_logger.warning(msg)
+        return settings
+    except OSError as exc:
         user_logger.warning(f"⚠ '{settings_file}' beolvasási hiba: {exc}. Alapértelmezés használata.")
         return settings
 
@@ -186,6 +200,31 @@ def _ensure_default_settings_file(settings_path: str) -> None:
 
     # Ha nincs settings.default.json, nincs mit tennünk
     # (a fallback a DEFAULT_SETTINGS hardcoded dict lesz)
+
+
+def _backup_incorrect_settings(settings_path: str) -> str | None:
+    """A szintaktikailag hibás ``settings_path``-ról biztonsági másolatot készít.
+
+    A másolat neve ``<settings_path>.incorrect`` (pl. ``settings.json.incorrect``).
+    Ezzel megőrizzük a felhasználó kézi szerkesztéseit akkor is, ha egy apró
+    elgépelés (hiányzó vessző, zárójel) miatt a fájl olvashatatlanná vált, és a
+    program később a default értékekkel felülírná az eredeti ``settings.json``-t.
+
+    Egy meglévő ``.incorrect`` fájlt felülír (mindig a legutóbbi hibás verziót őrzi).
+
+    Returns:
+        A biztonsági másolat útvonala siker esetén, különben ``None``.
+    """
+    backup_path = settings_path + ".incorrect"
+    try:
+        shutil.copy2(settings_path, backup_path)
+        return backup_path
+    except OSError as exc:
+        user_logger.warning(
+            f"⚠ Nem sikerült biztonsági másolatot készíteni a hibás "
+            f"'{settings_path}' fájlról: {exc}"
+        )
+        return None
 
 
 # ============================================================

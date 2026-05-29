@@ -37,6 +37,8 @@ A program kétféleképpen reagál a hibákra, attól függően, hogy **érték-
 
 > ⚠️ **Gyakorlati tanács:** ha JSON szintaxis hibát látsz a logban, és váratlanul **minden** alapértelmezett, akkor egyetlen elgépelés (hiányzó vessző, zárójel, lezáratlan idézőjel) az egész fájlt blokkolja. A hibaüzenet megadja a pontos sort és oszlopot (pl. `Expecting ',' delimiter: line 5 column 5`) – érdemes JSON-validátorral vagy a megadott sor/oszlop alapján ellenőrizni.
 
+> 💾 **Automatikus mentés szintaxis-hibánál:** ha a `settings.json` JSON szintaxisa hibás, a program a default-okra váltás **előtt** félreteszi a hibás fájlt `settings.json.incorrect` néven. Így a sok kézi szerkesztésed **nem vész el** akkor sem, ha a program később (pl. HUD ablakpozíció mentésekor) felülírná a `settings.json`-t a default értékekkel. Teendő: nyisd meg a `settings.json.incorrect` fájlt, javítsd ki a hibát (a logban jelzett sor/oszlop alapján), majd nevezd vissza `settings.json`-ra. Megjegyzés: a `.incorrect` mindig a legutóbbi hibás verziót őrzi (felülíródik).
+
 ---
 
 ## Gyors kezdés

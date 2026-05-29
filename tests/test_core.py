@@ -1155,6 +1155,64 @@ class TestMalformedJsonFallback:
         assert settings["global_settings"].cooldown_seconds == 120
         assert settings["power_zones"].ftp == 200
 
+    def test_incorrect_backup_created(self, tmp_path):
+        """Szintaxis-hiba → a hibás fájlról '.incorrect' másolat készül."""
+        loader = self._import_loader()
+        target = tmp_path / "settings.json"
+        broken = '{"power_zones": {"ftp": 285 "min_watt": 15}}'
+        target.write_text(broken, encoding="utf-8")
+
+        loader.load_settings(str(target))
+
+        backup = tmp_path / "settings.json.incorrect"
+        assert backup.exists(), "A hibás fájlról '.incorrect' másolatot kell készíteni"
+        # A másolat a felhasználó eredeti (hibás) tartalmát őrzi meg
+        assert backup.read_text(encoding="utf-8") == broken
+
+    def test_incorrect_backup_preserves_manual_edits(self, tmp_path):
+        """A '.incorrect' másolat megőrzi a felhasználó kézi szerkesztéseit."""
+        loader = self._import_loader()
+        target = tmp_path / "settings.json"
+        broken = (
+            '{\n  "power_zones": {"ftp": 285, "max_watt": 950},\n'
+            '  "heart_rate_zones": {"max_hr": 192}\n'  # ← hiányzó vessző
+            '  "ble": {"device_name": "MyFan"}\n}'
+        )
+        target.write_text(broken, encoding="utf-8")
+
+        loader.load_settings(str(target))
+
+        backup = tmp_path / "settings.json.incorrect"
+        assert backup.exists()
+        # A teljes eredeti tartalom megvan, így a felhasználó kijavíthatja
+        assert "285" in backup.read_text(encoding="utf-8")
+        assert "MyFan" in backup.read_text(encoding="utf-8")
+
+    def test_incorrect_backup_overwrites_previous(self, tmp_path):
+        """Meglévő '.incorrect' másolatot felülír (mindig a legutóbbi hibás)."""
+        loader = self._import_loader()
+        target = tmp_path / "settings.json"
+        backup = tmp_path / "settings.json.incorrect"
+        backup.write_text("regi hibas tartalom", encoding="utf-8")
+
+        new_broken = '{"power_zones": {"ftp": 999 bad}}'
+        target.write_text(new_broken, encoding="utf-8")
+
+        loader.load_settings(str(target))
+
+        assert backup.read_text(encoding="utf-8") == new_broken
+
+    def test_no_backup_when_valid_json(self, tmp_path):
+        """Érvényes JSON esetén NEM készül '.incorrect' másolat."""
+        loader = self._import_loader()
+        target = tmp_path / "settings.json"
+        target.write_text('{"power_zones": {"ftp": 250}}', encoding="utf-8")
+
+        loader.load_settings(str(target))
+
+        backup = tmp_path / "settings.json.incorrect"
+        assert not backup.exists(), "Érvényes JSON esetén nem kell biztonsági másolat"
+
 
 # ============================================================
 # Az example sablonok tükrözik a default-ot
