@@ -1,12 +1,33 @@
 # Konfiguráció – Smart Fan Controller
 
-A program a `settings.json` fájlból olvassa a beállításokat. Ha a fájl nem létezik, automatikusan létrehozza az alapértelmezett értékekkel. A kommentezett referenciát lásd: `settings.example.jsonc`.
+A program a `settings.json` fájlból olvassa a beállításokat. Ha ez a fájl még nem létezik, az induláskor automatikusan létrejön a beépített **default sablonból** (`settings.default.json`) másolva. A kommentezett referenciát lásd: `settings.example.jsonc`.
+
+---
+
+## Konfigurációs fájlok
+
+| Fájl | Szerep |
+|------|--------|
+| `settings.json` | **A te beállításaid.** Ezt szerkeszted; ezt olvassa a program. Első indításkor jön létre. |
+| `smart_fan_controller/config/settings.default.json` | **Beépített default sablon** (package data, verziókövetett). Ebből készül a `settings.json` első indításkor. |
+| `settings.example.json` | A default pontos, gép-olvasható másolata (kényelmi sablon). |
+| `settings.example.jsonc` | Ugyanazok az értékek **kommentekkel** – ez a dokumentált referencia. |
+
+**Betöltési logika (`load_settings`):**
+
+1. Ha a `settings.json` **nem létezik**, a program megpróbálja átmásolni a default sablont:
+   - előbb az aktuális könyvtárban (CWD) lévő `settings.default.json`-t (ha van saját felülíró sablonod),
+   - majd a beépített package data sablont.
+2. Beolvassa a `settings.json`-t, és minden mezőt validál. **Hibás mező esetén** az adott mező alapértelmezett értéke marad érvényben (figyelmeztetéssel), a többi beállítás betöltődik.
+3. Ha semmilyen sablon nem érhető el, a beépített (hardcoded) alapértelmezések lépnek életbe.
+
+> ℹ️ A `settings.example.json` és `.jsonc` mindig a `settings.default.json`-t tükrözi; ezt automatikus teszt is őrzi, így a sablonok nem csúsznak el a tényleges alapértelmezésektől.
 
 ---
 
 ## Gyors kezdés
 
-1. Másold a `settings.example.json` fájlt `settings.json` néven.
+1. Indítsd el a programot egyszer – ekkor automatikusan létrejön a `settings.json` az alapértelmezésekkel. (Vagy másold kézzel a `settings.example.json`-t `settings.json` néven.)
 2. Állítsd be az FTP értékedet (`power_zones.ftp`), és szükség esetén a cooldown-t (`global_settings.cooldown_seconds`).
 3. Válaszd ki az adatforrást (`datasource.power_source`, `datasource.hr_source`).
 4. Ha BLE ventilátort használsz, állítsd be a `ble.device_name` mezőt (vagy hagyd `null`-on az auto-discovery-hez).
