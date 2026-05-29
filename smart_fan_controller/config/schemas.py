@@ -128,16 +128,15 @@ class PowerZonesConfig:
             self.z2_max_percent = default_z2
 
     @classmethod
-    def from_dict(cls, raw: dict[str, Any], defaults: "PowerZonesConfig | None" = None) -> "PowerZonesConfig":
+    def from_dict(cls, raw: dict[str, Any]) -> "PowerZonesConfig":
         """Dict-ből (JSON) hoz létre validált PowerZonesConfig példányt.
 
         Érvénytelen értékeket figyelmen kívül hagyja (az alapértelmezés marad).
 
         Args:
             raw: A JSON-ból betöltött dict.
-            defaults: Alapértelmezett értékek (None = osztály default-ok).
         """
-        d = defaults or cls()
+        d = cls()
         ftp = d.ftp
         min_watt = d.min_watt
         max_watt = d.max_watt
