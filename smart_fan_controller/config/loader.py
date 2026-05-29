@@ -74,7 +74,21 @@ def load_settings(settings_file: str = "settings.json") -> Dict[str, Any]:
             f"⚠ '{settings_file}' nem található, alapértelmezett beállítások használata."
         )
         return settings
-    except (json.JSONDecodeError, OSError) as exc:
+    except json.JSONDecodeError as exc:
+        # Szintaxis-hiba: a fájl értelmezhetetlen → teljes default. Mentés előtt
+        # a hibás fájlt félretesszük '.incorrect' néven, hogy a kézi szerkesztések
+        # (amiket egy apró elgépelés tett olvashatatlanná) ne vesszenek el, amikor
+        # a program később felülírja a settings.json-t a default értékekkel.
+        backup = _backup_incorrect_settings(settings_file)
+        msg = f"⚠ '{settings_file}' JSON szintaxis hiba: {exc}. Alapértelmezés használata."
+        if backup:
+            msg += (
+                f" A hibás fájl elmentve ide: '{backup}' – javítsd ki ott a hibát "
+                f"(lásd a fenti sor/oszlop infót), majd nevezd vissza 'settings.json'-ra."
+            )
+        user_logger.warning(msg)
+        return settings
+    except OSError as exc:
         user_logger.warning(f"⚠ '{settings_file}' beolvasási hiba: {exc}. Alapértelmezés használata.")
         return settings
 
@@ -186,6 +200,69 @@ def _ensure_default_settings_file(settings_path: str) -> None:
 
     # Ha nincs settings.default.json, nincs mit tennünk
     # (a fallback a DEFAULT_SETTINGS hardcoded dict lesz)
+
+
+def _backup_incorrect_settings(settings_path: str) -> str | None:
+    """A szintaktikailag hibás ``settings_path``-ról biztonsági másolatot készít.
+
+    A másolat neve ``<settings_path>.incorrect`` (pl. ``settings.json.incorrect``).
+    Ezzel megőrizzük a felhasználó kézi szerkesztéseit akkor is, ha egy apró
+    elgépelés (hiányzó vessző, zárójel) miatt a fájl olvashatatlanná vált, és a
+    program később a default értékekkel felülírná az eredeti ``settings.json``-t.
+
+    Egy meglévő ``.incorrect`` fájlt felülír (mindig a legutóbbi hibás verziót őrzi).
+
+    Returns:
+        A biztonsági másolat útvonala siker esetén, különben ``None``.
+    """
+    backup_path = settings_path + ".incorrect"
+    try:
+        shutil.copy2(settings_path, backup_path)
+        return backup_path
+    except OSError as exc:
+        user_logger.warning(
+            f"⚠ Nem sikerült biztonsági másolatot készíteni a hibás "
+            f"'{settings_path}' fájlról: {exc}"
+        )
+        return None
+
+
+def save_hud_settings_only(settings_file: str, hud_config: HudConfig) -> bool:
+    """Csak a "hud" szekciót frissíti a settings.json-ban (teljes felülírás nélkül).
+
+    Ez a funkció arra szolgál, hogy a HUD beállítások (opacity, sound_volume,
+    window_geometry) csak akkor kerüljenek mentésre, ha ``save_hud_settings=True``.
+    Így a felhasználó kézi szerkesztéseit (ftp, device_name stb.) a program
+    nem írja felül egy HUD-pozíció-mentéssel.
+
+    Args:
+        settings_file: A settings.json fájl elérési útja.
+        hud_config: Az aktuálisan használt HudConfig objektum.
+
+    Returns:
+        True ha sikeres, False ha hiba történt.
+    """
+    if not hud_config.save_hud_settings:
+        # A felhasználó letiltotta a HUD mentést
+        return False
+
+    try:
+        with open(settings_file, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError, OSError) as exc:
+        user_logger.warning(f"⚠ HUD beállítások mentési hiba (olvasás): {exc}")
+        return False
+
+    # Csak a "hud" szekciót frissítjük
+    data["hud"] = hud_config.to_dict()
+
+    try:
+        with open(settings_file, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+        return True
+    except OSError as exc:
+        user_logger.warning(f"⚠ HUD beállítások mentési hiba (írás): {exc}")
+        return False
 
 
 # ============================================================

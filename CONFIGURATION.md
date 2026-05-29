@@ -23,6 +23,22 @@ A program a `settings.json` fájlból olvassa a beállításokat. Ha ez a fájl 
 
 > ℹ️ A `settings.example.json` és `.jsonc` mindig a `settings.default.json`-t tükrözi; ezt automatikus teszt is őrzi, így a sablonok nem csúsznak el a tényleges alapértelmezésektől.
 
+### Kétféle hiba – kétféle hatókör
+
+A program kétféleképpen reagál a hibákra, attól függően, hogy **érték-hiba** vagy **szintaxis-hiba** történt:
+
+| | **Rossz ÉRTÉK** (érvényes JSON) | **Rossz JSON SZINTAXIS** |
+|---|---|---|
+| **Példa** | `"ftp": "kétszáz"` (szöveg szám helyett) | hiányzó vessző, zárójel, lezáratlan idézőjel |
+| **JSON értelmezhető?** | ✅ Igen | ❌ Nem |
+| **Hatókör** | Csak az érintett **mező** | A **teljes fájl** |
+| **Jó értékek sorsa** | ✅ Megmaradnak | ❌ Mind elvész (teljes default) |
+| **Log** | mezőnként figyelmeztetés | egyetlen "beolvasási hiba" + sor/oszlop |
+
+> ⚠️ **Gyakorlati tanács:** ha JSON szintaxis hibát látsz a logban, és váratlanul **minden** alapértelmezett, akkor egyetlen elgépelés (hiányzó vessző, zárójel, lezáratlan idézőjel) az egész fájlt blokkolja. A hibaüzenet megadja a pontos sort és oszlopot (pl. `Expecting ',' delimiter: line 5 column 5`) – érdemes JSON-validátorral vagy a megadott sor/oszlop alapján ellenőrizni.
+
+> 💾 **Automatikus mentés szintaxis-hibánál:** ha a `settings.json` JSON szintaxisa hibás, a program a default-okra váltás **előtt** félreteszi a hibás fájlt `settings.json.incorrect` néven. Így a sok kézi szerkesztésed **nem vész el** akkor sem, ha a program később (pl. HUD ablakpozíció mentésekor) felülírná a `settings.json`-t a default értékekkel. Teendő: nyisd meg a `settings.json.incorrect` fájlt, javítsd ki a hibát (a logban jelzett sor/oszlop alapján), majd nevezd vissza `settings.json`-ra. Megjegyzés: a `.incorrect` mindig a legutóbbi hibás verziót őrzi (felülíródik).
+
 ---
 
 ## Gyors kezdés
@@ -66,7 +82,12 @@ A program a `settings.json` fájlból olvassa a beállításokat. Ha ez a fájl 
 - **Z2:** FTP × z1_max_percent% + 1 – FTP × z2_max_percent%
 - **Z3:** FTP × z2_max_percent% + 1 – max_watt
 
-**Validáció:** a program automatikusan javítja ha `min_watt >= max_watt` vagy `z1_max_percent >= z2_max_percent`.
+**Validáció:** 
+- A program automatikusan javítja ha `min_watt >= max_watt` vagy `z1_max_percent >= z2_max_percent`.
+- A `zero_power_immediate` mező szigorú típusellenőrzés alatt áll: csak a `true` és `false` logikai értékek (JSON boolean) elfogadottak. 
+  - **Hibás érték:** `"true"` (string), `"tue"` (typo), `1` vagy `0` (egész szám), `null`, vagy bármilyen egyéb érték
+  - **Viselkedés:** a hibás érték figyelmeztetéssel (`⚠ Érvénytelen 'zero_power_immediate' érték: ...`) az alapértelmezés (false) marad, és a többi beállítás betöltődik
+  - **Helyes formátum:** `"zero_power_immediate": true` vagy `"zero_power_immediate": false` (JSON boolean, nem string)
 
 ---
 
@@ -96,6 +117,12 @@ A program a `settings.json` fájlból olvassa a beállításokat. Ha ez a fájl 
 - **Z1:** resting_hr – max_hr × z1_max_percent%
 - **Z2:** max_hr × z1_max_percent% + 1 – max_hr × z2_max_percent%
 - **Z3:** max_hr × z2_max_percent% felett
+
+**Validáció:**
+- Az `enabled` és `zero_hr_immediate` mezők szigorú típusellenőrzés alatt állnak: csak a `true` és `false` logikai értékek (JSON boolean) elfogadottak.
+  - **Helyes formátum:** `"enabled": true` vagy `"zero_hr_immediate": false` (JSON boolean, nem string)
+  - **Hibás érték:** `"true"` (string), `1` vagy `0` (egész szám), `null`, vagy bármilyen egyéb érték
+  - **Viselkedés:** a hibás érték figyelmeztetéssel az alapértelmezés marad, és a többi beállítás betöltődik
 
 ---
 
@@ -235,15 +262,19 @@ A LCARS stílusú HUD ablak viselkedését szabályozó beállítások.
 
 | Mező | Típus | Értékek | Alapértelmezett | Leírás |
 |------|-------|---------|-----------------|--------|
+| `save_hud_settings` | bool | true/false | false | Ha true, az ablak pozíciója, mérete, átlátszósága és hangerő mentésre kerül a fájlba (ez a flag engedélyezi az automatikus mentést). Ha false, a HUD-on végzett módosítások a memóriában maradnak, fájl nem íródik – a kézi szerkesztések nem lesznek felülírva egy ablak-elhúzással. |
 | `sound_enabled` | bool | true/false | true | LCARS hangeffektek be/kikapcsolása. |
-| `sound_volume` | float | 0.0–1.0 | 0.5 | Hangeffektek hangereje. |
+| `sound_volume` | float | 0.0–1.0 | 0.5 | Hangeffektek hangereje. Csak akkor mentésre kerül, ha `save_hud_settings=true`. |
 | `close_at_zwiftapp.exe` | bool | true/false | true | Ha true, a program automatikusan leáll amikor a ZwiftApp.exe kilép. |
-| `opacity` | int | 20–100 | 92 | HUD ablak átlátszósága %-ban. A slider/menüből is módosítható, automatikusan mentődik. |
-| `window_geometry` | object | – | `{}` | Per-monitor ablak pozíció/méret. Automatikusan kezelődik, kézi szerkesztés nem szükséges. |
+| `opacity` | int | 20–100 | 92 | HUD ablak átlátszósága %-ban. A slider/menüből is módosítható. Csak akkor mentésre kerül, ha `save_hud_settings=true`. |
+| `window_geometry` | object | – | `{}` | Per-monitor ablak pozíció/méret. Csak akkor kerül mentésre, ha `save_hud_settings=true`. |
 
-### Ablak pozíció és átlátszóság
+### Ablak pozíció, átlátszóság és hangerő mentése
 
-Az `opacity` értéket a slider-rel vagy a jobb-klikk menüből is lehet állítani – a változás automatikusan mentődik a `settings.json`-ba.
+Az `opacity`, `sound_volume` és `window_geometry` értékek változása **csak akkor** kerül a `settings.json`-ba, ha `save_hud_settings=true`. Ez a mód biztosítja, hogy:
+
+- **Ha `save_hud_settings=true`:** a HUD-on végzett módosítások (ablak elhúzása, átlátszóság állítás, hangerő) automatikusan mentődnek – az elvárt működés.
+- **Ha `save_hud_settings=false` (alapértelmezés):** a HUD-on végzett módosítások NEM írják felül a `settings.json`-t – így a kézi szerkesztéseid (pl. egyéb szekciók: `power_zones.ftp`, `ble.device_name` stb.) nem vesznek el egy ablak-elhúzással vagy átlátszóság állítással.
 
 A `window_geometry` mező automatikusan kezelődik: bezáráskor a program menti az ablak pozícióját és méretét az aktuális monitor nevéhez. Induláskor visszaállítja az utoljára használt monitor geometriáját. Ha a monitor nem létezik (pl. külső kijelző lecsatlakoztatva), az elsődleges monitorra kerül az ablak. Több monitor esetén mindegyikhez külön pozíció/méret tárolódik:
 

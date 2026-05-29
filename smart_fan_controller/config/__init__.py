@@ -21,6 +21,7 @@ from .schemas import (
 from .loader import (
     get_effective_zone_mode,
     load_settings,
+    save_hud_settings_only,
 )
 
 __all__ = [
@@ -40,4 +41,5 @@ __all__ = [
     "DEFAULT_SETTINGS",
     "load_settings",
     "get_effective_zone_mode",
+    "save_hud_settings_only",
 ]

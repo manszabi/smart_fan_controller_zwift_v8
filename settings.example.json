@@ -72,6 +72,7 @@
     "zwift_launcher_path": null
   },
   "hud": {
+    "save_hud_settings": false,
     "sound_enabled": true,
     "sound_volume": 0.5,
     "close_at_zwiftapp.exe": true,

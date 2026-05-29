@@ -64,33 +64,68 @@ class PowerZonesConfig:
     zero_power_immediate: bool = False
 
     def __post_init__(self) -> None:
-        # min_watt / max_watt kereszt-validáció
-        if self.min_watt > self.max_watt:
+        # --- ftp tartomány-check: 0–1000 ---
+        if self.ftp < 0 or self.ftp > 1000:
             user_logger.warning(
-                f"⚠ Érvénytelen watt tartomány (min_watt={self.min_watt}, max_watt={self.max_watt}). "
-                f"Feltételezett felcserélés, értékek megfordítva."
+                f"⚠ Érvénytelen 'ftp' érték: {self.ftp} (0–1000 közötti kell). "
+                f"Javítva: default {PowerZonesConfig.__dataclass_fields__['ftp'].default}-ra."
             )
-            self.min_watt, self.max_watt = self.max_watt, self.min_watt
-        elif self.min_watt == self.max_watt:
-            user_logger.warning(
-                f"⚠ min_watt és max_watt azonos értékű ({self.min_watt}). "
-                f"max_watt {self.min_watt + 1}-re állítva."
-            )
-            self.max_watt = self.min_watt + 1
+            self.ftp = PowerZonesConfig.__dataclass_fields__['ftp'].default
 
-        # z1/z2 százalék kereszt-validáció
-        if self.z1_max_percent >= self.z2_max_percent:
-            low, high = min(self.z1_max_percent, self.z2_max_percent), max(self.z1_max_percent, self.z2_max_percent)
-            if low == high:
-                if low >= 100:
-                    low, high = 99, 100
-                else:
-                    high = low + 1
+        # --- min_watt tartomány-check: 0–1000 ---
+        if self.min_watt < 0 or self.min_watt > 1000:
             user_logger.warning(
-                f"⚠ Érvénytelen power zóna százalékok (z1={self.z1_max_percent}, z2={self.z2_max_percent}). "
-                f"Javítva: z1={low}, z2={high}."
+                f"⚠ Érvénytelen 'min_watt' érték: {self.min_watt} (0–1000 közötti kell). "
+                f"Javítva: 0-ra."
             )
-            self.z1_max_percent, self.z2_max_percent = low, high
+            self.min_watt = 0
+
+        # --- max_watt tartomány-check: 0–1000 ---
+        if self.max_watt < 0 or self.max_watt > 1000:
+            user_logger.warning(
+                f"⚠ Érvénytelen 'max_watt' érték: {self.max_watt} (0–1000 közötti kell). "
+                f"Javítva: 1000-re."
+            )
+            self.max_watt = 1000
+
+        # --- min_watt < max_watt logikai check ---
+        if self.min_watt >= self.max_watt:
+            default_min = PowerZonesConfig.__dataclass_fields__['min_watt'].default
+            default_max = PowerZonesConfig.__dataclass_fields__['max_watt'].default
+            user_logger.warning(
+                f"⚠ Érvénytelen watt tartomány: min_watt ({self.min_watt}) >= max_watt ({self.max_watt}). "
+                f"Alapértelmezésre állítva: min_watt={default_min}, max_watt={default_max}."
+            )
+            self.min_watt = default_min
+            self.max_watt = default_max
+
+        # --- z1_max_percent / z2_max_percent tartomány-check: 1–100 ---
+        if self.z1_max_percent < 1 or self.z1_max_percent > 100:
+            default_z1 = PowerZonesConfig.__dataclass_fields__['z1_max_percent'].default
+            user_logger.warning(
+                f"⚠ Érvénytelen 'z1_max_percent' érték: {self.z1_max_percent} (1–100 közötti kell). "
+                f"Javítva: default {default_z1}-re."
+            )
+            self.z1_max_percent = default_z1
+
+        if self.z2_max_percent < 1 or self.z2_max_percent > 100:
+            default_z2 = PowerZonesConfig.__dataclass_fields__['z2_max_percent'].default
+            user_logger.warning(
+                f"⚠ Érvénytelen 'z2_max_percent' érték: {self.z2_max_percent} (1–100 közötti kell). "
+                f"Javítva: default {default_z2}-re."
+            )
+            self.z2_max_percent = default_z2
+
+        # --- z1_max_percent < z2_max_percent logikai check ---
+        if self.z1_max_percent >= self.z2_max_percent:
+            default_z1 = PowerZonesConfig.__dataclass_fields__['z1_max_percent'].default
+            default_z2 = PowerZonesConfig.__dataclass_fields__['z2_max_percent'].default
+            user_logger.warning(
+                f"⚠ Érvénytelen zóna százalékok: z1_max_percent ({self.z1_max_percent}) >= z2_max_percent ({self.z2_max_percent}). "
+                f"Alapértelmezésre állítva: z1_max_percent={default_z1}, z2_max_percent={default_z2}."
+            )
+            self.z1_max_percent = default_z1
+            self.z2_max_percent = default_z2
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any], defaults: "PowerZonesConfig | None" = None) -> "PowerZonesConfig":
@@ -112,24 +147,24 @@ class PowerZonesConfig:
 
         if "ftp" in raw:
             v = raw["ftp"]
-            if isinstance(v, int) and not isinstance(v, bool) and 100 <= v <= 500:
+            if isinstance(v, int) and not isinstance(v, bool) and 0 <= v <= 1000:
                 ftp = v
             else:
-                user_logger.warning(f"⚠ Érvénytelen 'ftp' érték: {v} (100–500 közötti egész kell)")
+                user_logger.warning(f"⚠ Érvénytelen 'ftp' érték: {v} (0–1000 közötti egész kell, default: {d.ftp})")
 
         if "min_watt" in raw:
             v = raw["min_watt"]
-            if isinstance(v, int) and not isinstance(v, bool) and 0 <= v <= 9999:
+            if isinstance(v, int) and not isinstance(v, bool) and 0 <= v <= 1000:
                 min_watt = v
             else:
-                user_logger.warning(f"⚠ Érvénytelen 'min_watt' érték: {v} (0–9999 közötti egész kell)")
+                user_logger.warning(f"⚠ Érvénytelen 'min_watt' érték: {v} (0–1000 közötti egész kell, default: {d.min_watt})")
 
         if "max_watt" in raw:
             v = raw["max_watt"]
-            if isinstance(v, int) and not isinstance(v, bool) and 1 <= v <= 100000:
+            if isinstance(v, int) and not isinstance(v, bool) and 0 <= v <= 1000:
                 max_watt = v
             else:
-                user_logger.warning(f"⚠ Érvénytelen 'max_watt' érték: {v} (1–100000 közötti egész kell)")
+                user_logger.warning(f"⚠ Érvénytelen 'max_watt' érték: {v} (0–1000 közötti egész kell, default: {d.max_watt})")
 
         if "z1_max_percent" in raw:
             v = raw["z1_max_percent"]
@@ -476,6 +511,7 @@ class DatasourceConfig:
 class HudConfig:
     """HUD beállítások – típusbiztos."""
 
+    save_hud_settings: bool = False
     sound_enabled: bool = True
     sound_volume: float = 0.5
     close_at_zwiftapp_exe: bool = True
@@ -486,6 +522,8 @@ class HudConfig:
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> "HudConfig":
         kwargs: dict[str, Any] = {}
+        if "save_hud_settings" in raw and isinstance(raw["save_hud_settings"], bool):
+            kwargs["save_hud_settings"] = raw["save_hud_settings"]
         if "sound_enabled" in raw and isinstance(raw["sound_enabled"], bool):
             kwargs["sound_enabled"] = raw["sound_enabled"]
         if "sound_volume" in raw and isinstance(raw["sound_volume"], (int, float)):
@@ -515,6 +553,7 @@ class HudConfig:
     def to_dict(self) -> Dict[str, Any]:
         """JSON-kompatibilis dict (régi kulcsnévvel a kompatibilitásért)."""
         return {
+            "save_hud_settings": self.save_hud_settings,
             "sound_enabled": self.sound_enabled,
             "sound_volume": self.sound_volume,
             "close_at_zwiftapp.exe": self.close_at_zwiftapp_exe,
