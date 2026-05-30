@@ -14,7 +14,8 @@
     "buffer_rate_hz": 4,         // Várt mintavételi frekvencia Hz-ben (1–60)
     "dropout_timeout": 5,        // Adatforrás kiesés timeout (1–120 mp)
 
-    // Log fájlok könyvtára. Ha null vagy hiányzik, a program könyvtárát használja.
+    // Log fájlok könyvtára. Ha null, "null", vagy hiányzik, a program könyvtárát
+    // használja (csendben). Üres string vagy rossz típus esetén figyelmeztet.
     // Fájlok: smart_fan_controller.log, ble_devices.log, ant_devices.log
     "log_directory": null
   },

@@ -727,6 +727,38 @@ class TestGlobalSettingsConfig:
         cfg = GlobalSettingsConfig.from_dict({"log_directory": "/tmp/logs"})
         assert cfg.log_directory == "/tmp/logs"
 
+    def test_from_dict_log_directory_null_string(self):
+        """A "null" string (gyakori elgépelés) → None, csendben."""
+        cfg = GlobalSettingsConfig.from_dict({"log_directory": "null"})
+        assert cfg.log_directory is None
+
+    def test_from_dict_log_directory_null_string_case_insensitive(self):
+        """A "NULL" / " null " → None (case-insensitive, trimmelt)."""
+        assert GlobalSettingsConfig.from_dict({"log_directory": "NULL"}).log_directory is None
+        assert GlobalSettingsConfig.from_dict({"log_directory": " null "}).log_directory is None
+
+    def test_from_dict_log_directory_null_string_silent(self, caplog):
+        """A "null" string NEM ad figyelmeztetést (csendes default)."""
+        import logging
+        with caplog.at_level(logging.WARNING, logger="user"):
+            GlobalSettingsConfig.from_dict({"log_directory": "null"})
+        assert not any("log_directory" in r.message for r in caplog.records)
+
+    def test_from_dict_log_directory_missing_silent(self, caplog):
+        """Hiányzó kulcs → None, csendben (nincs figyelmeztetés)."""
+        import logging
+        with caplog.at_level(logging.WARNING, logger="user"):
+            cfg = GlobalSettingsConfig.from_dict({})
+        assert cfg.log_directory is None
+        assert not any("log_directory" in r.message for r in caplog.records)
+
+    def test_from_dict_log_directory_null_silent(self, caplog):
+        """null (None) → None, csendben (nincs figyelmeztetés)."""
+        import logging
+        with caplog.at_level(logging.WARNING, logger="user"):
+            GlobalSettingsConfig.from_dict({"log_directory": None})
+        assert not any("log_directory" in r.message for r in caplog.records)
+
     def test_from_dict_log_directory_empty_string(self):
         """Üres string → None (default) + warning."""
         cfg = GlobalSettingsConfig.from_dict({"log_directory": "   "})
