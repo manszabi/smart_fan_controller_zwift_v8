@@ -310,6 +310,57 @@ def _setup_logging(log_directory: Optional[str] = None, logging_enabled: bool = 
     logging.getLogger("openant").setLevel(logging.CRITICAL)
 
 
+# Modul-szintű: a korai (settings betöltés előtti) logokat pufferelő handlerek
+_early_mem_handlers: list = []
+
+
+def _setup_early_logging() -> None:
+    """Korai loggolás: a settings betöltése ELŐTTI logokat memóriába puffereli.
+
+    Mivel a ``global_settings.logging`` flag csak a settings betöltése után
+    ismert, a korai logokat (pl. config validációs warningok) memóriában
+    tartjuk. A flag ismeretében később vagy visszajátsszuk a valódi
+    handlerekre (``_flush_early_logging``), vagy eldobjuk
+    (``_discard_early_logging``). Így ``logging: false`` esetén nem jön létre
+    fölösleges log fájl, ``logging: true`` esetén pedig a korai warningok sem
+    vesznek el.
+    """
+    from logging.handlers import MemoryHandler
+
+    global _early_mem_handlers
+    _early_mem_handlers = []
+    for name in ("user", "swift_fan_controller_new"):
+        lg = logging.getLogger(name)
+        lg.handlers.clear()
+        lg.setLevel(logging.DEBUG)
+        lg.propagate = False
+        # Nagy kapacitás + magas flushLevel → nem ürül ki automatikusan
+        mh = MemoryHandler(capacity=100000, flushLevel=logging.CRITICAL + 10)
+        lg.addHandler(mh)
+        _early_mem_handlers.append((lg, mh))
+    logging.getLogger("bleak").setLevel(logging.CRITICAL)
+    logging.getLogger("openant").setLevel(logging.CRITICAL)
+
+
+def _flush_early_logging() -> None:
+    """A pufferelt korai logokat visszajátssza a már beállított handlerekre."""
+    global _early_mem_handlers
+    for lg, mh in _early_mem_handlers:
+        for record in mh.buffer:
+            lg.handle(record)
+        mh.close()
+    _early_mem_handlers = []
+
+
+def _discard_early_logging() -> None:
+    """A pufferelt korai logokat eldobja (logging: false eset)."""
+    global _early_mem_handlers
+    for _lg, mh in _early_mem_handlers:
+        mh.buffer.clear()
+        mh.close()
+    _early_mem_handlers = []
+
+
 # ============================================================
 # TÍPUSBIZTOS BEÁLLÍTÁS MODELLEK (kiszervezve: config al-package)
 # ============================================================
@@ -4923,8 +4974,10 @@ def main() -> None:
     if _platform.system() == "Windows" and sys.version_info < (3, 14):
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
-    # Kezdeti logging (alapértelmezett könyvtár) – a settings betöltés is logolhat
-    _setup_logging()
+    # Korai logging: a settings betöltése előtti logokat memóriába puffereljük,
+    # mert a logging flag még nem ismert. Így logging:false esetén nem jön létre
+    # fölösleges log fájl, logging:true esetén a korai warningok sem vesznek el.
+    _setup_early_logging()
 
     # PyInstaller frozen exe: settings.json az exe mellett keresendő
     if getattr(sys, 'frozen', False):
@@ -4935,13 +4988,16 @@ def main() -> None:
         _settings_path = os.path.join(_script_dir, "settings.json")
     controller = FanController(_settings_path)
 
-    # Logging újrakonfigurálása a betöltött beállítások alapján
+    # Logging konfigurálása a betöltött beállítások alapján
     _gs = controller.settings["global_settings"]
     if not _gs.logging:
-        # Loggolás kikapcsolva → teljes némaság (csak a startup info marad)
+        # Loggolás kikapcsolva → teljes némaság, korai logok eldobva
         _setup_logging(_gs.log_directory, logging_enabled=False)
-    elif _gs.log_directory:
+        _discard_early_logging()
+    else:
         _setup_logging(_gs.log_directory)
+        # Korai (betöltés előtti) logok visszajátszása a valódi handlerekre
+        _flush_early_logging()
 
     controller.print_startup_info()
 
