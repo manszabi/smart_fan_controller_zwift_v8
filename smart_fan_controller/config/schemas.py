@@ -227,8 +227,9 @@ class GlobalSettingsConfig:
         d = cls()
         kwargs: dict[str, Any] = dataclasses.asdict(d)
 
-        # Minden int mező egységes tartománya: 1–1000
-        _from_dict_int(raw, kwargs, "cooldown_seconds", 1, 1000)
+        # cooldown_seconds: 0–1000 (0 = azonnali váltás, nincs cooldown)
+        _from_dict_int(raw, kwargs, "cooldown_seconds", 0, 1000)
+        # A többi int mező egységes tartománya: 1–1000
         _from_dict_int(raw, kwargs, "buffer_seconds", 1, 1000)
         _from_dict_int(raw, kwargs, "minimum_samples", 1, 1000)
         _from_dict_int(raw, kwargs, "buffer_rate_hz", 1, 1000)

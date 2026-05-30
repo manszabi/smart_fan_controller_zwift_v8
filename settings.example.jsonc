@@ -3,8 +3,8 @@
   // GLOBÁLIS BEÁLLÍTÁSOK
   // ============================================================
   "global_settings": {
-    // Cooldown idő másodpercben zóna csökkentésnél (1–1000).
-    // Zóna emelkedésnél azonnali váltás történik, cooldown nélkül.
+    // Cooldown idő másodpercben zóna csökkentésnél (0–1000). 0 = azonnali
+    // váltás cooldown nélkül. Zóna emelkedésnél mindig azonnali a váltás.
     // Adaptív módosítások: nagy esés (>=2 szint) → felezés, emelkedés → duplázás.
     "cooldown_seconds": 120,
 

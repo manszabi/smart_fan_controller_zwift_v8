@@ -55,7 +55,7 @@ A program kétféleképpen reagál a hibákra, attól függően, hogy **érték-
 
 | Mező | Típus | Tartomány | Alapértelmezett | Leírás |
 |------|-------|-----------|-----------------|--------|
-| `cooldown_seconds` | int | 1–1000 | 120 | Cooldown idő zóna csökkentésnél (másodperc). |
+| `cooldown_seconds` | int | 0–1000 | 120 | Cooldown idő zóna csökkentésnél (másodperc). 0 = azonnali váltás (nincs cooldown). |
 | `buffer_seconds` | int | 1–1000 | 3 | Gördülő átlag ablak (fallback ha forrás-specifikus nincs). |
 | `minimum_samples` | int | 1–1000 | 6 | Minimum minta érvényes átlaghoz (fallback). |
 | `buffer_rate_hz` | int | 1–1000 | 4 | Várt mintavételi frekvencia Hz-ben (fallback). |

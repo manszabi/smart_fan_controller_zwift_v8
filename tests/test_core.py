@@ -588,15 +588,15 @@ class TestGlobalSettingsConfig:
 
     # --- cooldown_seconds field tests ---
     def test_cooldown_seconds_valid_boundaries(self):
-        """cooldown_seconds: valid határértékek 1–1000."""
-        cfg = GlobalSettingsConfig.from_dict({"cooldown_seconds": 1})
-        assert cfg.cooldown_seconds == 1
+        """cooldown_seconds: valid határértékek 0–1000 (0 = azonnali váltás)."""
+        cfg = GlobalSettingsConfig.from_dict({"cooldown_seconds": 0})
+        assert cfg.cooldown_seconds == 0
         cfg = GlobalSettingsConfig.from_dict({"cooldown_seconds": 1000})
         assert cfg.cooldown_seconds == 1000
 
     def test_cooldown_seconds_invalid_range(self):
-        """cooldown_seconds: 0 vagy 1001 → default marad."""
-        cfg = GlobalSettingsConfig.from_dict({"cooldown_seconds": 0})
+        """cooldown_seconds: -1 vagy 1001 → default marad."""
+        cfg = GlobalSettingsConfig.from_dict({"cooldown_seconds": -1})
         assert cfg.cooldown_seconds == 120
         cfg = GlobalSettingsConfig.from_dict({"cooldown_seconds": 1001})
         assert cfg.cooldown_seconds == 120
