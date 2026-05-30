@@ -588,17 +588,17 @@ class TestGlobalSettingsConfig:
 
     # --- cooldown_seconds field tests ---
     def test_cooldown_seconds_valid_boundaries(self):
-        """cooldown_seconds: valid határértékek 0–300."""
-        cfg = GlobalSettingsConfig.from_dict({"cooldown_seconds": 0})
-        assert cfg.cooldown_seconds == 0
-        cfg = GlobalSettingsConfig.from_dict({"cooldown_seconds": 300})
-        assert cfg.cooldown_seconds == 300
+        """cooldown_seconds: valid határértékek 1–1000."""
+        cfg = GlobalSettingsConfig.from_dict({"cooldown_seconds": 1})
+        assert cfg.cooldown_seconds == 1
+        cfg = GlobalSettingsConfig.from_dict({"cooldown_seconds": 1000})
+        assert cfg.cooldown_seconds == 1000
 
     def test_cooldown_seconds_invalid_range(self):
-        """cooldown_seconds: -1 vagy 301 → default marad."""
-        cfg = GlobalSettingsConfig.from_dict({"cooldown_seconds": -1})
+        """cooldown_seconds: 0 vagy 1001 → default marad."""
+        cfg = GlobalSettingsConfig.from_dict({"cooldown_seconds": 0})
         assert cfg.cooldown_seconds == 120
-        cfg = GlobalSettingsConfig.from_dict({"cooldown_seconds": 301})
+        cfg = GlobalSettingsConfig.from_dict({"cooldown_seconds": 1001})
         assert cfg.cooldown_seconds == 120
 
     def test_cooldown_seconds_float_integer_accepted(self):
@@ -618,17 +618,17 @@ class TestGlobalSettingsConfig:
 
     # --- buffer_seconds field tests ---
     def test_buffer_seconds_valid_boundaries(self):
-        """buffer_seconds: valid határértékek 1–10."""
+        """buffer_seconds: valid határértékek 1–1000."""
         cfg = GlobalSettingsConfig.from_dict({"buffer_seconds": 1})
         assert cfg.buffer_seconds == 1
-        cfg = GlobalSettingsConfig.from_dict({"buffer_seconds": 10})
-        assert cfg.buffer_seconds == 10
+        cfg = GlobalSettingsConfig.from_dict({"buffer_seconds": 1000})
+        assert cfg.buffer_seconds == 1000
 
     def test_buffer_seconds_invalid_range(self):
-        """buffer_seconds: 0 vagy 11 → default marad."""
+        """buffer_seconds: 0 vagy 1001 → default marad."""
         cfg = GlobalSettingsConfig.from_dict({"buffer_seconds": 0})
         assert cfg.buffer_seconds == 3
-        cfg = GlobalSettingsConfig.from_dict({"buffer_seconds": 11})
+        cfg = GlobalSettingsConfig.from_dict({"buffer_seconds": 1001})
         assert cfg.buffer_seconds == 3
 
     def test_buffer_seconds_float_fraction_rejected(self):
@@ -638,11 +638,18 @@ class TestGlobalSettingsConfig:
 
     # --- buffer_rate_hz field tests ---
     def test_buffer_rate_hz_valid_boundaries(self):
-        """buffer_rate_hz: valid határértékek 1–60."""
+        """buffer_rate_hz: valid határértékek 1–1000."""
         cfg = GlobalSettingsConfig.from_dict({"buffer_rate_hz": 1})
         assert cfg.buffer_rate_hz == 1
-        cfg = GlobalSettingsConfig.from_dict({"buffer_rate_hz": 60})
-        assert cfg.buffer_rate_hz == 60
+        cfg = GlobalSettingsConfig.from_dict({"buffer_rate_hz": 1000})
+        assert cfg.buffer_rate_hz == 1000
+
+    def test_buffer_rate_hz_invalid_range(self):
+        """buffer_rate_hz: 0 vagy 1001 → default marad."""
+        cfg = GlobalSettingsConfig.from_dict({"buffer_rate_hz": 0})
+        assert cfg.buffer_rate_hz == 4
+        cfg = GlobalSettingsConfig.from_dict({"buffer_rate_hz": 1001})
+        assert cfg.buffer_rate_hz == 4
 
     def test_buffer_rate_hz_float_fraction_rejected(self):
         """buffer_rate_hz: 4.5 (törtrész) → default marad."""
@@ -654,13 +661,13 @@ class TestGlobalSettingsConfig:
         """minimum_samples: valid határértékek 1–1000 (cross-validation nélkül)."""
         cfg = GlobalSettingsConfig.from_dict({"minimum_samples": 1})
         assert cfg.minimum_samples == 1
-        # 600 samples: buffer_seconds=10, buffer_rate_hz=60 → max=600 (cross-validation OK)
+        # 1000 samples: buffer_seconds=10, buffer_rate_hz=100 → max=1000 (cross-validation OK)
         cfg = GlobalSettingsConfig.from_dict({
-            "minimum_samples": 600,
+            "minimum_samples": 1000,
             "buffer_seconds": 10,
-            "buffer_rate_hz": 60,
+            "buffer_rate_hz": 100,
         })
-        assert cfg.minimum_samples == 600
+        assert cfg.minimum_samples == 1000
 
     def test_minimum_samples_float_fraction_rejected(self):
         """minimum_samples: 6.5 (törtrész) → default marad."""
@@ -669,11 +676,18 @@ class TestGlobalSettingsConfig:
 
     # --- dropout_timeout field tests ---
     def test_dropout_timeout_valid_boundaries(self):
-        """dropout_timeout: valid határértékek 1–120."""
+        """dropout_timeout: valid határértékek 1–1000."""
         cfg = GlobalSettingsConfig.from_dict({"dropout_timeout": 1})
         assert cfg.dropout_timeout == 1
-        cfg = GlobalSettingsConfig.from_dict({"dropout_timeout": 120})
-        assert cfg.dropout_timeout == 120
+        cfg = GlobalSettingsConfig.from_dict({"dropout_timeout": 1000})
+        assert cfg.dropout_timeout == 1000
+
+    def test_dropout_timeout_invalid_range(self):
+        """dropout_timeout: 0 vagy 1001 → default marad."""
+        cfg = GlobalSettingsConfig.from_dict({"dropout_timeout": 0})
+        assert cfg.dropout_timeout == 5
+        cfg = GlobalSettingsConfig.from_dict({"dropout_timeout": 1001})
+        assert cfg.dropout_timeout == 5
 
     def test_dropout_timeout_float_fraction_rejected(self):
         """dropout_timeout: 10.3 (törtrész) → default marad."""

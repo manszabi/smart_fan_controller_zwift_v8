@@ -55,11 +55,11 @@ A program kétféleképpen reagál a hibákra, attól függően, hogy **érték-
 
 | Mező | Típus | Tartomány | Alapértelmezett | Leírás |
 |------|-------|-----------|-----------------|--------|
-| `cooldown_seconds` | int | 0–300 | 120 | Cooldown idő zóna csökkentésnél. 0 = azonnali váltás. |
-| `buffer_seconds` | int | 1–10 | 3 | Gördülő átlag ablak (fallback ha forrás-specifikus nincs). |
+| `cooldown_seconds` | int | 1–1000 | 120 | Cooldown idő zóna csökkentésnél (másodperc). |
+| `buffer_seconds` | int | 1–1000 | 3 | Gördülő átlag ablak (fallback ha forrás-specifikus nincs). |
 | `minimum_samples` | int | 1–1000 | 6 | Minimum minta érvényes átlaghoz (fallback). |
-| `buffer_rate_hz` | int | 1–60 | 4 | Várt mintavételi frekvencia Hz-ben (fallback). |
-| `dropout_timeout` | int | 1–120 | 5 | Adatforrás kiesés timeout másodpercben (fallback). |
+| `buffer_rate_hz` | int | 1–1000 | 4 | Várt mintavételi frekvencia Hz-ben (fallback). |
+| `dropout_timeout` | int | 1–1000 | 5 | Adatforrás kiesés timeout másodpercben (fallback). |
 | `log_directory` | string\|null | – | null | Log fájlok könyvtára. `null` = a program könyvtára. Fájlok: `smart_fan_controller.log`, `ble_devices.log`, `ant_devices.log`. Ha a megadott könyvtár nem létezik vagy nem írható, automatikusan a program könyvtárát használja. |
 
 ---

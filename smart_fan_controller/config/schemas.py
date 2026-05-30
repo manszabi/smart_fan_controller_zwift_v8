@@ -227,12 +227,12 @@ class GlobalSettingsConfig:
         d = cls()
         kwargs: dict[str, Any] = dataclasses.asdict(d)
 
-        # Minden int mező: cooldown_seconds, buffer_seconds, minimum_samples, buffer_rate_hz, dropout_timeout
-        _from_dict_int(raw, kwargs, "cooldown_seconds", 0, 300)
-        _from_dict_int(raw, kwargs, "buffer_seconds", 1, 10)
+        # Minden int mező egységes tartománya: 1–1000
+        _from_dict_int(raw, kwargs, "cooldown_seconds", 1, 1000)
+        _from_dict_int(raw, kwargs, "buffer_seconds", 1, 1000)
         _from_dict_int(raw, kwargs, "minimum_samples", 1, 1000)
-        _from_dict_int(raw, kwargs, "buffer_rate_hz", 1, 60)
-        _from_dict_int(raw, kwargs, "dropout_timeout", 1, 120)
+        _from_dict_int(raw, kwargs, "buffer_rate_hz", 1, 1000)
+        _from_dict_int(raw, kwargs, "dropout_timeout", 1, 1000)
 
         # log_directory: null vagy nem-üres string.
         # null, "null" string, vagy hiányzó kulcs → None (program könyvtár), csendben.
