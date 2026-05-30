@@ -78,7 +78,7 @@ Röviden a `settings.json` fő szekciói:
 
 | Szekció | Tartalom |
 |---------|----------|
-| `global_settings` | cooldown, buffer, dropout timeout |
+| `global_settings` | cooldown, buffer, dropout timeout, loggolás (be/ki + könyvtár) |
 | `power_zones` | FTP, watt tartomány, zóna százalékok, 0W azonnali leállás |
 | `heart_rate_zones` | HR zónák, zone_mode (power_only/hr_only/higher_wins) |
 | `ble` | ESP32 ventilátor vezérlő (kimenet) |
@@ -212,6 +212,10 @@ main()
 | `settings.json` | Aktív beállítások |
 | `settings.example.json` | Példa beállítások (alapértelmezett értékek) |
 | `settings.example.jsonc` | Kommentezett beállítás referencia |
+| `zwift_api_settings.json` | A `zwift_api_polling.py` saját beállításai (Zwift fiók, loggolás) |
+| `zwift_api_settings.example.json` | Példa a Zwift API beállításokhoz |
+| `smart_fan_controller.log` | Fő program log (automatikusan generált, ha `logging: true`) |
+| `zwift_api_polling.log` | Zwift polling log (automatikusan generált, ha `logging: true`) |
 | `ble_devices.log` | Talált BLE eszközök (automatikusan generált) |
 | `ant_devices.log` | Talált ANT+ eszközök (automatikusan generált) |
 | `CONFIGURATION.md` | Részletes konfigurációs dokumentáció |

@@ -110,9 +110,9 @@ _Példa:_ `buffer_seconds=3`, `buffer_rate_hz=2` → max `6`; ha `minimum_sample
 
 | Mező | Típus | Tartomány | Alapértelmezett | Leírás |
 |------|-------|-----------|-----------------|--------|
-| `ftp` | int | 100–500 | 200 | Funkcionális küszöbteljesítmény (watt). |
-| `min_watt` | int | 0–9999 | 0 | Minimális érvényes pozitív watt. |
-| `max_watt` | int | 1–100000 | 1000 | Maximális érvényes watt. |
+| `ftp` | int | 0–1000 | 200 | Funkcionális küszöbteljesítmény (watt). |
+| `min_watt` | int | 0–1000 | 0 | Minimális érvényes watt. |
+| `max_watt` | int | 0–1000 | 1000 | Maximális érvényes watt. |
 | `z1_max_percent` | int | 1–100 | 60 | Z1 felső határ az FTP %-ában. |
 | `z2_max_percent` | int | 1–100 | 89 | Z2 felső határ az FTP %-ában. |
 | `zero_power_immediate` | bool | – | false | Ha true, 0W → azonnali LEVEL:0 (cooldown nélkül). |
@@ -125,7 +125,8 @@ _Példa:_ `buffer_seconds=3`, `buffer_rate_hz=2` → max `6`; ha `minimum_sample
 - **Z3:** FTP × z2_max_percent% + 1 – max_watt
 
 **Validáció:** 
-- A program automatikusan javítja ha `min_watt >= max_watt` vagy `z1_max_percent >= z2_max_percent`.
+- Ha `min_watt >= max_watt`, **mindkét** mező az alapértelmezésre áll (`min_watt=0`, `max_watt=1000`) + ⚠. Ugyanígy `z1_max_percent >= z2_max_percent` esetén mindkét százalék a defaultra (`z1=60`, `z2=89`) + ⚠.
+- A `power_zones` számmezői **csak egész értéket** fogadnak el (a `200.0` egész float is elutasításra kerül, szemben a `global_settings`-szel) – ez tudatos, szigorúbb ellenőrzés.
 - A `zero_power_immediate` mező szigorú típusellenőrzés alatt áll: csak a `true` és `false` logikai értékek (JSON boolean) elfogadottak. 
   - **Hibás érték:** `"true"` (string), `"tue"` (typo), `1` vagy `0` (egész szám), `null`, vagy bármilyen egyéb érték
   - **Viselkedés:** a hibás érték figyelmeztetéssel (`⚠ Érvénytelen 'zero_power_immediate' érték: ...`) az alapértelmezés (false) marad, és a többi beállítás betöltődik
@@ -184,7 +185,7 @@ Az ESP32 BLE vezérlőhöz való csatlakozás beállításai. A program `LEVEL:N
 | `command_timeout` | int | 1–30 | 3 | GATT write timeout (mp). |
 | `service_uuid` | string | – | `0000ffe0-...` | BLE service UUID. |
 | `characteristic_uuid` | string | – | `0000ffe1-...` | BLE characteristic UUID. |
-| `pin_code` | int/string/null | – | null | Alkalmazás szintű PIN. `null` → nincs auth. |
+| `pin_code` | int/string/null | – | `"123456"` | Alkalmazás szintű PIN. `null` → nincs auth. |
 
 **Auto-discovery:** ha `device_name` `null` vagy üres, a program automatikusan megkeresi a `service_uuid`-t hirdető eszközt. A talált eszközök a `ble_devices.log` fájlba kerülnek.
 
