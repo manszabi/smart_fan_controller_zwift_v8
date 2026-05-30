@@ -523,10 +523,7 @@ class HudConfig:
         for key in ("close_at_zwiftapp.exe", "close_at_zwiftapp_exe"):
             if key in raw and isinstance(raw[key], bool):
                 kwargs["close_at_zwiftapp_exe"] = raw[key]
-        if "opacity" in raw:
-            v = raw["opacity"]
-            if isinstance(v, (int, float)) and not isinstance(v, bool) and 20 <= v <= 100:
-                kwargs["opacity"] = int(v)
+        _from_dict_int(raw, kwargs, "opacity", 20, 100)
         if "window_geometry" in raw and isinstance(raw["window_geometry"], dict):
             geo: Dict[str, Dict[str, int]] = {}
             for screen_name, rect in raw["window_geometry"].items():

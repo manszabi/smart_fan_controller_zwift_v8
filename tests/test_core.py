@@ -956,6 +956,16 @@ class TestHudConfig:
         cfg = HudConfig.from_dict({"opacity": True})
         assert cfg.opacity == 92
 
+    def test_from_dict_opacity_float_integer_accepted(self):
+        """Opacity: 75.0 (egész float) → konvertálva."""
+        cfg = HudConfig.from_dict({"opacity": 75.0})
+        assert cfg.opacity == 75
+
+    def test_from_dict_opacity_float_fraction_rejected(self):
+        """Opacity: 75.5 (törtrész) → default marad."""
+        cfg = HudConfig.from_dict({"opacity": 75.5})
+        assert cfg.opacity == 92
+
     def test_from_dict_window_geometry(self):
         geo = {"HDMI-1": {"x": 100, "y": 200, "w": 340, "h": 460}}
         cfg = HudConfig.from_dict({"window_geometry": geo})
