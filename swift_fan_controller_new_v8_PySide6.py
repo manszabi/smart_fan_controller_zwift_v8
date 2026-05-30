@@ -1063,6 +1063,9 @@ def _log_ble_devices_to_file(
         devices_info: Lista (name, address, service_uuids) tuple-ökből.
         scan_context: A keresés kontextusa (pl. "BLE Fan", "BLE Power").
     """
+    # Loggolás kikapcsolva → nem írunk eszköz-log fájlt sem
+    if not _logging_enabled:
+        return
     if not devices_info:
         return
 
@@ -1658,6 +1661,9 @@ def _log_ant_device_to_file(
         device_id: Az ANT+ device number.
         device_info: Egyéb információ az eszközről.
     """
+    # Loggolás kikapcsolva → nem írunk eszköz-log fájlt sem
+    if not _logging_enabled:
+        return
     # Egyedi kulcs: "típus | device_id"
     entry_key = f"{device_type} | {device_id}"
 
