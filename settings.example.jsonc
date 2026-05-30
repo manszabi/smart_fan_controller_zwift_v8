@@ -28,9 +28,9 @@
   // TELJESÍTMÉNY ZÓNA HATÁROK
   // ============================================================
   "power_zones": {
-    "ftp": 200,                // Funkcionális küszöbteljesítmény wattban (100–500)
-    "min_watt": 0,             // Minimális érvényes pozitív watt (0–9999)
-    "max_watt": 1000,          // Maximális érvényes watt (1–100000)
+    "ftp": 200,                // Funkcionális küszöbteljesítmény wattban (0–1000)
+    "min_watt": 0,             // Minimális érvényes watt (0–1000)
+    "max_watt": 1000,          // Maximális érvényes watt (0–1000)
     "z1_max_percent": 60,      // Z1 felső határ az FTP %-ában (1–100)
     "z2_max_percent": 89,      // Z2 felső határ az FTP %-ában (1–100)
     // Zóna kiosztás:
