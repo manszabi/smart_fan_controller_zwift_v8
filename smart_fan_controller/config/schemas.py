@@ -196,7 +196,11 @@ class PowerZonesConfig:
 
 @dataclasses.dataclass
 class GlobalSettingsConfig:
-    """Globális beállítások – típusbiztos."""
+    """Globális beállítások – típusbiztos, validált.
+
+    Validáció a __post_init__-ben:
+      - minimum_samples <= buffer_seconds * buffer_rate_hz (kereszt-validáció)
+    """
 
     cooldown_seconds: int = 120
     buffer_seconds: int = 3
@@ -205,26 +209,31 @@ class GlobalSettingsConfig:
     dropout_timeout: int = 5
     log_directory: Optional[str] = None
 
+    def __post_init__(self) -> None:
+        # minimum_samples <= buffer_seconds * buffer_rate_hz cross-validation
+        if self.buffer_seconds > 0 and self.buffer_rate_hz > 0:
+            max_samples = self.buffer_seconds * self.buffer_rate_hz
+            if self.minimum_samples > max_samples:
+                user_logger.warning(
+                    f"⚠ Érvénytelen minimum_samples ({self.minimum_samples}) – "
+                    f"nagyobb, mint buffer_seconds * buffer_rate_hz "
+                    f"({self.buffer_seconds} * {self.buffer_rate_hz} = {max_samples}). "
+                    f"minimum_samples {max_samples}-re állítva."
+                )
+                self.minimum_samples = max_samples
+
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> "GlobalSettingsConfig":
         d = cls()
-        fields_range = {
-            "cooldown_seconds": (0, 300),
-            "buffer_seconds": (1, 10),
-            "minimum_samples": (1, 1000),
-            "buffer_rate_hz": (1, 60),
-            "dropout_timeout": (1, 120),
-        }
-        kwargs: dict[str, Any] = {}
-        for key, (lo, hi) in fields_range.items():
-            if key in raw:
-                v = raw[key]
-                if isinstance(v, bool):
-                    user_logger.warning(f"⚠ Érvénytelen '{key}' érték: {v!r} ({lo}–{hi} közötti egész kell)")
-                elif isinstance(v, (int, float)) and lo <= v <= hi:
-                    kwargs[key] = int(v)
-                else:
-                    user_logger.warning(f"⚠ Érvénytelen '{key}' érték: {v} ({lo}–{hi} közötti egész kell)")
+        kwargs: dict[str, Any] = dataclasses.asdict(d)
+
+        # Minden int mező: cooldown_seconds, buffer_seconds, minimum_samples, buffer_rate_hz, dropout_timeout
+        _from_dict_int(raw, kwargs, "cooldown_seconds", 0, 300)
+        _from_dict_int(raw, kwargs, "buffer_seconds", 1, 10)
+        _from_dict_int(raw, kwargs, "minimum_samples", 1, 1000)
+        _from_dict_int(raw, kwargs, "buffer_rate_hz", 1, 60)
+        _from_dict_int(raw, kwargs, "dropout_timeout", 1, 120)
+
         # log_directory: null vagy valid string
         if "log_directory" in raw:
             ld = raw["log_directory"]
@@ -232,7 +241,8 @@ class GlobalSettingsConfig:
                 kwargs["log_directory"] = None
             elif isinstance(ld, str) and ld.strip():
                 kwargs["log_directory"] = ld.strip()
-        return cls(**{**dataclasses.asdict(d), **kwargs})
+
+        return cls(**kwargs)
 
 
 @dataclasses.dataclass
