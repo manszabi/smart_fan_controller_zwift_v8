@@ -256,6 +256,22 @@ Ha `power_source` vagy `hr_source` értéke `"zwiftudp"`, a program automatikusa
 
 Ha a `zwift_api_polling.py` nem küld adatot, a szokásos dropout logika (ventilátor leállítása) lép életbe.
 
+#### `zwift_api_polling.py` saját beállításai (`zwift_api_settings.json`)
+
+A háttérscript **külön** beállításfájlt használ (`zwift_api_settings.json`), a fő `settings.json`-tól függetlenül:
+
+| Mező | Típus | Tartomány | Alapértelmezett | Leírás |
+|------|-------|-----------|-----------------|--------|
+| `username` | string | – | `""` | Zwift felhasználónév / e-mail. |
+| `password` | string | – | `""` | Zwift jelszó (titkosítatlanul mentve!). |
+| `broadcast_host` | string | – | `"127.0.0.1"` | UDP cél host. |
+| `broadcast_port` | int | 1–65535 | 7878 | UDP cél port. |
+| `poll_interval` | szám | > 0 | 3.0 | Lekérdezési intervallum másodpercben. |
+| `logging` | bool | – | true | Loggolás be/ki. Ha `false`, nincs konzol- és fájl-kimenet (Windows + Linux egyformán). |
+| `log_directory` | string\|null | – | null | A `zwift_api_polling.log` könyvtára. `null`/`"null"`/hiányzó → a script könyvtára. |
+
+A `logging` és `log_directory` ugyanúgy viselkedik, mint a fő app `global_settings`-ében: `logging: false` → teljes némaság, nem jön létre `zwift_api_polling.log`; `logging: true` → konzol + rotált log fájl (500 KB, 2 backup). A `--debug` CLI kapcsoló DEBUG szintre állítja a részletes diagnosztikai logokat.
+
 ### Zwift automatikus indítás
 
 | Mező | Típus | Értékek | Alapértelmezett | Leírás |

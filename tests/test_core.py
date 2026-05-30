@@ -37,7 +37,9 @@ from swift_fan_controller_new_v8_PySide6 import (
     _log_ant_device_to_file,
 )
 import logging as _logging
+import json as _json
 import swift_fan_controller_new_v8_PySide6 as _mainmod
+import zwift_api_polling as _zap
 
 
 # ============================================================
@@ -1395,6 +1397,115 @@ class TestLoggingToggle:
         finally:
             self._reset()
             shutil.rmtree(tmp, ignore_errors=True)
+
+
+# ============================================================
+# zwift_api_polling – saját loggolás (zwift_api_settings.json)
+# ============================================================
+
+class TestZwiftApiPollingLogging:
+    """A zwift_api_polling.py saját logging flag-je és settings parsing-ja."""
+
+    def _silence(self):
+        """A zwift logger némítása a tesztek között."""
+        _zap.log.handlers.clear()
+        _zap.log.addHandler(_logging.NullHandler())
+
+    def _write(self, tmp, data):
+        p = os.path.join(tmp, "zwift_api_settings.json")
+        with open(p, "w", encoding="utf-8") as fh:
+            _json.dump(data, fh)
+        return p
+
+    def test_load_settings_defaults(self):
+        """Hiányzó logging/log_directory → defaultok (True / None)."""
+        self._silence()
+        tmp = tempfile.mkdtemp()
+        try:
+            p = self._write(tmp, {"username": "u"})
+            s = _zap.load_settings(p)
+            assert s["logging"] is True
+            assert s["log_directory"] is None
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_load_settings_logging_false_and_null_string(self):
+        """logging:false + log_directory:'null' string → None."""
+        self._silence()
+        tmp = tempfile.mkdtemp()
+        try:
+            p = self._write(tmp, {"logging": False, "log_directory": "null"})
+            s = _zap.load_settings(p)
+            assert s["logging"] is False
+            assert s["log_directory"] is None
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_load_settings_invalid_logging_type(self):
+        """Rossz logging típus → default True marad."""
+        self._silence()
+        tmp = tempfile.mkdtemp()
+        try:
+            p = self._write(tmp, {"logging": "igen"})
+            s = _zap.load_settings(p)
+            assert s["logging"] is True
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_setup_logging_enabled_creates_file(self):
+        """logging:true → zwift_api_polling.log létrejön + tartalmazza az üzenetet."""
+        tmp = tempfile.mkdtemp()
+        try:
+            _zap._setup_logging(tmp, enabled=True, debug=False)
+            _zap.log.info("ZAP_TEST_SOR")
+            logf = os.path.join(tmp, "zwift_api_polling.log")
+            assert os.path.exists(logf)
+            assert "ZAP_TEST_SOR" in open(logf, encoding="utf-8").read()
+        finally:
+            self._silence()
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_setup_logging_disabled_nullhandler_no_file(self):
+        """logging:false → NullHandler, nincs log fájl."""
+        tmp = tempfile.mkdtemp()
+        try:
+            _zap._setup_logging(tmp, enabled=False)
+            _zap.log.info("NE_LEGYEN")
+            handlers = _zap.log.handlers
+            assert len(handlers) == 1
+            assert isinstance(handlers[0], _logging.NullHandler)
+            assert not os.path.exists(os.path.join(tmp, "zwift_api_polling.log"))
+        finally:
+            self._silence()
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_early_buffer_flush_and_discard(self):
+        """Korai puffer: flush (true) visszajátszik, discard (false) eldob."""
+        # flush
+        tmp = tempfile.mkdtemp()
+        try:
+            _zap._setup_early_logging()
+            _zap.log.warning("KORAI_ZAP")
+            assert not os.path.exists(os.path.join(tmp, "zwift_api_polling.log"))
+            _zap._setup_logging(tmp, enabled=True)
+            _zap._flush_early_logging()
+            logf = os.path.join(tmp, "zwift_api_polling.log")
+            assert "KORAI_ZAP" in open(logf, encoding="utf-8").read()
+        finally:
+            self._silence()
+            shutil.rmtree(tmp, ignore_errors=True)
+        # discard
+        tmp2 = tempfile.mkdtemp()
+        try:
+            _zap._setup_early_logging()
+            _zap.log.warning("ELDOBOTT")
+            _zap._setup_logging(enabled=False)
+            _zap._discard_early_logging()
+            assert _zap._early_mem_handler is None
+            assert not os.path.exists(os.path.join(tmp2, "zwift_api_polling.log"))
+        finally:
+            self._silence()
+            shutil.rmtree(tmp2, ignore_errors=True)
 
 
 # ============================================================
