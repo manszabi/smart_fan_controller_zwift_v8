@@ -784,6 +784,16 @@ class TestHeartRateZonesConfig:
         assert cfg.enabled is False
         assert cfg.zero_hr_immediate is True
 
+    def test_from_dict_float_integer_accepted(self):
+        """Float int fields: 190.0 (egész float) → konvertálva."""
+        cfg = HeartRateZonesConfig.from_dict({"max_hr": 190.0})
+        assert cfg.max_hr == 190
+
+    def test_from_dict_float_fraction_rejected(self):
+        """Float int fields: 190.5 (törtrész) → default marad."""
+        cfg = HeartRateZonesConfig.from_dict({"max_hr": 190.5})
+        assert cfg.max_hr == 185
+
 
 # ============================================================
 # BleConfig dataclass
@@ -829,6 +839,16 @@ class TestBleConfig:
     def test_from_dict_invalid_scan_timeout(self):
         cfg = BleConfig.from_dict({"scan_timeout": 999})
         assert cfg.scan_timeout == 10  # default
+
+    def test_from_dict_float_integer_accepted(self):
+        """Float int fields: 30.0 (egész float) → konvertálva."""
+        cfg = BleConfig.from_dict({"scan_timeout": 30.0})
+        assert cfg.scan_timeout == 30
+
+    def test_from_dict_float_fraction_rejected(self):
+        """Float int fields: 30.5 (törtrész) → default marad."""
+        cfg = BleConfig.from_dict({"scan_timeout": 30.5})
+        assert cfg.scan_timeout == 10
 
 
 # ============================================================

@@ -305,24 +305,15 @@ class HeartRateZonesConfig:
         d = cls()
         kwargs: dict[str, Any] = dataclasses.asdict(d)
 
-        int_fields = {
-            "max_hr": (100, 220),
-            "resting_hr": (30, 100),
-            "z1_max_percent": (1, 100),
-            "z2_max_percent": (1, 100),
-            "valid_min_hr": (30, 100),
-            "valid_max_hr": (150, 300),
-        }
-        for key, (lo, hi) in int_fields.items():
-            if key in raw:
-                v = raw[key]
-                if isinstance(v, bool):
-                    user_logger.warning(f"⚠ Érvénytelen '{key}' érték: {v!r} ({lo}–{hi} közötti egész kell)")
-                elif isinstance(v, (int, float)) and lo <= v <= hi:
-                    kwargs[key] = int(v)
-                else:
-                    user_logger.warning(f"⚠ Érvénytelen '{key}' érték: {v} ({lo}–{hi} közötti egész kell)")
+        # Int fields with ranges
+        _from_dict_int(raw, kwargs, "max_hr", 100, 220)
+        _from_dict_int(raw, kwargs, "resting_hr", 30, 100)
+        _from_dict_int(raw, kwargs, "z1_max_percent", 1, 100)
+        _from_dict_int(raw, kwargs, "z2_max_percent", 1, 100)
+        _from_dict_int(raw, kwargs, "valid_min_hr", 30, 100)
+        _from_dict_int(raw, kwargs, "valid_max_hr", 150, 300)
 
+        # Bool fields
         for key in ("enabled", "zero_hr_immediate"):
             if key in raw:
                 v = raw[key]
@@ -331,6 +322,7 @@ class HeartRateZonesConfig:
                 else:
                     user_logger.warning(f"⚠ Érvénytelen '{key}' érték: {v} (true/false kell)")
 
+        # Enum field
         if "zone_mode" in raw and raw["zone_mode"] in VALID_ZONE_MODES:
             kwargs["zone_mode"] = raw["zone_mode"]
 
@@ -364,22 +356,12 @@ class BleConfig:
             elif isinstance(dn, str) and dn.strip():
                 kwargs["device_name"] = dn.strip()
 
-        int_fields = {
-            "scan_timeout": (1, 60),
-            "connection_timeout": (1, 60),
-            "reconnect_interval": (1, 60),
-            "max_retries": (1, 100),
-            "command_timeout": (1, 30),
-        }
-        for key, (lo, hi) in int_fields.items():
-            if key in raw:
-                v = raw[key]
-                if isinstance(v, bool):
-                    user_logger.warning(f"⚠ Érvénytelen '{key}' érték: {v!r} ({lo}–{hi} közötti egész kell)")
-                elif isinstance(v, (int, float)) and lo <= v <= hi:
-                    kwargs[key] = int(v)
-                else:
-                    user_logger.warning(f"⚠ Érvénytelen '{key}' érték: {v} ({lo}–{hi} közötti egész kell)")
+        # Int fields with ranges
+        _from_dict_int(raw, kwargs, "scan_timeout", 1, 60)
+        _from_dict_int(raw, kwargs, "connection_timeout", 1, 60)
+        _from_dict_int(raw, kwargs, "reconnect_interval", 1, 60)
+        _from_dict_int(raw, kwargs, "max_retries", 1, 100)
+        _from_dict_int(raw, kwargs, "command_timeout", 1, 30)
 
         if isinstance(raw.get("service_uuid"), str) and raw["service_uuid"]:
             kwargs["service_uuid"] = raw["service_uuid"]
