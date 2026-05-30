@@ -234,13 +234,25 @@ class GlobalSettingsConfig:
         _from_dict_int(raw, kwargs, "buffer_rate_hz", 1, 60)
         _from_dict_int(raw, kwargs, "dropout_timeout", 1, 120)
 
-        # log_directory: null vagy valid string
+        # log_directory: null vagy nem-üres string
         if "log_directory" in raw:
             ld = raw["log_directory"]
             if ld is None:
                 kwargs["log_directory"] = None
-            elif isinstance(ld, str) and ld.strip():
-                kwargs["log_directory"] = ld.strip()
+            elif isinstance(ld, str):
+                if ld.strip():
+                    kwargs["log_directory"] = ld.strip()
+                else:
+                    user_logger.warning(
+                        "⚠ Üres 'log_directory' érték – alapértelmezett "
+                        "(program könyvtár) használata."
+                    )
+            else:
+                user_logger.warning(
+                    f"⚠ Érvénytelen 'log_directory' érték: {ld!r} "
+                    f"(string vagy null kell) – alapértelmezett "
+                    f"(program könyvtár) használata."
+                )
 
         return cls(**kwargs)
 

@@ -728,14 +728,43 @@ class TestGlobalSettingsConfig:
         assert cfg.log_directory == "/tmp/logs"
 
     def test_from_dict_log_directory_empty_string(self):
-        """Üres string → nincs mentve (marad None default)."""
+        """Üres string → None (default) + warning."""
         cfg = GlobalSettingsConfig.from_dict({"log_directory": "   "})
         assert cfg.log_directory is None
+
+    def test_from_dict_log_directory_empty_string_warns(self, caplog):
+        """Üres string → figyelmeztetés a logban."""
+        import logging
+        with caplog.at_level(logging.WARNING, logger="user"):
+            GlobalSettingsConfig.from_dict({"log_directory": ""})
+        assert any("log_directory" in r.message for r in caplog.records)
 
     def test_from_dict_log_directory_whitespace_stripped(self):
         """Whitespace-vel körülzárt string → trimmed."""
         cfg = GlobalSettingsConfig.from_dict({"log_directory": "  /var/log  "})
         assert cfg.log_directory == "/var/log"
+
+    def test_from_dict_log_directory_wrong_type_int(self):
+        """Rossz típus (int) → None (default)."""
+        cfg = GlobalSettingsConfig.from_dict({"log_directory": 123})
+        assert cfg.log_directory is None
+
+    def test_from_dict_log_directory_wrong_type_bool(self):
+        """Rossz típus (bool) → None (default)."""
+        cfg = GlobalSettingsConfig.from_dict({"log_directory": True})
+        assert cfg.log_directory is None
+
+    def test_from_dict_log_directory_wrong_type_list(self):
+        """Rossz típus (lista) → None (default)."""
+        cfg = GlobalSettingsConfig.from_dict({"log_directory": ["/tmp"]})
+        assert cfg.log_directory is None
+
+    def test_from_dict_log_directory_wrong_type_warns(self, caplog):
+        """Rossz típus → figyelmeztetés a logban."""
+        import logging
+        with caplog.at_level(logging.WARNING, logger="user"):
+            GlobalSettingsConfig.from_dict({"log_directory": 123})
+        assert any("log_directory" in r.message for r in caplog.records)
 
 
 # ============================================================
