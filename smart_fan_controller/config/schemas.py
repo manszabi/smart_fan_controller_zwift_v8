@@ -207,6 +207,7 @@ class GlobalSettingsConfig:
     minimum_samples: int = 6
     buffer_rate_hz: int = 4
     dropout_timeout: int = 5
+    logging: bool = True
     log_directory: Optional[str] = None
 
     def __post_init__(self) -> None:
@@ -227,13 +228,21 @@ class GlobalSettingsConfig:
         d = cls()
         kwargs: dict[str, Any] = dataclasses.asdict(d)
 
-        # cooldown_seconds: 0–1000 (0 = azonnali váltás, nincs cooldown)
-        _from_dict_int(raw, kwargs, "cooldown_seconds", 0, 1000)
-        # A többi int mező egységes tartománya: 1–1000
-        _from_dict_int(raw, kwargs, "buffer_seconds", 1, 1000)
-        _from_dict_int(raw, kwargs, "minimum_samples", 1, 1000)
-        _from_dict_int(raw, kwargs, "buffer_rate_hz", 1, 1000)
-        _from_dict_int(raw, kwargs, "dropout_timeout", 1, 1000)
+        # cooldown_seconds: 0–600 (0 = azonnali váltás, nincs cooldown)
+        _from_dict_int(raw, kwargs, "cooldown_seconds", 0, 600)
+        # Domain-alapú tartományok (fitness szenzor jellemzők szerint)
+        _from_dict_int(raw, kwargs, "buffer_seconds", 1, 60)
+        _from_dict_int(raw, kwargs, "minimum_samples", 1, 600)
+        _from_dict_int(raw, kwargs, "buffer_rate_hz", 1, 60)
+        _from_dict_int(raw, kwargs, "dropout_timeout", 1, 120)
+
+        # logging: bool – globális loggolás be/ki
+        if "logging" in raw:
+            v = raw["logging"]
+            if isinstance(v, bool):
+                kwargs["logging"] = v
+            else:
+                user_logger.warning(f"⚠ Érvénytelen 'logging' érték: {v} (true/false kell)")
 
         # log_directory: null vagy nem-üres string.
         # null, "null" string, vagy hiányzó kulcs → None (program könyvtár), csendben.

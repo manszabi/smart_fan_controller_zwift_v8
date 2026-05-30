@@ -55,11 +55,12 @@ A program kétféleképpen reagál a hibákra, attól függően, hogy **érték-
 
 | Mező | Típus | Tartomány | Alapértelmezett | Leírás |
 |------|-------|-----------|-----------------|--------|
-| `cooldown_seconds` | int | 0–1000 | 120 | Cooldown idő zóna csökkentésnél (másodperc). 0 = azonnali váltás (nincs cooldown). |
-| `buffer_seconds` | int | 1–1000 | 3 | Gördülő átlag ablak (fallback ha forrás-specifikus nincs). |
-| `minimum_samples` | int | 1–1000 | 6 | Minimum minta érvényes átlaghoz (fallback). |
-| `buffer_rate_hz` | int | 1–1000 | 4 | Várt mintavételi frekvencia Hz-ben (fallback). |
-| `dropout_timeout` | int | 1–1000 | 5 | Adatforrás kiesés timeout másodpercben (fallback). |
+| `cooldown_seconds` | int | 0–600 | 120 | Cooldown idő zóna csökkentésnél (másodperc). 0 = azonnali váltás (nincs cooldown). |
+| `buffer_seconds` | int | 1–60 | 3 | Gördülő átlag ablak (fallback ha forrás-specifikus nincs). |
+| `minimum_samples` | int | 1–600 | 6 | Minimum minta érvényes átlaghoz (fallback). |
+| `buffer_rate_hz` | int | 1–60 | 4 | Várt mintavételi frekvencia Hz-ben (fallback). |
+| `dropout_timeout` | int | 1–120 | 5 | Adatforrás kiesés timeout másodpercben (fallback). |
+| `logging` | bool | – | true | Globális loggolás be/ki. Ha `false`, nincs sem fájl-, sem konzol-loggolás (teljes némaság) – csak az indítási összefoglaló jelenik meg. |
 | `log_directory` | string\|null | – | null | Log fájlok könyvtára. `null` = a program könyvtára. Fájlok: `smart_fan_controller.log`, `ble_devices.log`, `ant_devices.log`. Ha a megadott könyvtár nem létezik vagy nem írható, automatikusan a program könyvtárát használja. |
 
 ### Validációs viselkedés
@@ -75,7 +76,7 @@ figyelmeztetés (⚠) kerül a logba.
 | Tartományon belüli egész (pl. `5`) | elfogadva | – |
 | Egész értékű float (pl. `5.0`) | konvertálva (`5`) | – |
 | Törtrészes float (pl. `5.7`) | default marad | ⚠ törtrész nem elfogadott |
-| Tartományon kívül (pl. `1001`, `-1`) | default marad | ⚠ tartomány |
+| Tartományon kívül (pl. `9999`, `-1`) | default marad | ⚠ tartomány |
 | Bool (`true`/`false`) | default marad | ⚠ (a bool nem egész) |
 | String vagy egyéb típus | default marad | ⚠ tartomány |
 | Hiányzó kulcs | default marad | – |
