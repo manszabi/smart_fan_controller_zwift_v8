@@ -227,13 +227,13 @@ class GlobalSettingsConfig:
         d = cls()
         kwargs: dict[str, Any] = dataclasses.asdict(d)
 
-        # cooldown_seconds: 0–1000 (0 = azonnali váltás, nincs cooldown)
-        _from_dict_int(raw, kwargs, "cooldown_seconds", 0, 1000)
-        # A többi int mező egységes tartománya: 1–1000
-        _from_dict_int(raw, kwargs, "buffer_seconds", 1, 1000)
-        _from_dict_int(raw, kwargs, "minimum_samples", 1, 1000)
-        _from_dict_int(raw, kwargs, "buffer_rate_hz", 1, 1000)
-        _from_dict_int(raw, kwargs, "dropout_timeout", 1, 1000)
+        # cooldown_seconds: 0–600 (0 = azonnali váltás, nincs cooldown)
+        _from_dict_int(raw, kwargs, "cooldown_seconds", 0, 600)
+        # Domain-alapú tartományok (fitness szenzor jellemzők szerint)
+        _from_dict_int(raw, kwargs, "buffer_seconds", 1, 60)
+        _from_dict_int(raw, kwargs, "minimum_samples", 1, 600)
+        _from_dict_int(raw, kwargs, "buffer_rate_hz", 1, 60)
+        _from_dict_int(raw, kwargs, "dropout_timeout", 1, 120)
 
         # log_directory: null vagy nem-üres string.
         # null, "null" string, vagy hiányzó kulcs → None (program könyvtár), csendben.

@@ -3,17 +3,16 @@
   // GLOBÁLIS BEÁLLÍTÁSOK
   // ============================================================
   "global_settings": {
-    // Cooldown idő másodpercben zóna csökkentésnél (0–1000). 0 = azonnali
+    // Cooldown idő másodpercben zóna csökkentésnél (0–600). 0 = azonnali
     // váltás cooldown nélkül. Zóna emelkedésnél mindig azonnali a váltás.
     // Adaptív módosítások: nagy esés (>=2 szint) → felezés, emelkedés → duplázás.
     "cooldown_seconds": 120,
 
     // Globális fallback buffer beállítások (ha a forrás-specifikus nincs megadva).
-    // Mindegyik tartománya egységesen 1–1000.
-    "buffer_seconds": 3,         // Gördülő átlag ablak mérete (1–1000 mp)
-    "minimum_samples": 6,        // Minimum minta érvényes átlaghoz (1–1000)
-    "buffer_rate_hz": 4,         // Várt mintavételi frekvencia Hz-ben (1–1000)
-    "dropout_timeout": 5,        // Adatforrás kiesés timeout (1–1000 mp)
+    "buffer_seconds": 3,         // Gördülő átlag ablak mérete (1–60 mp)
+    "minimum_samples": 6,        // Minimum minta érvényes átlaghoz (1–600)
+    "buffer_rate_hz": 4,         // Várt mintavételi frekvencia Hz-ben (1–60)
+    "dropout_timeout": 5,        // Adatforrás kiesés timeout (1–120 mp)
 
     // Log fájlok könyvtára. Ha null, "null", vagy hiányzik, a program könyvtárát
     // használja (csendben). Üres string vagy rossz típus esetén figyelmeztet.
