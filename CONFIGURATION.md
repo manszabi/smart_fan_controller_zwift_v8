@@ -55,12 +55,53 @@ A program kétféleképpen reagál a hibákra, attól függően, hogy **érték-
 
 | Mező | Típus | Tartomány | Alapértelmezett | Leírás |
 |------|-------|-----------|-----------------|--------|
-| `cooldown_seconds` | int | 0–300 | 120 | Cooldown idő zóna csökkentésnél. 0 = azonnali váltás. |
-| `buffer_seconds` | int | 1–10 | 3 | Gördülő átlag ablak (fallback ha forrás-specifikus nincs). |
+| `cooldown_seconds` | int | 0–1000 | 120 | Cooldown idő zóna csökkentésnél (másodperc). 0 = azonnali váltás (nincs cooldown). |
+| `buffer_seconds` | int | 1–1000 | 3 | Gördülő átlag ablak (fallback ha forrás-specifikus nincs). |
 | `minimum_samples` | int | 1–1000 | 6 | Minimum minta érvényes átlaghoz (fallback). |
-| `buffer_rate_hz` | int | 1–60 | 4 | Várt mintavételi frekvencia Hz-ben (fallback). |
-| `dropout_timeout` | int | 1–120 | 5 | Adatforrás kiesés timeout másodpercben (fallback). |
+| `buffer_rate_hz` | int | 1–1000 | 4 | Várt mintavételi frekvencia Hz-ben (fallback). |
+| `dropout_timeout` | int | 1–1000 | 5 | Adatforrás kiesés timeout másodpercben (fallback). |
 | `log_directory` | string\|null | – | null | Log fájlok könyvtára. `null` = a program könyvtára. Fájlok: `smart_fan_controller.log`, `ble_devices.log`, `ant_devices.log`. Ha a megadott könyvtár nem létezik vagy nem írható, automatikusan a program könyvtárát használja. |
+
+### Validációs viselkedés
+
+A beállítások betöltésekor minden mező típus- és tartomány-ellenőrzésen megy
+keresztül. Érvénytelen érték esetén az **alapértelmezett marad**, és
+figyelmeztetés (⚠) kerül a logba.
+
+**Numerikus mezők (`_from_dict_int`):**
+
+| Bemenet | Eredmény | Figyelmeztetés |
+|---------|----------|----------------|
+| Tartományon belüli egész (pl. `5`) | elfogadva | – |
+| Egész értékű float (pl. `5.0`) | konvertálva (`5`) | – |
+| Törtrészes float (pl. `5.7`) | default marad | ⚠ törtrész nem elfogadott |
+| Tartományon kívül (pl. `1001`, `-1`) | default marad | ⚠ tartomány |
+| Bool (`true`/`false`) | default marad | ⚠ (a bool nem egész) |
+| String vagy egyéb típus | default marad | ⚠ tartomány |
+| Hiányzó kulcs | default marad | – |
+
+**Kereszt-validáció (`__post_init__`):** a `minimum_samples` nem lehet nagyobb
+mint `buffer_seconds × buffer_rate_hz`. Ha mégis, akkor a maximumra
+(`buffer_seconds × buffer_rate_hz`) csökken + ⚠. Ez minden példányosításnál
+érvényesül, nem csak betöltéskor.
+_Példa:_ `buffer_seconds=3`, `buffer_rate_hz=2` → max `6`; ha `minimum_samples=100`, akkor `6`-ra korrigálódik.
+
+**`log_directory` kezelés:**
+
+| Bemenet | Eredmény | Figyelmeztetés |
+|---------|----------|----------------|
+| `null`, `"null"` string (kis/nagybetű, trimmelt), vagy hiányzó kulcs | program könyvtár | – (csendes) |
+| Valódi útvonal (pl. `"/var/log"`) | trimmelve elmentve | – |
+| Üres / whitespace string (`""`, `"   "`) | program könyvtár | ⚠ üres érték |
+| Rossz típus (`123`, `true`, lista, dict) | program könyvtár | ⚠ string vagy null kell |
+
+**Runtime feloldás** (ha valódi útvonalat adtak meg):
+
+| Helyzet | Eredmény | Figyelmeztetés |
+|---------|----------|----------------|
+| Könyvtár létezik, írható | használja | – |
+| Nem létezik, de létrehozható | létrehozza (szülőkkel), használja | – |
+| Nem hozható létre / nem írható | program könyvtár (fallback) | ⚠ nem elérhető |
 
 ---
 

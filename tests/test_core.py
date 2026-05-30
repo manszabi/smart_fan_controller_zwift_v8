@@ -566,22 +566,173 @@ class TestGlobalSettingsConfig:
     def test_defaults(self):
         cfg = GlobalSettingsConfig()
         assert cfg.cooldown_seconds == 120
+        assert cfg.buffer_seconds == 3
+        assert cfg.minimum_samples == 6
+        assert cfg.buffer_rate_hz == 4
+        assert cfg.dropout_timeout == 5
         assert cfg.log_directory is None
 
     def test_from_dict(self):
-        cfg = GlobalSettingsConfig.from_dict({"cooldown_seconds": 60, "buffer_seconds": 5})
+        cfg = GlobalSettingsConfig.from_dict({
+            "cooldown_seconds": 60,
+            "buffer_seconds": 5,
+            "minimum_samples": 10,
+            "buffer_rate_hz": 2,
+            "dropout_timeout": 10,
+        })
         assert cfg.cooldown_seconds == 60
         assert cfg.buffer_seconds == 5
+        assert cfg.minimum_samples == 10
+        assert cfg.buffer_rate_hz == 2
+        assert cfg.dropout_timeout == 10
 
-    def test_from_dict_invalid_range(self):
-        """Tartományon kívüli érték → default marad."""
-        cfg = GlobalSettingsConfig.from_dict({"cooldown_seconds": 999})
-        assert cfg.cooldown_seconds == 120  # default (0-300 range)
+    # --- cooldown_seconds field tests ---
+    def test_cooldown_seconds_valid_boundaries(self):
+        """cooldown_seconds: valid határértékek 0–1000 (0 = azonnali váltás)."""
+        cfg = GlobalSettingsConfig.from_dict({"cooldown_seconds": 0})
+        assert cfg.cooldown_seconds == 0
+        cfg = GlobalSettingsConfig.from_dict({"cooldown_seconds": 1000})
+        assert cfg.cooldown_seconds == 1000
 
-    def test_from_dict_bool_rejected(self):
+    def test_cooldown_seconds_invalid_range(self):
+        """cooldown_seconds: -1 vagy 1001 → default marad."""
+        cfg = GlobalSettingsConfig.from_dict({"cooldown_seconds": -1})
+        assert cfg.cooldown_seconds == 120
+        cfg = GlobalSettingsConfig.from_dict({"cooldown_seconds": 1001})
+        assert cfg.cooldown_seconds == 120
+
+    def test_cooldown_seconds_float_integer_accepted(self):
+        """cooldown_seconds: 120.0 (egész float) → konvertálva 120-ra."""
+        cfg = GlobalSettingsConfig.from_dict({"cooldown_seconds": 120.0})
+        assert cfg.cooldown_seconds == 120
+
+    def test_cooldown_seconds_float_fraction_rejected(self):
+        """cooldown_seconds: 120.7 (törtrész) → default marad."""
+        cfg = GlobalSettingsConfig.from_dict({"cooldown_seconds": 120.7})
+        assert cfg.cooldown_seconds == 120
+
+    def test_cooldown_seconds_bool_rejected(self):
+        """cooldown_seconds: True → default marad."""
         cfg = GlobalSettingsConfig.from_dict({"cooldown_seconds": True})
         assert cfg.cooldown_seconds == 120
 
+    # --- buffer_seconds field tests ---
+    def test_buffer_seconds_valid_boundaries(self):
+        """buffer_seconds: valid határértékek 1–1000."""
+        cfg = GlobalSettingsConfig.from_dict({"buffer_seconds": 1})
+        assert cfg.buffer_seconds == 1
+        cfg = GlobalSettingsConfig.from_dict({"buffer_seconds": 1000})
+        assert cfg.buffer_seconds == 1000
+
+    def test_buffer_seconds_invalid_range(self):
+        """buffer_seconds: 0 vagy 1001 → default marad."""
+        cfg = GlobalSettingsConfig.from_dict({"buffer_seconds": 0})
+        assert cfg.buffer_seconds == 3
+        cfg = GlobalSettingsConfig.from_dict({"buffer_seconds": 1001})
+        assert cfg.buffer_seconds == 3
+
+    def test_buffer_seconds_float_fraction_rejected(self):
+        """buffer_seconds: 5.5 (törtrész) → default marad."""
+        cfg = GlobalSettingsConfig.from_dict({"buffer_seconds": 5.5})
+        assert cfg.buffer_seconds == 3
+
+    # --- buffer_rate_hz field tests ---
+    def test_buffer_rate_hz_valid_boundaries(self):
+        """buffer_rate_hz: valid határértékek 1–1000."""
+        cfg = GlobalSettingsConfig.from_dict({"buffer_rate_hz": 1})
+        assert cfg.buffer_rate_hz == 1
+        cfg = GlobalSettingsConfig.from_dict({"buffer_rate_hz": 1000})
+        assert cfg.buffer_rate_hz == 1000
+
+    def test_buffer_rate_hz_invalid_range(self):
+        """buffer_rate_hz: 0 vagy 1001 → default marad."""
+        cfg = GlobalSettingsConfig.from_dict({"buffer_rate_hz": 0})
+        assert cfg.buffer_rate_hz == 4
+        cfg = GlobalSettingsConfig.from_dict({"buffer_rate_hz": 1001})
+        assert cfg.buffer_rate_hz == 4
+
+    def test_buffer_rate_hz_float_fraction_rejected(self):
+        """buffer_rate_hz: 4.5 (törtrész) → default marad."""
+        cfg = GlobalSettingsConfig.from_dict({"buffer_rate_hz": 4.5})
+        assert cfg.buffer_rate_hz == 4
+
+    # --- minimum_samples field tests ---
+    def test_minimum_samples_valid_boundaries(self):
+        """minimum_samples: valid határértékek 1–1000 (cross-validation nélkül)."""
+        cfg = GlobalSettingsConfig.from_dict({"minimum_samples": 1})
+        assert cfg.minimum_samples == 1
+        # 1000 samples: buffer_seconds=10, buffer_rate_hz=100 → max=1000 (cross-validation OK)
+        cfg = GlobalSettingsConfig.from_dict({
+            "minimum_samples": 1000,
+            "buffer_seconds": 10,
+            "buffer_rate_hz": 100,
+        })
+        assert cfg.minimum_samples == 1000
+
+    def test_minimum_samples_float_fraction_rejected(self):
+        """minimum_samples: 6.5 (törtrész) → default marad."""
+        cfg = GlobalSettingsConfig.from_dict({"minimum_samples": 6.5})
+        assert cfg.minimum_samples == 6
+
+    # --- dropout_timeout field tests ---
+    def test_dropout_timeout_valid_boundaries(self):
+        """dropout_timeout: valid határértékek 1–1000."""
+        cfg = GlobalSettingsConfig.from_dict({"dropout_timeout": 1})
+        assert cfg.dropout_timeout == 1
+        cfg = GlobalSettingsConfig.from_dict({"dropout_timeout": 1000})
+        assert cfg.dropout_timeout == 1000
+
+    def test_dropout_timeout_invalid_range(self):
+        """dropout_timeout: 0 vagy 1001 → default marad."""
+        cfg = GlobalSettingsConfig.from_dict({"dropout_timeout": 0})
+        assert cfg.dropout_timeout == 5
+        cfg = GlobalSettingsConfig.from_dict({"dropout_timeout": 1001})
+        assert cfg.dropout_timeout == 5
+
+    def test_dropout_timeout_float_fraction_rejected(self):
+        """dropout_timeout: 10.3 (törtrész) → default marad."""
+        cfg = GlobalSettingsConfig.from_dict({"dropout_timeout": 10.3})
+        assert cfg.dropout_timeout == 5
+
+    # --- Cross-validation: minimum_samples <= buffer_seconds * buffer_rate_hz ---
+    def test_post_init_minimum_samples_exceeds_max(self):
+        """minimum_samples > buffer_seconds * buffer_rate_hz → minimum_samples korrigálva."""
+        # buffer_seconds=2, buffer_rate_hz=3 → max 6, de minimum_samples=10 → 6-ra korrigálva
+        cfg = GlobalSettingsConfig(
+            buffer_seconds=2,
+            buffer_rate_hz=3,
+            minimum_samples=10,
+        )
+        assert cfg.minimum_samples == 6
+
+    def test_post_init_minimum_samples_valid(self):
+        """minimum_samples <= buffer_seconds * buffer_rate_hz → nincs korrekció."""
+        cfg = GlobalSettingsConfig(
+            buffer_seconds=3,
+            buffer_rate_hz=4,
+            minimum_samples=12,
+        )
+        assert cfg.minimum_samples == 12
+
+    def test_post_init_minimum_samples_exact_boundary(self):
+        """minimum_samples == buffer_seconds * buffer_rate_hz → valid."""
+        cfg = GlobalSettingsConfig(
+            buffer_seconds=2,
+            buffer_rate_hz=5,
+            minimum_samples=10,
+        )
+        assert cfg.minimum_samples == 10
+
+    def test_post_init_from_dict_cross_validation(self):
+        """from_dict + __post_init__: cross-validation is triggered."""
+        cfg = GlobalSettingsConfig.from_dict({
+            "buffer_seconds": 3,
+            "buffer_rate_hz": 2,
+            "minimum_samples": 100,  # max = 3*2=6, 100 > 6 → korrekció
+        })
+        assert cfg.minimum_samples == 6
+
+    # --- log_directory field tests ---
     def test_from_dict_log_directory_null(self):
         cfg = GlobalSettingsConfig.from_dict({"log_directory": None})
         assert cfg.log_directory is None
@@ -590,10 +741,76 @@ class TestGlobalSettingsConfig:
         cfg = GlobalSettingsConfig.from_dict({"log_directory": "/tmp/logs"})
         assert cfg.log_directory == "/tmp/logs"
 
+    def test_from_dict_log_directory_null_string(self):
+        """A "null" string (gyakori elgépelés) → None, csendben."""
+        cfg = GlobalSettingsConfig.from_dict({"log_directory": "null"})
+        assert cfg.log_directory is None
+
+    def test_from_dict_log_directory_null_string_case_insensitive(self):
+        """A "NULL" / " null " → None (case-insensitive, trimmelt)."""
+        assert GlobalSettingsConfig.from_dict({"log_directory": "NULL"}).log_directory is None
+        assert GlobalSettingsConfig.from_dict({"log_directory": " null "}).log_directory is None
+
+    def test_from_dict_log_directory_null_string_silent(self, caplog):
+        """A "null" string NEM ad figyelmeztetést (csendes default)."""
+        import logging
+        with caplog.at_level(logging.WARNING, logger="user"):
+            GlobalSettingsConfig.from_dict({"log_directory": "null"})
+        assert not any("log_directory" in r.message for r in caplog.records)
+
+    def test_from_dict_log_directory_missing_silent(self, caplog):
+        """Hiányzó kulcs → None, csendben (nincs figyelmeztetés)."""
+        import logging
+        with caplog.at_level(logging.WARNING, logger="user"):
+            cfg = GlobalSettingsConfig.from_dict({})
+        assert cfg.log_directory is None
+        assert not any("log_directory" in r.message for r in caplog.records)
+
+    def test_from_dict_log_directory_null_silent(self, caplog):
+        """null (None) → None, csendben (nincs figyelmeztetés)."""
+        import logging
+        with caplog.at_level(logging.WARNING, logger="user"):
+            GlobalSettingsConfig.from_dict({"log_directory": None})
+        assert not any("log_directory" in r.message for r in caplog.records)
+
     def test_from_dict_log_directory_empty_string(self):
-        """Üres string → nincs mentve (marad None default)."""
+        """Üres string → None (default) + warning."""
         cfg = GlobalSettingsConfig.from_dict({"log_directory": "   "})
         assert cfg.log_directory is None
+
+    def test_from_dict_log_directory_empty_string_warns(self, caplog):
+        """Üres string → figyelmeztetés a logban."""
+        import logging
+        with caplog.at_level(logging.WARNING, logger="user"):
+            GlobalSettingsConfig.from_dict({"log_directory": ""})
+        assert any("log_directory" in r.message for r in caplog.records)
+
+    def test_from_dict_log_directory_whitespace_stripped(self):
+        """Whitespace-vel körülzárt string → trimmed."""
+        cfg = GlobalSettingsConfig.from_dict({"log_directory": "  /var/log  "})
+        assert cfg.log_directory == "/var/log"
+
+    def test_from_dict_log_directory_wrong_type_int(self):
+        """Rossz típus (int) → None (default)."""
+        cfg = GlobalSettingsConfig.from_dict({"log_directory": 123})
+        assert cfg.log_directory is None
+
+    def test_from_dict_log_directory_wrong_type_bool(self):
+        """Rossz típus (bool) → None (default)."""
+        cfg = GlobalSettingsConfig.from_dict({"log_directory": True})
+        assert cfg.log_directory is None
+
+    def test_from_dict_log_directory_wrong_type_list(self):
+        """Rossz típus (lista) → None (default)."""
+        cfg = GlobalSettingsConfig.from_dict({"log_directory": ["/tmp"]})
+        assert cfg.log_directory is None
+
+    def test_from_dict_log_directory_wrong_type_warns(self, caplog):
+        """Rossz típus → figyelmeztetés a logban."""
+        import logging
+        with caplog.at_level(logging.WARNING, logger="user"):
+            GlobalSettingsConfig.from_dict({"log_directory": 123})
+        assert any("log_directory" in r.message for r in caplog.records)
 
 
 # ============================================================
@@ -642,6 +859,16 @@ class TestHeartRateZonesConfig:
         assert cfg.enabled is False
         assert cfg.zero_hr_immediate is True
 
+    def test_from_dict_float_integer_accepted(self):
+        """Float int fields: 190.0 (egész float) → konvertálva."""
+        cfg = HeartRateZonesConfig.from_dict({"max_hr": 190.0})
+        assert cfg.max_hr == 190
+
+    def test_from_dict_float_fraction_rejected(self):
+        """Float int fields: 190.5 (törtrész) → default marad."""
+        cfg = HeartRateZonesConfig.from_dict({"max_hr": 190.5})
+        assert cfg.max_hr == 185
+
 
 # ============================================================
 # BleConfig dataclass
@@ -687,6 +914,16 @@ class TestBleConfig:
     def test_from_dict_invalid_scan_timeout(self):
         cfg = BleConfig.from_dict({"scan_timeout": 999})
         assert cfg.scan_timeout == 10  # default
+
+    def test_from_dict_float_integer_accepted(self):
+        """Float int fields: 30.0 (egész float) → konvertálva."""
+        cfg = BleConfig.from_dict({"scan_timeout": 30.0})
+        assert cfg.scan_timeout == 30
+
+    def test_from_dict_float_fraction_rejected(self):
+        """Float int fields: 30.5 (törtrész) → default marad."""
+        cfg = BleConfig.from_dict({"scan_timeout": 30.5})
+        assert cfg.scan_timeout == 10
 
 
 # ============================================================
@@ -792,6 +1029,16 @@ class TestHudConfig:
 
     def test_from_dict_opacity_bool_ignored(self):
         cfg = HudConfig.from_dict({"opacity": True})
+        assert cfg.opacity == 92
+
+    def test_from_dict_opacity_float_integer_accepted(self):
+        """Opacity: 75.0 (egész float) → konvertálva."""
+        cfg = HudConfig.from_dict({"opacity": 75.0})
+        assert cfg.opacity == 75
+
+    def test_from_dict_opacity_float_fraction_rejected(self):
+        """Opacity: 75.5 (törtrész) → default marad."""
+        cfg = HudConfig.from_dict({"opacity": 75.5})
         assert cfg.opacity == 92
 
     def test_from_dict_window_geometry(self):

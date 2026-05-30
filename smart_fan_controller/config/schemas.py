@@ -196,7 +196,11 @@ class PowerZonesConfig:
 
 @dataclasses.dataclass
 class GlobalSettingsConfig:
-    """Globális beállítások – típusbiztos."""
+    """Globális beállítások – típusbiztos, validált.
+
+    Validáció a __post_init__-ben:
+      - minimum_samples <= buffer_seconds * buffer_rate_hz (kereszt-validáció)
+    """
 
     cooldown_seconds: int = 120
     buffer_seconds: int = 3
@@ -205,34 +209,58 @@ class GlobalSettingsConfig:
     dropout_timeout: int = 5
     log_directory: Optional[str] = None
 
+    def __post_init__(self) -> None:
+        # minimum_samples <= buffer_seconds * buffer_rate_hz cross-validation
+        if self.buffer_seconds > 0 and self.buffer_rate_hz > 0:
+            max_samples = self.buffer_seconds * self.buffer_rate_hz
+            if self.minimum_samples > max_samples:
+                user_logger.warning(
+                    f"⚠ Érvénytelen minimum_samples ({self.minimum_samples}) – "
+                    f"nagyobb, mint buffer_seconds * buffer_rate_hz "
+                    f"({self.buffer_seconds} * {self.buffer_rate_hz} = {max_samples}). "
+                    f"minimum_samples {max_samples}-re állítva."
+                )
+                self.minimum_samples = max_samples
+
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> "GlobalSettingsConfig":
         d = cls()
-        fields_range = {
-            "cooldown_seconds": (0, 300),
-            "buffer_seconds": (1, 10),
-            "minimum_samples": (1, 1000),
-            "buffer_rate_hz": (1, 60),
-            "dropout_timeout": (1, 120),
-        }
-        kwargs: dict[str, Any] = {}
-        for key, (lo, hi) in fields_range.items():
-            if key in raw:
-                v = raw[key]
-                if isinstance(v, bool):
-                    user_logger.warning(f"⚠ Érvénytelen '{key}' érték: {v!r} ({lo}–{hi} közötti egész kell)")
-                elif isinstance(v, (int, float)) and lo <= v <= hi:
-                    kwargs[key] = int(v)
-                else:
-                    user_logger.warning(f"⚠ Érvénytelen '{key}' érték: {v} ({lo}–{hi} közötti egész kell)")
-        # log_directory: null vagy valid string
+        kwargs: dict[str, Any] = dataclasses.asdict(d)
+
+        # cooldown_seconds: 0–1000 (0 = azonnali váltás, nincs cooldown)
+        _from_dict_int(raw, kwargs, "cooldown_seconds", 0, 1000)
+        # A többi int mező egységes tartománya: 1–1000
+        _from_dict_int(raw, kwargs, "buffer_seconds", 1, 1000)
+        _from_dict_int(raw, kwargs, "minimum_samples", 1, 1000)
+        _from_dict_int(raw, kwargs, "buffer_rate_hz", 1, 1000)
+        _from_dict_int(raw, kwargs, "dropout_timeout", 1, 1000)
+
+        # log_directory: null vagy nem-üres string.
+        # null, "null" string, vagy hiányzó kulcs → None (program könyvtár), csendben.
         if "log_directory" in raw:
             ld = raw["log_directory"]
             if ld is None:
                 kwargs["log_directory"] = None
-            elif isinstance(ld, str) and ld.strip():
-                kwargs["log_directory"] = ld.strip()
-        return cls(**{**dataclasses.asdict(d), **kwargs})
+            elif isinstance(ld, str):
+                stripped = ld.strip()
+                if stripped.lower() == "null":
+                    # "null" string → None (program könyvtár), csendben
+                    kwargs["log_directory"] = None
+                elif not stripped:
+                    user_logger.warning(
+                        "⚠ Üres 'log_directory' érték – alapértelmezett "
+                        "(program könyvtár) használata."
+                    )
+                else:
+                    kwargs["log_directory"] = stripped
+            else:
+                user_logger.warning(
+                    f"⚠ Érvénytelen 'log_directory' érték: {ld!r} "
+                    f"(string vagy null kell) – alapértelmezett "
+                    f"(program könyvtár) használata."
+                )
+
+        return cls(**kwargs)
 
 
 @dataclasses.dataclass
@@ -295,24 +323,15 @@ class HeartRateZonesConfig:
         d = cls()
         kwargs: dict[str, Any] = dataclasses.asdict(d)
 
-        int_fields = {
-            "max_hr": (100, 220),
-            "resting_hr": (30, 100),
-            "z1_max_percent": (1, 100),
-            "z2_max_percent": (1, 100),
-            "valid_min_hr": (30, 100),
-            "valid_max_hr": (150, 300),
-        }
-        for key, (lo, hi) in int_fields.items():
-            if key in raw:
-                v = raw[key]
-                if isinstance(v, bool):
-                    user_logger.warning(f"⚠ Érvénytelen '{key}' érték: {v!r} ({lo}–{hi} közötti egész kell)")
-                elif isinstance(v, (int, float)) and lo <= v <= hi:
-                    kwargs[key] = int(v)
-                else:
-                    user_logger.warning(f"⚠ Érvénytelen '{key}' érték: {v} ({lo}–{hi} közötti egész kell)")
+        # Int fields with ranges
+        _from_dict_int(raw, kwargs, "max_hr", 100, 220)
+        _from_dict_int(raw, kwargs, "resting_hr", 30, 100)
+        _from_dict_int(raw, kwargs, "z1_max_percent", 1, 100)
+        _from_dict_int(raw, kwargs, "z2_max_percent", 1, 100)
+        _from_dict_int(raw, kwargs, "valid_min_hr", 30, 100)
+        _from_dict_int(raw, kwargs, "valid_max_hr", 150, 300)
 
+        # Bool fields
         for key in ("enabled", "zero_hr_immediate"):
             if key in raw:
                 v = raw[key]
@@ -321,6 +340,7 @@ class HeartRateZonesConfig:
                 else:
                     user_logger.warning(f"⚠ Érvénytelen '{key}' érték: {v} (true/false kell)")
 
+        # Enum field
         if "zone_mode" in raw and raw["zone_mode"] in VALID_ZONE_MODES:
             kwargs["zone_mode"] = raw["zone_mode"]
 
@@ -354,22 +374,12 @@ class BleConfig:
             elif isinstance(dn, str) and dn.strip():
                 kwargs["device_name"] = dn.strip()
 
-        int_fields = {
-            "scan_timeout": (1, 60),
-            "connection_timeout": (1, 60),
-            "reconnect_interval": (1, 60),
-            "max_retries": (1, 100),
-            "command_timeout": (1, 30),
-        }
-        for key, (lo, hi) in int_fields.items():
-            if key in raw:
-                v = raw[key]
-                if isinstance(v, bool):
-                    user_logger.warning(f"⚠ Érvénytelen '{key}' érték: {v!r} ({lo}–{hi} közötti egész kell)")
-                elif isinstance(v, (int, float)) and lo <= v <= hi:
-                    kwargs[key] = int(v)
-                else:
-                    user_logger.warning(f"⚠ Érvénytelen '{key}' érték: {v} ({lo}–{hi} közötti egész kell)")
+        # Int fields with ranges
+        _from_dict_int(raw, kwargs, "scan_timeout", 1, 60)
+        _from_dict_int(raw, kwargs, "connection_timeout", 1, 60)
+        _from_dict_int(raw, kwargs, "reconnect_interval", 1, 60)
+        _from_dict_int(raw, kwargs, "max_retries", 1, 100)
+        _from_dict_int(raw, kwargs, "command_timeout", 1, 30)
 
         if isinstance(raw.get("service_uuid"), str) and raw["service_uuid"]:
             kwargs["service_uuid"] = raw["service_uuid"]
@@ -531,10 +541,7 @@ class HudConfig:
         for key in ("close_at_zwiftapp.exe", "close_at_zwiftapp_exe"):
             if key in raw and isinstance(raw[key], bool):
                 kwargs["close_at_zwiftapp_exe"] = raw[key]
-        if "opacity" in raw:
-            v = raw["opacity"]
-            if isinstance(v, (int, float)) and not isinstance(v, bool) and 20 <= v <= 100:
-                kwargs["opacity"] = int(v)
+        _from_dict_int(raw, kwargs, "opacity", 20, 100)
         if "window_geometry" in raw and isinstance(raw["window_geometry"], dict):
             geo: Dict[str, Dict[str, int]] = {}
             for screen_name, rect in raw["window_geometry"].items():
