@@ -17,6 +17,7 @@ from collections.abc import Generator
 import argparse
 import getpass
 import json
+import logging
 import os
 import platform as _platform
 import socket
@@ -63,6 +64,119 @@ RATE_LIMIT_BACKOFF = 5.0  # seconds
 # Unit conversion factors (confirmed from zwift_messages.proto)
 _MICROHERTZ_TO_RPM = 60 / 1_000_000   # cadenceUHz: µHz → RPM
 _MM_PER_HOUR_TO_KM_PER_HOUR = 1 / 1_000_000  # speed: mm/h → km/h
+
+
+# ---------------------------------------------------------------------------
+# Logging – saját beállítás (zwift_api_settings.json) szerint
+# A "logging" flag és a "log_directory" vezérli; Windows-on és Linuxon
+# egyformán. Ha logging:false → teljes némaság, nincs log fájl.
+# ---------------------------------------------------------------------------
+
+log = logging.getLogger("zwift_api_polling")
+
+# A feloldott log könyvtár (a _setup_logging állítja be)
+_log_dir: str = _base_dir
+# A korai (settings betöltés előtti) logokat pufferelő handler
+_early_mem_handler: Any = None
+
+
+def _resolve_log_dir(log_directory: str | None) -> str:
+    """Log könyvtár meghatározása és validálása (fallback: a script könyvtára)."""
+    if not log_directory:
+        return _base_dir
+    resolved = os.path.abspath(os.path.expanduser(log_directory))
+    try:
+        os.makedirs(resolved, exist_ok=True)
+        test_file = os.path.join(resolved, ".log_write_test")
+        with open(test_file, "w", encoding="utf-8") as fh:
+            fh.write("test")
+        os.remove(test_file)
+        return resolved
+    except OSError:
+        log.warning(
+            f"⚠️  log_directory nem elérhető / not accessible: '{resolved}', "
+            f"alapértelmezett / default: '{_base_dir}'"
+        )
+        return _base_dir
+
+
+def _setup_early_logging() -> None:
+    """A settings betöltése ELŐTTI logokat memóriába puffereli.
+
+    A 'logging' flag csak a settings betöltése után ismert, ezért a korai
+    logokat (pl. validációs warningok) memóriában tartjuk, majd a flag
+    ismeretében visszajátsszuk (_flush_early_logging) vagy eldobjuk
+    (_discard_early_logging).
+    """
+    from logging.handlers import MemoryHandler
+
+    global _early_mem_handler
+    log.handlers.clear()
+    log.setLevel(logging.DEBUG)
+    log.propagate = False
+    mh = MemoryHandler(capacity=100000, flushLevel=logging.CRITICAL + 10)
+    log.addHandler(mh)
+    _early_mem_handler = mh
+
+
+def _setup_logging(
+    log_directory: str | None = None,
+    enabled: bool = True,
+    debug: bool = False,
+) -> None:
+    """Loggolás konfigurálása: konzol + rotált fájl (zwift_api_polling.log).
+
+    Ha ``enabled`` False → NullHandler (teljes némaság, nincs fájl).
+    """
+    from logging.handlers import RotatingFileHandler
+
+    global _log_dir
+    log.handlers.clear()
+    log.propagate = False
+
+    if not enabled:
+        log.addHandler(logging.NullHandler())
+        return
+
+    level = logging.DEBUG if debug else logging.INFO
+    log.setLevel(level)
+
+    # Konzol (tiszta formátum – csak az üzenet)
+    console = logging.StreamHandler(sys.stdout)
+    console.setLevel(level)
+    console.setFormatter(logging.Formatter("%(message)s"))
+    log.addHandler(console)
+
+    # Rotált fájl (időbélyeggel)
+    _log_dir = _resolve_log_dir(log_directory)
+    file_handler = RotatingFileHandler(
+        os.path.join(_log_dir, "zwift_api_polling.log"),
+        maxBytes=500 * 1024, backupCount=2, encoding="utf-8",
+    )
+    file_handler.setLevel(logging.DEBUG)
+    file_handler.setFormatter(logging.Formatter(
+        "%(asctime)s [%(levelname)s] %(message)s", datefmt="%Y-%m-%d %H:%M:%S",
+    ))
+    log.addHandler(file_handler)
+
+
+def _flush_early_logging() -> None:
+    """A pufferelt korai logokat visszajátssza a már beállított handlerekre."""
+    global _early_mem_handler
+    if _early_mem_handler is not None:
+        for record in _early_mem_handler.buffer:
+            log.handle(record)
+        _early_mem_handler.close()
+        _early_mem_handler = None
+
+
+def _discard_early_logging() -> None:
+    """A pufferelt korai logokat eldobja (logging: false eset)."""
+    global _early_mem_handler
+    if _early_mem_handler is not None:
+        _early_mem_handler.buffer.clear()
+        _early_mem_handler.close()
+        _early_mem_handler = None
 
 # ---------------------------------------------------------------------------
 # ProtobufDecoder – raw varint / field parser (no .proto compilation needed)
@@ -207,8 +321,7 @@ class ZwiftAuth:
         resp = requests.post(ZWIFT_AUTH_URL, data=data, timeout=15)
         resp.raise_for_status()
         self._store_tokens(resp.json())
-        if self._debug:
-            print("[DEBUG] Bejelentkezés sikeres / Login successful")
+        log.debug("Bejelentkezés sikeres / Login successful")
 
     def ensure_valid_token(self) -> None:
         """Refresh the access token proactively if it is close to expiry."""
@@ -225,8 +338,7 @@ class ZwiftAuth:
 
     def _refresh(self) -> None:
         """Attempt a token refresh; re-authenticates on failure."""
-        if self._debug:
-            print("[DEBUG] Token frissítése / Refreshing token …")
+        log.debug("Token frissítése / Refreshing token …")
         try:
             data = {
                 "client_id": ZWIFT_CLIENT_ID,
@@ -236,10 +348,9 @@ class ZwiftAuth:
             resp = requests.post(ZWIFT_AUTH_URL, data=data, timeout=15)
             resp.raise_for_status()
             self._store_tokens(resp.json())
-            if self._debug:
-                print("[DEBUG] Token frissítve / Token refreshed")
+            log.debug("Token frissítve / Token refreshed")
         except requests.RequestException as exc:  # broad but not BaseException
-            print(
+            log.warning(
                 f"⚠️  Token frissítés sikertelen, újra bejelentkezés / "
                 f"Token refresh failed, re-logging in: {exc}"
             )
@@ -302,12 +413,11 @@ class ZwiftAPIClient:
             raise RateLimitError("Rate limited (429)")
         resp.raise_for_status()
 
-        if self._debug:
+        if log.isEnabledFor(logging.DEBUG):
             content_type = resp.headers.get("Content-Type", "")
-            print(
-                f"\n[DEBUG] Player state response"
-                f"\n[DEBUG] Content-Type: {content_type!r}"
-                f"\n[DEBUG] Response bytes[:64]: {resp.content[:64]!r}"
+            log.debug(
+                f"Player state response | Content-Type: {content_type!r} | "
+                f"bytes[:64]: {resp.content[:64]!r}"
             )
         return _parse_protobuf_player_state(resp.content)
 
@@ -336,19 +446,16 @@ class ZwiftAPIClient:
             try:
                 activities = resp.json()
             except json.JSONDecodeError as exc:
-                if self._debug:
-                    print(
-                        f"\n[DEBUG] JSON decode error on activities: {exc}"
-                        f"\n[DEBUG] Content-Type: {content_type}"
-                        f"\n[DEBUG] Response bytes[:64]: {resp.content[:64]!r}"
-                    )
-        else:
-            if self._debug:
-                print(
-                    f"\n[DEBUG] Non-JSON activities response"
-                    f"\n[DEBUG] Content-Type: {content_type!r}"
-                    f"\n[DEBUG] Response bytes[:64]: {resp.content[:64]!r}"
+                log.debug(
+                    f"JSON decode error on activities: {exc} | "
+                    f"Content-Type: {content_type} | "
+                    f"bytes[:64]: {resp.content[:64]!r}"
                 )
+        else:
+            log.debug(
+                f"Non-JSON activities response | Content-Type: {content_type!r} | "
+                f"bytes[:64]: {resp.content[:64]!r}"
+            )
 
         if activities:
             latest = cast(Any, activities[0] if isinstance(activities, list) else activities)
@@ -368,12 +475,10 @@ class ZwiftAPIClient:
                 return None
             content_type = resp.headers.get("Content-Type", "")
             if "application/json" not in content_type:
-                if self._debug:
-                    print(
-                        f"\n[DEBUG] Non-JSON profile response"
-                        f"\n[DEBUG] Content-Type: {content_type!r}"
-                        f"\n[DEBUG] Response bytes[:64]: {resp.content[:64]!r}"
-                    )
+                log.debug(
+                    f"Non-JSON profile response | Content-Type: {content_type!r} | "
+                    f"bytes[:64]: {resp.content[:64]!r}"
+                )
                 return None
             profile: Any = resp.json()
             if not isinstance(profile, dict):
@@ -467,15 +572,13 @@ class UDPBroadcaster:
         self._sock.sendto(payload, (self._host, self._port))
 
     def log_console(self, data: dict[str, Any]) -> None:
-        """Print a formatted summary to the console."""
-        print(
-            f"\r⚡ {data['power']:>4}W  "
+        """Egy soros összefoglaló logolása (konzol + fájl)."""
+        log.info(
+            f"⚡ {data['power']:>4}W  "
             f"❤️  {data['heartrate']:>3}bpm  "
             f"🚴 {data['cadence']:>3}rpm  "
             f"🚀 {data['speed_kmh']:>5.1f}km/h  "
-            f"📦 {data['total_packets']} polls",
-            end="",
-            flush=True,
+            f"📦 {data['total_packets']} polls"
         )
 
     def close(self) -> None:
@@ -528,18 +631,18 @@ def run_polling_loop(
 
     # Wait for ZwiftApp.exe to start (grace period)
     if _platform.system() == "Windows" and not _is_zwift_running():
-        print(
+        log.info(
             f"⏳ ZwiftApp.exe nem fut, várakozás max {_ZWIFT_GRACE_PERIOD:.0f}s / "
             f"ZwiftApp.exe not running, waiting up to {_ZWIFT_GRACE_PERIOD:.0f}s …"
         )
         grace_start = time.time()
         while not stop_event.is_set():
             if _is_zwift_running():
-                print("✅ ZwiftApp.exe elindult / ZwiftApp.exe started!")
+                log.info("✅ ZwiftApp.exe elindult / ZwiftApp.exe started!")
                 _zwift_seen = True
                 break
             if time.time() - grace_start >= _ZWIFT_GRACE_PERIOD:
-                print(
+                log.error(
                     "❌ ZwiftApp.exe nem indult el időben, kilépés / "
                     "ZwiftApp.exe did not start in time, exiting."
                 )
@@ -556,8 +659,8 @@ def run_polling_loop(
         if _zwift_seen and loop_start - _last_zwift_check >= _ZWIFT_CHECK_INTERVAL:
             _last_zwift_check = loop_start
             if not _is_zwift_running():
-                print(
-                    "\n\nZwiftApp.exe kilépett, program leállítása / "
+                log.info(
+                    "ZwiftApp.exe kilépett, program leállítása / "
                     "ZwiftApp.exe exited, stopping …"
                 )
                 stop_event.set()
@@ -570,20 +673,16 @@ def run_polling_loop(
             if world_id is None:
                 world_id = client.get_active_world(rider_id)
                 if world_id is None:
-                    if debug:
-                        print(
-                            "\n[DEBUG] Nem aktív a lovaglás / Rider not currently active"
-                        )
+                    log.debug("Nem aktív a lovaglás / Rider not currently active")
                     _sleep_remainder(loop_start, poll_interval, stop_event)
                     continue
 
             state = client.get_player_state(world_id, rider_id)
             if state is None:
-                if debug:
-                    print(
-                        f"\n[DEBUG] Rider {rider_id} nem található ebben a világban / "
-                        f"not found in world {world_id}"
-                    )
+                log.debug(
+                    f"Rider {rider_id} nem található ebben a világban / "
+                    f"not found in world {world_id}"
+                )
                 world_id = None  # reset so we re-discover next iteration
                 _sleep_remainder(loop_start, poll_interval, stop_event)
                 continue
@@ -598,8 +697,8 @@ def run_polling_loop(
             consecutive_errors = 0
 
         except RateLimitError:
-            print(
-                f"\n⚠️  Rate limit elérve, várakozás {RATE_LIMIT_BACKOFF}s / "
+            log.warning(
+                f"⚠️  Rate limit elérve, várakozás {RATE_LIMIT_BACKOFF}s / "
                 f"Rate limited, backing off {RATE_LIMIT_BACKOFF}s"
             )
             stop_event.wait(RATE_LIMIT_BACKOFF)
@@ -607,8 +706,8 @@ def run_polling_loop(
 
         except requests.exceptions.ConnectionError as exc:
             consecutive_errors = consecutive_errors + 1
-            print(
-                f"\n⚠️  Hálózati hiba (#{consecutive_errors}) / "
+            log.warning(
+                f"⚠️  Hálózati hiba (#{consecutive_errors}) / "
                 f"Network error (#{consecutive_errors}): {exc}"
             )
             backoff: float = min(30.0, 2.0 ** consecutive_errors)
@@ -617,17 +716,15 @@ def run_polling_loop(
 
         except requests.exceptions.HTTPError as exc:
             consecutive_errors = consecutive_errors + 1
-            print(f"\n⚠️  HTTP hiba / HTTP error: {exc}")
+            log.warning(f"⚠️  HTTP hiba / HTTP error: {exc}")
             backoff: float = min(30.0, 2.0 ** consecutive_errors)
             stop_event.wait(backoff)
             continue
 
         except Exception as exc:  # noqa: BLE001
             consecutive_errors = consecutive_errors + 1
-            print(f"\n⚠️  Váratlan hiba / Unexpected error: {exc}")
-            if debug:
-                import traceback
-                traceback.print_exc()
+            log.warning(f"⚠️  Váratlan hiba / Unexpected error: {exc}")
+            log.debug("Traceback:", exc_info=True)
             backoff: float = min(30.0, 2.0 ** consecutive_errors)
             stop_event.wait(backoff)
             continue
@@ -661,10 +758,12 @@ def load_settings(path: str) -> dict[str, Any]:
         "broadcast_host": BROADCAST_HOST,
         "broadcast_port": BROADCAST_PORT,
         "poll_interval": DEFAULT_POLL_INTERVAL,
+        "logging": True,
+        "log_directory": None,
     }
 
     if not os.path.exists(path):
-        print(
+        log.info(
             f"ℹ️  Beállításfájl nem található / Settings file not found: {path}\n"
             f"    Alapértelmezett beállításokkal létrehozva / Created with defaults."
         )
@@ -675,10 +774,10 @@ def load_settings(path: str) -> dict[str, Any]:
         with open(path, encoding="utf-8") as fh:
             raw: dict[str, Any] = json.load(fh)
     except json.JSONDecodeError:
-        print(f"⚠️  Érvénytelen JSON a beállításfájlban / Invalid JSON in settings file: {path}")
+        log.warning(f"⚠️  Érvénytelen JSON a beállításfájlban / Invalid JSON in settings file: {path}")
         return dict(defaults)
     except OSError as exc:
-        print(f"⚠️  Beállításfájl olvasási hiba / Settings file read error: {exc}")
+        log.warning(f"⚠️  Beállításfájl olvasási hiba / Settings file read error: {exc}")
         return dict(defaults)
 
     settings: dict[str, Any] = dict(defaults)
@@ -688,21 +787,21 @@ def load_settings(path: str) -> dict[str, Any]:
         if isinstance(raw["username"], str):
             settings["username"] = raw["username"]
         else:
-            print("⚠️  Érvénytelen 'username' a beállításfájlban (string szükséges) / Invalid 'username' in settings (must be string)")
+            log.warning("⚠️  Érvénytelen 'username' a beállításfájlban (string szükséges) / Invalid 'username' in settings (must be string)")
 
     # password
     if "password" in raw:
         if isinstance(raw["password"], str):
             settings["password"] = raw["password"]
         else:
-            print("⚠️  Érvénytelen 'password' a beállításfájlban (string szükséges) / Invalid 'password' in settings (must be string)")
+            log.warning("⚠️  Érvénytelen 'password' a beállításfájlban (string szükséges) / Invalid 'password' in settings (must be string)")
 
     # broadcast_host
     if "broadcast_host" in raw:
         if isinstance(raw["broadcast_host"], str) and raw["broadcast_host"]:
             settings["broadcast_host"] = raw["broadcast_host"]
         else:
-            print("⚠️  Érvénytelen 'broadcast_host' a beállításfájlban (nem üres string szükséges) / Invalid 'broadcast_host' in settings (must be non-empty string)")
+            log.warning("⚠️  Érvénytelen 'broadcast_host' a beállításfájlban (nem üres string szükséges) / Invalid 'broadcast_host' in settings (must be non-empty string)")
 
     # broadcast_port
     if "broadcast_port" in raw:
@@ -710,7 +809,7 @@ def load_settings(path: str) -> dict[str, Any]:
         if isinstance(val, int) and not isinstance(val, bool) and 1 <= val <= 65535:
             settings["broadcast_port"] = val
         else:
-            print("⚠️  Érvénytelen 'broadcast_port' a beállításfájlban (1-65535 közötti int szükséges) / Invalid 'broadcast_port' in settings (must be int in range 1-65535)")
+            log.warning("⚠️  Érvénytelen 'broadcast_port' a beállításfájlban (1-65535 közötti int szükséges) / Invalid 'broadcast_port' in settings (must be int in range 1-65535)")
 
     # poll_interval
     if "poll_interval" in raw:
@@ -718,7 +817,30 @@ def load_settings(path: str) -> dict[str, Any]:
         if isinstance(val, (int, float)) and not isinstance(val, bool) and val > 0:
             settings["poll_interval"] = float(val)
         else:
-            print("⚠️  Érvénytelen 'poll_interval' a beállításfájlban (pozitív szám szükséges) / Invalid 'poll_interval' in settings (must be positive number)")
+            log.warning("⚠️  Érvénytelen 'poll_interval' a beállításfájlban (pozitív szám szükséges) / Invalid 'poll_interval' in settings (must be positive number)")
+
+    # logging (bool)
+    if "logging" in raw:
+        if isinstance(raw["logging"], bool):
+            settings["logging"] = raw["logging"]
+        else:
+            log.warning("⚠️  Érvénytelen 'logging' a beállításfájlban (true/false szükséges) / Invalid 'logging' in settings (must be true/false)")
+
+    # log_directory (string | null; "null" string is treated as None)
+    if "log_directory" in raw:
+        ld = raw["log_directory"]
+        if ld is None:
+            settings["log_directory"] = None
+        elif isinstance(ld, str):
+            stripped = ld.strip()
+            if stripped.lower() == "null":
+                settings["log_directory"] = None
+            elif not stripped:
+                log.warning("⚠️  Üres 'log_directory' / Empty 'log_directory' – alapértelmezett (script könyvtár) / using default")
+            else:
+                settings["log_directory"] = stripped
+        else:
+            log.warning("⚠️  Érvénytelen 'log_directory' (string vagy null szükséges) / Invalid 'log_directory' (must be string or null)")
 
     return settings
 
@@ -729,7 +851,7 @@ def save_settings(path: str, settings_dict: dict[str, Any]) -> None:
         with open(path, "w", encoding="utf-8") as fh:
             json.dump(settings_dict, fh, indent=2)
     except OSError as exc:
-        print(f"⚠️  Beállítások mentése sikertelen / Failed to save settings: {exc}")
+        log.warning(f"⚠️  Beállítások mentése sikertelen / Failed to save settings: {exc}")
 
 
 # ---------------------------------------------------------------------------
@@ -779,10 +901,12 @@ def resolve_credentials(
             "broadcast_host": settings.get("broadcast_host", BROADCAST_HOST),
             "broadcast_port": settings.get("broadcast_port", BROADCAST_PORT),
             "poll_interval": settings.get("poll_interval", DEFAULT_POLL_INTERVAL),
+            "logging": settings.get("logging", True),
+            "log_directory": settings.get("log_directory", None),
         }
         save_settings(settings_path, to_save)
-        print(f"✅ Beállítások mentve / Settings saved to {settings_path}")
-        print(
+        log.info(f"✅ Beállítások mentve / Settings saved to {settings_path}")
+        log.warning(
             f"⚠️  A jelszó titkosítatlanul van mentve! / "
             f"Password is stored in plaintext in {settings_path}"
         )
@@ -823,13 +947,25 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_arg_parser()
     args = parser.parse_args(argv)
 
-    print("=" * 60)
-    print(f" Zwift API Polling Monitor v{__version__}")
-    print(" HTTPS API lekérdezés + UDP broadcast (127.0.0.1:7878)")
-    print("=" * 60)
+    # Korai logging: a settings betöltése előtti logokat memóriába puffereljük,
+    # mert a "logging" flag még nem ismert (mint a fő appban).
+    _setup_early_logging()
+
+    log.info("=" * 60)
+    log.info(f" Zwift API Polling Monitor v{__version__}")
+    log.info(" HTTPS API lekérdezés + UDP broadcast (127.0.0.1:7878)")
+    log.info("=" * 60)
 
     # Load settings from JSON file (if it exists)
     settings = load_settings(SETTINGS_FILE)
+
+    # Loggolás konfigurálása a betöltött beállítások szerint (Windows + Linux)
+    if settings.get("logging", True):
+        _setup_logging(settings.get("log_directory"), enabled=True, debug=args.debug)
+        _flush_early_logging()
+    else:
+        _setup_logging(enabled=False)
+        _discard_early_logging()
 
     # Resolve poll interval: CLI > settings > hard-coded default
     poll_interval: float = float(
@@ -839,35 +975,35 @@ def main(argv: list[str] | None = None) -> int:
     username, password = resolve_credentials(args, settings=settings, settings_path=SETTINGS_FILE)
 
     auth = ZwiftAuth(username, password, debug=args.debug)
-    print("\nBejelentkezés folyamatban / Logging in …")
+    log.info("Bejelentkezés folyamatban / Logging in …")
     try:
         auth.login()
     except requests.exceptions.HTTPError as exc:
-        print(f"❌ Bejelentkezés sikertelen / Login failed: {exc}")
+        log.error(f"❌ Bejelentkezés sikertelen / Login failed: {exc}")
         return 1
     except requests.exceptions.ConnectionError as exc:
-        print(f"❌ Hálózati hiba / Network error: {exc}")
+        log.error(f"❌ Hálózati hiba / Network error: {exc}")
         return 1
 
     client = ZwiftAPIClient(auth, debug=args.debug)
     try:
-        print("Profil lekérése / Fetching profile …")
+        log.info("Profil lekérése / Fetching profile …")
         profile: dict[str, Any] = client.get_profile()
     except Exception as exc:  # noqa: BLE001
-        print(f"❌ Profil lekérése sikertelen / Failed to fetch profile: {exc}")
+        log.error(f"❌ Profil lekérése sikertelen / Failed to fetch profile: {exc}")
         client.close()
         return 1
 
     rider_id: int = int(profile.get("id", 0))
     if not rider_id:
-        print("❌ Rider ID nem található a profilban / Rider ID not found in profile")
+        log.error("❌ Rider ID nem található a profilban / Rider ID not found in profile")
         client.close()
         return 1
 
-    print(f"✅ Rider ID: {rider_id}")
-    print(
-        f"🔄 Lekérdezési intervallum / Poll interval: {poll_interval}s\n"
-        "Press Ctrl+C to stop.\n"
+    log.info(f"✅ Rider ID: {rider_id}")
+    log.info(
+        f"🔄 Lekérdezési intervallum / Poll interval: {poll_interval}s  |  "
+        "Press Ctrl+C to stop."
     )
 
     store = ZwiftDataStore()
@@ -889,7 +1025,7 @@ def main(argv: list[str] | None = None) -> int:
             debug=args.debug,
         )
     except KeyboardInterrupt:
-        print("\n\nLeállítás / Stopping …")
+        log.info("Leállítás / Stopping …")
     finally:
         stop_event.set()
         broadcaster.close()

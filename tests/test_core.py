@@ -29,7 +29,17 @@ from swift_fan_controller_new_v8_PySide6 import (
     DatasourceConfig,
     HudConfig,
     _resolve_log_dir,
+    _setup_logging,
+    _setup_early_logging,
+    _flush_early_logging,
+    _discard_early_logging,
+    _log_ble_devices_to_file,
+    _log_ant_device_to_file,
 )
+import logging as _logging
+import json as _json
+import swift_fan_controller_new_v8_PySide6 as _mainmod
+import zwift_api_polling as _zap
 
 
 # ============================================================
@@ -1258,6 +1268,244 @@ class TestResolveLogDir:
             assert result == tmp
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
+
+
+# ============================================================
+# Loggolás be/ki (logging flag) – _setup_logging viselkedés
+# ============================================================
+
+class TestLoggingToggle:
+    """A global_settings.logging flag és a korai pufferelés viselkedése."""
+
+    def _reset(self):
+        """Loggerek semleges alaphelyzetbe (a tesztek közti szennyezés ellen).
+
+        A handlerek törlése mellett a propagate-et is visszaállítja True-ra és
+        a szintet NOTSET-re, hogy a később futó caplog-os tesztek (amik a
+        propagáláson keresztül kapják el a 'user' logger üzeneteit) ne
+        sérüljenek a futási sorrendtől függetlenül.
+        """
+        for name in ("user", "swift_fan_controller_new"):
+            lg = _logging.getLogger(name)
+            lg.handlers.clear()
+            lg.propagate = True
+            lg.setLevel(_logging.NOTSET)
+        _mainmod._logging_enabled = True
+        _mainmod._early_mem_handlers = []
+
+    def test_disabled_uses_nullhandler(self):
+        """logging:false → mindkét logger NullHandler-t kap."""
+        self._reset()
+        tmp = tempfile.mkdtemp()
+        try:
+            _setup_logging(tmp, logging_enabled=False)
+            assert _mainmod._logging_enabled is False
+            for name in ("user", "swift_fan_controller_new"):
+                handlers = _logging.getLogger(name).handlers
+                assert len(handlers) == 1
+                assert isinstance(handlers[0], _logging.NullHandler)
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_disabled_no_log_file_created(self):
+        """logging:false → nem jön létre smart_fan_controller.log."""
+        self._reset()
+        tmp = tempfile.mkdtemp()
+        try:
+            _setup_logging(tmp, logging_enabled=False)
+            _logging.getLogger("user").warning("ne kerüljön fájlba")
+            assert not os.path.exists(os.path.join(tmp, "smart_fan_controller.log"))
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_enabled_creates_log_file(self):
+        """logging:true → létrejön a log fájl és tartalmazza az üzenetet."""
+        self._reset()
+        tmp = tempfile.mkdtemp()
+        try:
+            _setup_logging(tmp, logging_enabled=True)
+            assert _mainmod._logging_enabled is True
+            _logging.getLogger("user").warning("EZ_BEKERÜL")
+            logf = os.path.join(tmp, "smart_fan_controller.log")
+            assert os.path.exists(logf)
+            assert "EZ_BEKERÜL" in open(logf, encoding="utf-8").read()
+        finally:
+            self._reset()
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_device_logs_gated_when_disabled(self):
+        """logging:false → ble/ant eszköz-fájlok sem jönnek létre."""
+        self._reset()
+        tmp = tempfile.mkdtemp()
+        old_dir, old_flag = _mainmod._log_dir, _mainmod._logging_enabled
+        try:
+            _mainmod._log_dir = tmp
+            _mainmod._logging_enabled = False
+            _log_ble_devices_to_file([("Fan", "AA:BB", ["uuid"])], "BLE Fan")
+            _log_ant_device_to_file("PowerMeter", 123, "info")
+            assert not os.path.exists(os.path.join(tmp, "ble_devices.log"))
+            assert not os.path.exists(os.path.join(tmp, "ant_devices.log"))
+        finally:
+            _mainmod._log_dir, _mainmod._logging_enabled = old_dir, old_flag
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_device_logs_written_when_enabled(self):
+        """logging:true → ble/ant eszköz-fájlok létrejönnek."""
+        self._reset()
+        tmp = tempfile.mkdtemp()
+        old_dir, old_flag = _mainmod._log_dir, _mainmod._logging_enabled
+        try:
+            _mainmod._log_dir = tmp
+            _mainmod._logging_enabled = True
+            _log_ble_devices_to_file([("Fan", "AA:BB", ["uuid"])], "BLE Fan")
+            _log_ant_device_to_file("PowerMeter", 123, "info")
+            assert os.path.exists(os.path.join(tmp, "ble_devices.log"))
+            assert os.path.exists(os.path.join(tmp, "ant_devices.log"))
+        finally:
+            _mainmod._log_dir, _mainmod._logging_enabled = old_dir, old_flag
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_early_buffer_flush_replays_to_file(self):
+        """logging:true → korai (betöltés előtti) logok visszajátszódnak a fájlba."""
+        self._reset()
+        tmp = tempfile.mkdtemp()
+        try:
+            _setup_early_logging()
+            _logging.getLogger("user").warning("KORAI_WARNING")
+            # még nincs fájl, csak pufferben
+            assert not os.path.exists(os.path.join(tmp, "smart_fan_controller.log"))
+            _setup_logging(tmp, logging_enabled=True)
+            _flush_early_logging()
+            logf = os.path.join(tmp, "smart_fan_controller.log")
+            assert os.path.exists(logf)
+            assert "KORAI_WARNING" in open(logf, encoding="utf-8").read()
+        finally:
+            self._reset()
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_early_buffer_discard_when_disabled(self):
+        """logging:false → korai logok eldobva, nincs fájl."""
+        self._reset()
+        tmp = tempfile.mkdtemp()
+        try:
+            _setup_early_logging()
+            _logging.getLogger("user").warning("KORAI_WARNING")
+            _setup_logging(tmp, logging_enabled=False)
+            _discard_early_logging()
+            assert not os.path.exists(os.path.join(tmp, "smart_fan_controller.log"))
+            assert _mainmod._early_mem_handlers == []
+        finally:
+            self._reset()
+            shutil.rmtree(tmp, ignore_errors=True)
+
+
+# ============================================================
+# zwift_api_polling – saját loggolás (zwift_api_settings.json)
+# ============================================================
+
+class TestZwiftApiPollingLogging:
+    """A zwift_api_polling.py saját logging flag-je és settings parsing-ja."""
+
+    def _silence(self):
+        """A zwift logger némítása a tesztek között."""
+        _zap.log.handlers.clear()
+        _zap.log.addHandler(_logging.NullHandler())
+
+    def _write(self, tmp, data):
+        p = os.path.join(tmp, "zwift_api_settings.json")
+        with open(p, "w", encoding="utf-8") as fh:
+            _json.dump(data, fh)
+        return p
+
+    def test_load_settings_defaults(self):
+        """Hiányzó logging/log_directory → defaultok (True / None)."""
+        self._silence()
+        tmp = tempfile.mkdtemp()
+        try:
+            p = self._write(tmp, {"username": "u"})
+            s = _zap.load_settings(p)
+            assert s["logging"] is True
+            assert s["log_directory"] is None
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_load_settings_logging_false_and_null_string(self):
+        """logging:false + log_directory:'null' string → None."""
+        self._silence()
+        tmp = tempfile.mkdtemp()
+        try:
+            p = self._write(tmp, {"logging": False, "log_directory": "null"})
+            s = _zap.load_settings(p)
+            assert s["logging"] is False
+            assert s["log_directory"] is None
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_load_settings_invalid_logging_type(self):
+        """Rossz logging típus → default True marad."""
+        self._silence()
+        tmp = tempfile.mkdtemp()
+        try:
+            p = self._write(tmp, {"logging": "igen"})
+            s = _zap.load_settings(p)
+            assert s["logging"] is True
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_setup_logging_enabled_creates_file(self):
+        """logging:true → zwift_api_polling.log létrejön + tartalmazza az üzenetet."""
+        tmp = tempfile.mkdtemp()
+        try:
+            _zap._setup_logging(tmp, enabled=True, debug=False)
+            _zap.log.info("ZAP_TEST_SOR")
+            logf = os.path.join(tmp, "zwift_api_polling.log")
+            assert os.path.exists(logf)
+            assert "ZAP_TEST_SOR" in open(logf, encoding="utf-8").read()
+        finally:
+            self._silence()
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_setup_logging_disabled_nullhandler_no_file(self):
+        """logging:false → NullHandler, nincs log fájl."""
+        tmp = tempfile.mkdtemp()
+        try:
+            _zap._setup_logging(tmp, enabled=False)
+            _zap.log.info("NE_LEGYEN")
+            handlers = _zap.log.handlers
+            assert len(handlers) == 1
+            assert isinstance(handlers[0], _logging.NullHandler)
+            assert not os.path.exists(os.path.join(tmp, "zwift_api_polling.log"))
+        finally:
+            self._silence()
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_early_buffer_flush_and_discard(self):
+        """Korai puffer: flush (true) visszajátszik, discard (false) eldob."""
+        # flush
+        tmp = tempfile.mkdtemp()
+        try:
+            _zap._setup_early_logging()
+            _zap.log.warning("KORAI_ZAP")
+            assert not os.path.exists(os.path.join(tmp, "zwift_api_polling.log"))
+            _zap._setup_logging(tmp, enabled=True)
+            _zap._flush_early_logging()
+            logf = os.path.join(tmp, "zwift_api_polling.log")
+            assert "KORAI_ZAP" in open(logf, encoding="utf-8").read()
+        finally:
+            self._silence()
+            shutil.rmtree(tmp, ignore_errors=True)
+        # discard
+        tmp2 = tempfile.mkdtemp()
+        try:
+            _zap._setup_early_logging()
+            _zap.log.warning("ELDOBOTT")
+            _zap._setup_logging(enabled=False)
+            _zap._discard_early_logging()
+            assert _zap._early_mem_handler is None
+            assert not os.path.exists(os.path.join(tmp2, "zwift_api_polling.log"))
+        finally:
+            self._silence()
+            shutil.rmtree(tmp2, ignore_errors=True)
 
 
 # ============================================================
