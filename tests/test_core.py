@@ -570,7 +570,27 @@ class TestGlobalSettingsConfig:
         assert cfg.minimum_samples == 6
         assert cfg.buffer_rate_hz == 4
         assert cfg.dropout_timeout == 5
+        assert cfg.logging is True
         assert cfg.log_directory is None
+
+    # --- logging field tests ---
+    def test_logging_default_true(self):
+        assert GlobalSettingsConfig().logging is True
+
+    def test_from_dict_logging_false(self):
+        cfg = GlobalSettingsConfig.from_dict({"logging": False})
+        assert cfg.logging is False
+
+    def test_from_dict_logging_true(self):
+        cfg = GlobalSettingsConfig.from_dict({"logging": True})
+        assert cfg.logging is True
+
+    def test_from_dict_logging_invalid_type(self):
+        """logging: rossz típus (nem bool) → default (True) marad."""
+        cfg = GlobalSettingsConfig.from_dict({"logging": "yes"})
+        assert cfg.logging is True
+        cfg = GlobalSettingsConfig.from_dict({"logging": 1})
+        assert cfg.logging is True
 
     def test_from_dict(self):
         cfg = GlobalSettingsConfig.from_dict({

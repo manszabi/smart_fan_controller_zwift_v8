@@ -225,9 +225,11 @@ def _resolve_log_dir(log_directory: Optional[str]) -> str:
 
 # Modul-szintű változó: a feloldott log könyvtár (_setup_logging állítja be)
 _log_dir: str = os.path.dirname(os.path.abspath(__file__))
+# Modul-szintű flag: a loggolás engedélyezve van-e (global_settings.logging)
+_logging_enabled: bool = True
 
 
-def _setup_logging(log_directory: Optional[str] = None) -> None:
+def _setup_logging(log_directory: Optional[str] = None, logging_enabled: bool = True) -> None:
     """Logging konfiguráció: konzol + rotált fájl (500 KB max).
 
     Két logger:
@@ -238,14 +240,32 @@ def _setup_logging(log_directory: Optional[str] = None) -> None:
     A log fájlok a ``log_directory``-ba kerülnek (ha érvényes), különben
     a program indítási könyvtárába.
 
+    Ha ``logging_enabled`` False, mindkét logger NullHandler-t kap (teljes
+    némaság – se fájl, se konzol). A program-indítási összefoglaló ettől
+    függetlenül megjelenik (``print_startup_info`` print()-re vált).
+
     Többszöri hívás biztonságos: a korábbi handler-eket eltávolítja.
 
     Args:
         log_directory: Log fájlok könyvtára (None = alapértelmezett).
+        logging_enabled: Ha False, minden loggolás kikapcsol.
     """
     from logging.handlers import RotatingFileHandler
 
-    global _log_dir
+    global _log_dir, _logging_enabled
+    _logging_enabled = logging_enabled
+
+    # Loggolás kikapcsolva → mindkét logger elnémítása NullHandler-rel
+    if not logging_enabled:
+        for name in ("user", "swift_fan_controller_new"):
+            lg = logging.getLogger(name)
+            lg.handlers.clear()
+            lg.addHandler(logging.NullHandler())
+            lg.propagate = False
+        logging.getLogger("bleak").setLevel(logging.CRITICAL)
+        logging.getLogger("openant").setLevel(logging.CRITICAL)
+        return
+
     _log_dir = _resolve_log_dir(log_directory)
     log_file = os.path.join(_log_dir, "smart_fan_controller.log")
 
@@ -3190,7 +3210,14 @@ class FanController:
             logger.error(f"Váratlan hiba {script_name}.py indításakor: {exc}")
 
     def print_startup_info(self) -> None:
-        """Kiírja az indítási konfigurációs összefoglalót."""
+        """Kiírja az indítási konfigurációs összefoglalót.
+
+        Ha a loggolás ki van kapcsolva (``global_settings.logging`` false),
+        ``print()``-tel ír, hogy a startup info akkor is megjelenjen.
+        """
+        # Loggolás kikapcsolva → print(); egyébként user_logger.info
+        emit = user_logger.info if _logging_enabled else print
+
         s = self.settings
         ds: DatasourceConfig = s["datasource"]
         hrz: HeartRateZonesConfig = s["heart_rate_zones"]
@@ -3200,11 +3227,11 @@ class FanController:
 
         zone_mode = get_effective_zone_mode(s)
 
-        user_logger.info("-" * 60)
-        user_logger.info(f"  Smart Fan Controller v{__version__}  |  Power+HR → BLE Fan")
-        user_logger.info("-" * 60)
+        emit("-" * 60)
+        emit(f"  Smart Fan Controller v{__version__}  |  Power+HR → BLE Fan")
+        emit("-" * 60)
         zt = s["power_zones"]
-        user_logger.info(f"FTP: {zt.ftp}W | Érvényes tartomány: 0–{zt.max_watt}W")
+        emit(f"FTP: {zt.ftp}W | Érvényes tartomány: 0–{zt.max_watt}W")
 
         power_zones = calculate_power_zones(
             zt.ftp,
@@ -3213,10 +3240,10 @@ class FanController:
             zt.z1_max_percent,
             zt.z2_max_percent,
         )
-        user_logger.info(f"Zóna határok: {power_zones}")
+        emit(f"Zóna határok: {power_zones}")
 
         if ds.power_source is not None:
-            user_logger.info(
+            emit(
                 f"💪 Power buffer ({ds.power_source.upper()}): "
                 f"{power_buf['buffer_seconds']}s | "
                 f"minta: {power_buf['minimum_samples']} | "
@@ -3224,9 +3251,9 @@ class FanController:
                 f"dropout: {power_buf['dropout_timeout']}s"
             )
         else:
-            user_logger.info("💪 Power forrás: KIKAPCSOLVA (null)")
+            emit("💪 Power forrás: KIKAPCSOLVA (null)")
         if ds.hr_source is not None:
-            user_logger.info(
+            emit(
                 f"❤️  HR buffer    ({ds.hr_source.upper()}): "
                 f"{hr_buf['buffer_seconds']}s | "
                 f"minta: {hr_buf['minimum_samples']} | "
@@ -3234,29 +3261,29 @@ class FanController:
                 f"dropout: {hr_buf['dropout_timeout']}s"
             )
         else:
-            user_logger.info("❤️  HR forrás:    KIKAPCSOLVA (null)")
+            emit("❤️  HR forrás:    KIKAPCSOLVA (null)")
 
-        user_logger.info(
+        emit(
             f"Cooldown: {s['global_settings'].cooldown_seconds}s  |  "
             f"0W azonnali: {'Igen' if s['power_zones'].zero_power_immediate else 'Nem'}  |  "
             f"0HR azonnali: {'Igen' if hrz.zero_hr_immediate else 'Nem'}"
         )
         ble_cfg: BleConfig = s["ble"]
         if ble_cfg.device_name:
-            user_logger.info(f"BLE Fan: {ble_cfg.device_name}")
+            emit(f"BLE Fan: {ble_cfg.device_name}")
         else:
-            user_logger.info("BLE Fan: (auto-discovery – service UUID alapján)")
+            emit("BLE Fan: (auto-discovery – service UUID alapján)")
         if ble_cfg.pin_code:
-            user_logger.info(f"BLE PIN: {'*' * len(ble_cfg.pin_code)}")
+            emit(f"BLE PIN: {'*' * len(ble_cfg.pin_code)}")
 
         # BLE szenzor auto-discovery jelzés
         if ds.power_source == DataSource.BLE and not ds.ble_power_device_name:
-            user_logger.info("BLE Power: (auto-discovery – Cycling Power Service)")
+            emit("BLE Power: (auto-discovery – Cycling Power Service)")
         if ds.hr_source == DataSource.BLE and not ds.ble_hr_device_name:
-            user_logger.info("BLE HR: (auto-discovery – Heart Rate Service)")
+            emit("BLE HR: (auto-discovery – Heart Rate Service)")
 
-        user_logger.info(f"Zónamód: {zone_mode}")
-        user_logger.info("-" * 60)
+        emit(f"Zónamód: {zone_mode}")
+        emit("-" * 60)
 
     async def run(self) -> None:
         """A vezérlő fő asyncio korrutinja – elindít mindent és vár."""
@@ -4908,10 +4935,13 @@ def main() -> None:
         _settings_path = os.path.join(_script_dir, "settings.json")
     controller = FanController(_settings_path)
 
-    # Logging újrakonfigurálása a betöltött log_directory alapján
-    log_dir_setting = controller.settings["global_settings"].log_directory
-    if log_dir_setting:
-        _setup_logging(log_dir_setting)
+    # Logging újrakonfigurálása a betöltött beállítások alapján
+    _gs = controller.settings["global_settings"]
+    if not _gs.logging:
+        # Loggolás kikapcsolva → teljes némaság (csak a startup info marad)
+        _setup_logging(_gs.log_directory, logging_enabled=False)
+    elif _gs.log_directory:
+        _setup_logging(_gs.log_directory)
 
     controller.print_startup_info()
 

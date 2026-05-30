@@ -60,6 +60,7 @@ A program kétféleképpen reagál a hibákra, attól függően, hogy **érték-
 | `minimum_samples` | int | 1–600 | 6 | Minimum minta érvényes átlaghoz (fallback). |
 | `buffer_rate_hz` | int | 1–60 | 4 | Várt mintavételi frekvencia Hz-ben (fallback). |
 | `dropout_timeout` | int | 1–120 | 5 | Adatforrás kiesés timeout másodpercben (fallback). |
+| `logging` | bool | – | true | Globális loggolás be/ki. Ha `false`, nincs sem fájl-, sem konzol-loggolás (teljes némaság) – csak az indítási összefoglaló jelenik meg. |
 | `log_directory` | string\|null | – | null | Log fájlok könyvtára. `null` = a program könyvtára. Fájlok: `smart_fan_controller.log`, `ble_devices.log`, `ant_devices.log`. Ha a megadott könyvtár nem létezik vagy nem írható, automatikusan a program könyvtárát használja. |
 
 ### Validációs viselkedés
