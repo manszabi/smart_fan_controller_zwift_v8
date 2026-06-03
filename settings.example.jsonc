@@ -12,7 +12,7 @@
     "buffer_seconds": 3,         // Gördülő átlag ablak mérete (1–60 mp)
     "minimum_samples": 6,        // Minimum minta érvényes átlaghoz (1–600)
     "buffer_rate_hz": 4,         // Várt mintavételi frekvencia Hz-ben (1–60)
-    "dropout_timeout": 5,        // Adatforrás kiesés timeout (1–120 mp)
+    "dropout_timeout": 5,        // Adatforrás kiesés timeout (1–300 mp)
 
     // Globális loggolás be/ki. Ha false, NEM ír log fájlt és nincs konzol
     // kimenet sem (teljes némaság) – csak az indítási összefoglaló jelenik meg.
