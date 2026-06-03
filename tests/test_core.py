@@ -1048,6 +1048,16 @@ class TestDatasourceConfig:
         cfg = DatasourceConfig.from_dict({"power_source": "banana"})
         assert cfg.power_source == DataSource.ZWIFTUDP  # default
 
+    @pytest.mark.parametrize("key", ["power_source", "hr_source"])
+    @pytest.mark.parametrize("bad", ["banana", 5, "", True])
+    def test_from_dict_invalid_source_warns(self, key, bad, caplog):
+        """Érvénytelen power/hr forrás → figyelmeztetés + default marad."""
+        import logging
+        with caplog.at_level(logging.WARNING, logger="user"):
+            cfg = DatasourceConfig.from_dict({key: bad})
+        assert getattr(cfg, key) == DataSource.ZWIFTUDP
+        assert any(key in r.message for r in caplog.records)
+
     def test_post_init_min_samples_capped(self):
         """minimum_samples > buffer*rate → korrigálva."""
         cfg = DatasourceConfig(
@@ -1096,6 +1106,47 @@ class TestDatasourceConfig:
             cfg = DatasourceConfig.from_dict({"ble_power_device_name": 123})
         assert cfg.ble_power_device_name is None
         assert any("ble_power_device_name" in r.message for r in caplog.records)
+
+    @pytest.mark.parametrize("bad", ["", "   ", 5, None, True])
+    def test_from_dict_zwift_udp_host_invalid_warns(self, bad, caplog):
+        """zwift_udp_host üres/rossz típus → figyelmeztetés + default marad."""
+        import logging
+        with caplog.at_level(logging.WARNING, logger="user"):
+            cfg = DatasourceConfig.from_dict({"zwift_udp_host": bad})
+        assert cfg.zwift_udp_host == "127.0.0.1"
+        assert any("zwift_udp_host" in r.message for r in caplog.records)
+
+    def test_from_dict_zwift_udp_host_stripped(self):
+        """zwift_udp_host körüli whitespace levágva."""
+        cfg = DatasourceConfig.from_dict({"zwift_udp_host": "  10.0.0.5  "})
+        assert cfg.zwift_udp_host == "10.0.0.5"
+
+    @pytest.mark.parametrize("bad", ["yes", 1, 0, None, "true"])
+    def test_from_dict_zwift_auto_launch_invalid_warns(self, bad, caplog):
+        """zwift_auto_launch nem-bool → figyelmeztetés + default marad."""
+        import logging
+        with caplog.at_level(logging.WARNING, logger="user"):
+            cfg = DatasourceConfig.from_dict({"zwift_auto_launch": bad})
+        assert cfg.zwift_auto_launch is True
+        assert any("zwift_auto_launch" in r.message for r in caplog.records)
+
+    @pytest.mark.parametrize("val", [None, "", "   "])
+    def test_from_dict_zwift_launcher_path_none_like(self, val):
+        """null/""/whitespace → None (automatikus keresés)."""
+        cfg = DatasourceConfig.from_dict({"zwift_launcher_path": val})
+        assert cfg.zwift_launcher_path is None
+
+    def test_from_dict_zwift_launcher_path_valid(self):
+        cfg = DatasourceConfig.from_dict({"zwift_launcher_path": "  C:/Zwift/ZwiftLauncher.exe  "})
+        assert cfg.zwift_launcher_path == "C:/Zwift/ZwiftLauncher.exe"
+
+    def test_from_dict_zwift_launcher_path_wrong_type_warns(self, caplog):
+        """zwift_launcher_path rossz típus → figyelmeztetés + default None."""
+        import logging
+        with caplog.at_level(logging.WARNING, logger="user"):
+            cfg = DatasourceConfig.from_dict({"zwift_launcher_path": 5})
+        assert cfg.zwift_launcher_path is None
+        assert any("zwift_launcher_path" in r.message for r in caplog.records)
 
 
 # ============================================================

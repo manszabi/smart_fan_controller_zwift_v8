@@ -280,7 +280,7 @@ A `logging` és `log_directory` ugyanúgy viselkedik, mint a fő app `global_set
 | Mező | Típus | Értékek | Alapértelmezett | Leírás |
 |------|-------|---------|-----------------|--------|
 | `zwift_auto_launch` | bool | true/false | true | Ha true, a program automatikusan elindítja a Zwift-et ha az nem fut. |
-| `zwift_launcher_path` | string/null | – | null | ZwiftLauncher.exe egyedi útvonala. `null` → automatikus keresés (Registry + ismert útvonalak). |
+| `zwift_launcher_path` | string/null | – | null | ZwiftLauncher.exe egyedi útvonala. `null` vagy `""` → automatikus keresés (Registry + ismert útvonalak). |
 
 **Működés:** ha a `ZwiftApp.exe` nem fut és `zwift_auto_launch` értéke `true`:
 
