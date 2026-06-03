@@ -908,6 +908,19 @@ class TestHeartRateZonesConfig:
         assert cfg.enabled is False
         assert cfg.zero_hr_immediate is True
 
+    @pytest.mark.parametrize("field,bad", [
+        ("enabled", 1), ("enabled", "true"), ("enabled", None),
+        ("zero_hr_immediate", 0), ("zero_hr_immediate", "false"), ("zero_hr_immediate", []),
+    ])
+    def test_from_dict_bool_fields_invalid(self, field, bad, caplog):
+        """Bool mezők hibás értékei (szám/string/null) → figyelmeztetés + default."""
+        import logging
+        with caplog.at_level(logging.WARNING, logger="user"):
+            cfg = HeartRateZonesConfig.from_dict({field: bad})
+        assert cfg.enabled is True  # enabled default True
+        assert cfg.zero_hr_immediate is False  # zero_hr_immediate default False
+        assert any(field in r.message for r in caplog.records)
+
     def test_from_dict_float_integer_accepted(self):
         """Float int fields: 190.0 (egész float) → konvertálva."""
         cfg = HeartRateZonesConfig.from_dict({"max_hr": 190.0})
