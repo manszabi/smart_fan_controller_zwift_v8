@@ -177,7 +177,7 @@ Az ESP32 BLE vezérlőhöz való csatlakozás beállításai. A program `LEVEL:N
 
 | Mező | Típus | Tartomány | Alapértelmezett | Leírás |
 |------|-------|-----------|-----------------|--------|
-| `device_name` | string/null | – | null | BLE eszköz neve. `null` vagy `""` → auto-discovery. |
+| `device_name` | string/null | – | null | BLE eszköz neve. `null`, `""`, `"null"` vagy `"none"` → auto-discovery. |
 | `scan_timeout` | int | 1–60 | 10 | BLE keresés timeout (mp). |
 | `connection_timeout` | int | 1–60 | 15 | Csatlakozási timeout (mp). |
 | `reconnect_interval` | int | 1–60 | 5 | Újracsatlakozás várakozási ideje (mp). |
@@ -187,7 +187,7 @@ Az ESP32 BLE vezérlőhöz való csatlakozás beállításai. A program `LEVEL:N
 | `characteristic_uuid` | string | – | `0000ffe1-...` | BLE characteristic UUID. |
 | `pin_code` | int/string/null | – | `"123456"` | Alkalmazás szintű PIN. `null` → nincs auth. |
 
-**Auto-discovery:** ha `device_name` `null` vagy üres, a program automatikusan megkeresi a `service_uuid`-t hirdető eszközt. A talált eszközök a `ble_devices.log` fájlba kerülnek.
+**Auto-discovery:** ha `device_name` `null`, üres, `"null"` vagy `"none"` (kis-nagybetű érzéketlen), a program automatikusan megkeresi a `service_uuid`-t hirdető eszközt. A talált eszközök a `ble_devices.log` fájlba kerülnek.
 
 **PIN kód:** megadható int-ként (`123456`) vagy string-ként (`"012345"` ha vezető nulla szükséges). Max 20 karakter. Az ESP32 firmware alapértelmezett PIN-je `123456` – ha módosítod az `esp32_fan_controller.ino`-ban (`BLE_AUTH_PIN`), itt is frissítsd.
 
@@ -235,11 +235,11 @@ Minden forrásnak saját buffer paraméterei vannak. Ha nincs megadva, a globál
 
 | Mező | Típus | Tartomány | Alapértelmezett | Leírás |
 |------|-------|-----------|-----------------|--------|
-| `ble_power_device_name` | string/null | – | null | BLE power meter neve. `null` → auto-discovery. |
+| `ble_power_device_name` | string/null | – | null | BLE power meter neve. `null`/`""`/`"null"`/`"none"` → auto-discovery. |
 | `ble_power_scan_timeout` | int | 1–60 | 10 | Keresés timeout (mp). |
 | `ble_power_reconnect_interval` | int | 1–60 | 5 | Újracsatlakozás várakozás (mp). |
 | `ble_power_max_retries` | int | 1–100 | 10 | Max újrapróba. |
-| `ble_hr_device_name` | string/null | – | null | BLE HR monitor neve. `null` → auto-discovery. |
+| `ble_hr_device_name` | string/null | – | null | BLE HR monitor neve. `null`/`""`/`"null"`/`"none"` → auto-discovery. |
 | `ble_hr_scan_timeout` | int | 1–60 | 10 | Keresés timeout (mp). |
 | `ble_hr_reconnect_interval` | int | 1–60 | 5 | Újracsatlakozás várakozás (mp). |
 | `ble_hr_max_retries` | int | 1–100 | 10 | Max újrapróba. |

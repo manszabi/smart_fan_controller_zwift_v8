@@ -379,16 +379,9 @@ class BleConfig:
         d = cls()
         kwargs: dict[str, Any] = dataclasses.asdict(d)
 
-        # device_name: null vagy "" → auto-discovery (csendes, nem hiba);
+        # device_name: null / "" / "null" / "none" → auto-discovery (csendes);
         # nem-üres string → használt név; bármi más típus → figyelmeztetés.
-        if "device_name" in raw:
-            dn = raw["device_name"]
-            if dn is None or (isinstance(dn, str) and not dn.strip()):
-                kwargs["device_name"] = None
-            elif isinstance(dn, str):
-                kwargs["device_name"] = dn.strip()
-            else:
-                user_logger.warning(f"⚠ Érvénytelen 'device_name' érték: {dn!r} (string vagy null kell)")
+        _from_dict_device_name(raw, kwargs, "device_name")
 
         # Int fields with ranges
         _from_dict_int(raw, kwargs, "scan_timeout", 1, 60)
@@ -504,10 +497,10 @@ class DatasourceConfig:
         for key in ("ant_power_max_retries", "ant_hr_max_retries"):
             _from_dict_int(raw, kwargs, key, 1, 100)
 
-        # BLE sensor device names
+        # BLE sensor device names: null/""/"null"/"none" → auto-discovery (csendes);
+        # nem-üres string → trimmed név; rossz típus → figyelmeztetés.
         for key in ("ble_power_device_name", "ble_hr_device_name"):
-            if key in raw and (raw[key] is None or isinstance(raw[key], str)):
-                kwargs[key] = raw[key]
+            _from_dict_device_name(raw, kwargs, key)
         for key in ("ble_power_scan_timeout", "ble_power_reconnect_interval",
                      "ble_hr_scan_timeout", "ble_hr_reconnect_interval"):
             _from_dict_int(raw, kwargs, key, 1, 60)
@@ -603,6 +596,25 @@ def _from_dict_int(src: dict[str, Any], dst: dict[str, Any], key: str, lo: int, 
         dst[key] = int(v)
     else:
         user_logger.warning(f"⚠ Érvénytelen '{key}' érték: {v} ({lo}–{hi} közötti egész kell)")
+
+
+def _from_dict_device_name(src: dict[str, Any], dst: dict[str, Any], key: str) -> None:
+    """Helper: BLE eszköznév normalizálás.
+
+    null / "" / "null" / "none" (kis-nagybetű érzéketlen) → None (auto-discovery),
+    csendben. Egyéb nem-üres string → trimmed érték. Rossz típus → figyelmeztetés,
+    a default (None) marad.
+    """
+    if key not in src:
+        return
+    v = src[key]
+    if v is None:
+        dst[key] = None
+    elif isinstance(v, str):
+        s = v.strip()
+        dst[key] = None if (not s or s.lower() in ("null", "none")) else s
+    else:
+        user_logger.warning(f"⚠ Érvénytelen '{key}' érték: {v!r} (string vagy null kell)")
 
 
 # ============================================================
