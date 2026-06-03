@@ -955,6 +955,15 @@ class TestBleConfig:
         cfg = BleConfig.from_dict({"device_name": "  "})
         assert cfg.device_name is None
 
+    @pytest.mark.parametrize("val", ["null", "NULL", "  null  ", "none", "None", "NONE"])
+    def test_from_dict_device_name_null_string(self, val, caplog):
+        """"null"/"none" string (kis-nagybetű érzéketlen) → None, csendben."""
+        import logging
+        with caplog.at_level(logging.WARNING, logger="user"):
+            cfg = BleConfig.from_dict({"device_name": val})
+        assert cfg.device_name is None
+        assert not any("device_name" in r.message for r in caplog.records)
+
     def test_from_dict_pin_code_int(self):
         """Int pin_code → string-re konvertálva."""
         cfg = BleConfig.from_dict({"pin_code": 123456})
@@ -986,6 +995,31 @@ class TestBleConfig:
         """Float int fields: 30.5 (törtrész) → default marad."""
         cfg = BleConfig.from_dict({"scan_timeout": 30.5})
         assert cfg.scan_timeout == 10
+
+    @pytest.mark.parametrize("bad", [123, 1.5, [], {"x": 1}, True])
+    def test_from_dict_device_name_wrong_type_warns(self, bad, caplog):
+        """device_name rossz típus (nem string/null) → figyelmeztetés + default None."""
+        import logging
+        with caplog.at_level(logging.WARNING, logger="user"):
+            cfg = BleConfig.from_dict({"device_name": bad})
+        assert cfg.device_name is None
+        assert any("device_name" in r.message for r in caplog.records)
+
+    @pytest.mark.parametrize("key", ["service_uuid", "characteristic_uuid"])
+    @pytest.mark.parametrize("bad", ["", "   ", None, 123, []])
+    def test_from_dict_uuid_invalid_warns(self, key, bad, caplog):
+        """UUID üres/rossz típus → figyelmeztetés + default marad."""
+        import logging
+        default = getattr(BleConfig(), key)
+        with caplog.at_level(logging.WARNING, logger="user"):
+            cfg = BleConfig.from_dict({key: bad})
+        assert getattr(cfg, key) == default
+        assert any(key in r.message for r in caplog.records)
+
+    def test_from_dict_uuid_stripped(self):
+        """UUID körüli whitespace levágva."""
+        cfg = BleConfig.from_dict({"service_uuid": "  abcd-1234  "})
+        assert cfg.service_uuid == "abcd-1234"
 
 
 # ============================================================
@@ -1040,6 +1074,28 @@ class TestDatasourceConfig:
         })
         assert cfg.ant_power_device_id == 12345
         assert cfg.ant_hr_device_id == 54321
+
+    def test_from_dict_ble_device_names(self):
+        cfg = DatasourceConfig.from_dict({
+            "ble_power_device_name": "  PowerMeter  ",
+            "ble_hr_device_name": "HRStrap",
+        })
+        assert cfg.ble_power_device_name == "PowerMeter"  # trimmed
+        assert cfg.ble_hr_device_name == "HRStrap"
+
+    @pytest.mark.parametrize("val", [None, "", "  ", "null", "NONE"])
+    def test_from_dict_ble_device_name_null_like(self, val):
+        """null/""/"null"/"none" → None (auto-discovery)."""
+        cfg = DatasourceConfig.from_dict({"ble_power_device_name": val})
+        assert cfg.ble_power_device_name is None
+
+    def test_from_dict_ble_device_name_wrong_type_warns(self, caplog):
+        """Rossz típus → figyelmeztetés + default None."""
+        import logging
+        with caplog.at_level(logging.WARNING, logger="user"):
+            cfg = DatasourceConfig.from_dict({"ble_power_device_name": 123})
+        assert cfg.ble_power_device_name is None
+        assert any("ble_power_device_name" in r.message for r in caplog.records)
 
 
 # ============================================================

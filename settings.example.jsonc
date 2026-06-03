@@ -77,7 +77,8 @@
   // BLE VENTILÁTOR KIMENET (ESP32 vezérlő)
   // ============================================================
   "ble": {
-    // Az ESP32 BLE eszköz neve. null vagy "" → auto-discovery (service UUID alapján).
+    // Az ESP32 BLE eszköz neve. null, "", "null" vagy "none" → auto-discovery
+    // (service UUID alapján). Bármely más string → konkrét eszköznév.
     "device_name": null,
     "scan_timeout": 10,            // BLE keresés timeout (1–60 mp)
     "connection_timeout": 15,      // Csatlakozási timeout (1–60 mp)
@@ -129,7 +130,7 @@
     "ant_hr_max_retries": 10,
 
     // --- BLE szenzor bemeneti beállítások ---
-    // device_name: null vagy "" → auto-discovery (service UUID alapján).
+    // device_name: null, "", "null" vagy "none" → auto-discovery (service UUID alapján).
     // A talált eszközök a ble_devices.log fájlba kerülnek.
     "ble_power_device_name": null,
     "ble_power_scan_timeout": 10,        // BLE keresés timeout (1–60 mp)
