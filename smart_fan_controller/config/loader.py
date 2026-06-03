@@ -99,8 +99,17 @@ def load_settings(settings_file: str = "settings.json") -> Dict[str, Any]:
         settings["power_zones"] = PowerZonesConfig.from_dict(loaded["power_zones"])
     if isinstance(loaded.get("heart_rate_zones"), dict):
         settings["heart_rate_zones"] = HeartRateZonesConfig.from_dict(loaded["heart_rate_zones"])
-    if isinstance(loaded.get("ble"), dict):
-        settings["ble"] = BleConfig.from_dict(loaded["ble"])
+    # "ble_fan": a BLE ventilátor kimenet szekciója. Visszafelé kompatibilitás:
+    # ha "ble_fan" hiányzik, de a régi "ble" kulcs jelen van, azt használjuk
+    # (deprecation figyelmeztetéssel) – így a régi settings.json-ok tovább működnek.
+    if isinstance(loaded.get("ble_fan"), dict):
+        settings["ble_fan"] = BleConfig.from_dict(loaded["ble_fan"])
+    elif isinstance(loaded.get("ble"), dict):
+        user_logger.warning(
+            "⚠ A 'ble' szekció elavult – nevezd át 'ble_fan'-ra a settings.json-ban. "
+            "Most még a régi 'ble' kulcsot használom."
+        )
+        settings["ble_fan"] = BleConfig.from_dict(loaded["ble"])
     if isinstance(loaded.get("datasource"), dict):
         settings["datasource"] = DatasourceConfig.from_dict(loaded["datasource"])
     if isinstance(loaded.get("hud"), dict):

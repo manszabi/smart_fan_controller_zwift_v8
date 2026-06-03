@@ -1228,7 +1228,7 @@ class BLEFanOutputController:
     DISCONNECT_TIMEOUT = 5.0
 
     def __init__(self, settings: Dict[str, Any]) -> None:
-        ble: BleConfig = settings["ble"]
+        ble: BleConfig = settings["ble_fan"]
         self.device_name: Optional[str] = ble.device_name
         self.scan_timeout: int = ble.scan_timeout
         self.connection_timeout: int = ble.connection_timeout
@@ -3325,7 +3325,7 @@ class FanController:
             f"0W azonnali: {'Igen' if s['power_zones'].zero_power_immediate else 'Nem'}  |  "
             f"0HR azonnali: {'Igen' if hrz.zero_hr_immediate else 'Nem'}"
         )
-        ble_cfg: BleConfig = s["ble"]
+        ble_cfg: BleConfig = s["ble_fan"]
         if ble_cfg.device_name:
             emit(f"BLE Fan: {ble_cfg.device_name}")
         else:

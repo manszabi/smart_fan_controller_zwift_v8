@@ -1803,12 +1803,12 @@ class TestMalformedJsonFallback:
         """Lezáratlan idézőjel → teljes default."""
         loader = self._import_loader()
         target = tmp_path / "settings.json"
-        target.write_text('{"ble": {"device_name": "Ventilator}}', encoding="utf-8")
+        target.write_text('{"ble_fan": {"device_name": "Ventilator}}', encoding="utf-8")
 
         settings = loader.load_settings(str(target))
 
         assert settings["power_zones"].ftp == 200
-        assert settings["ble"].device_name is None
+        assert settings["ble_fan"].device_name is None
 
     def test_not_json_at_all_full_default(self, tmp_path):
         """Egyáltalán nem JSON (sima szöveg) → teljes default."""
@@ -1880,7 +1880,7 @@ class TestMalformedJsonFallback:
         broken = (
             '{\n  "power_zones": {"ftp": 285, "max_watt": 950},\n'
             '  "heart_rate_zones": {"max_hr": 192}\n'  # ← hiányzó vessző
-            '  "ble": {"device_name": "MyFan"}\n}'
+            '  "ble_fan": {"device_name": "MyFan"}\n}'
         )
         target.write_text(broken, encoding="utf-8")
 
@@ -1916,6 +1916,48 @@ class TestMalformedJsonFallback:
 
         backup = tmp_path / "settings.json.incorrect"
         assert not backup.exists(), "Érvényes JSON esetén nem kell biztonsági másolat"
+
+
+# ============================================================
+# "ble" → "ble_fan" szekció átnevezés + visszafelé kompatibilitás
+# ============================================================
+
+class TestBleFanSectionRename:
+    """A fan kimenet szekció kulcsa "ble_fan"; a régi "ble" deprecated, de működik."""
+
+    def _import_loader(self):
+        from smart_fan_controller.config import loader
+        return loader
+
+    def test_new_ble_fan_key_loaded(self, tmp_path):
+        """Az új "ble_fan" kulcs betöltődik."""
+        loader = self._import_loader()
+        target = tmp_path / "settings.json"
+        target.write_text('{"ble_fan": {"device_name": "MyFan"}}', encoding="utf-8")
+        settings = loader.load_settings(str(target))
+        assert settings["ble_fan"].device_name == "MyFan"
+
+    def test_legacy_ble_key_still_works(self, tmp_path, caplog):
+        """A régi "ble" kulcs még betöltődik – deprecation figyelmeztetéssel."""
+        import logging
+        loader = self._import_loader()
+        target = tmp_path / "settings.json"
+        target.write_text('{"ble": {"device_name": "OldFan"}}', encoding="utf-8")
+        with caplog.at_level(logging.WARNING, logger="user"):
+            settings = loader.load_settings(str(target))
+        assert settings["ble_fan"].device_name == "OldFan"
+        assert any("ble_fan" in r.message for r in caplog.records)
+
+    def test_ble_fan_takes_precedence_over_legacy(self, tmp_path):
+        """Ha mindkét kulcs jelen van, az új "ble_fan" nyer."""
+        loader = self._import_loader()
+        target = tmp_path / "settings.json"
+        target.write_text(
+            '{"ble": {"device_name": "OldFan"}, "ble_fan": {"device_name": "NewFan"}}',
+            encoding="utf-8",
+        )
+        settings = loader.load_settings(str(target))
+        assert settings["ble_fan"].device_name == "NewFan"
 
 
 # ============================================================
