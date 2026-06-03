@@ -1702,6 +1702,38 @@ class TestEnums:
 
 
 # ============================================================
+# Core csomag (tiszta domain-logika) közvetlen importja
+# ============================================================
+
+class TestCorePackage:
+    """A smart_fan_controller.core csomag önálló, PySide6/BLE nélkül használható."""
+
+    def test_zones_direct_import(self):
+        from smart_fan_controller.core import (
+            calculate_power_zones, zone_for_power, apply_zone_mode,
+        )
+        zones = calculate_power_zones(ftp=200, min_watt=0, max_watt=1000, z1_pct=60, z2_pct=89)
+        assert zone_for_power(0, zones) == 0
+        assert zone_for_power(300, zones) == 3
+        assert apply_zone_mode(2, 1, ZoneMode.HIGHER_WINS) == 2
+
+    def test_averaging_direct_import(self):
+        from smart_fan_controller.core import compute_average, PowerAverager
+        from collections import deque
+        assert compute_average(deque([2.0, 4.0])) == 3.0
+        avg = PowerAverager(buffer_seconds=1, minimum_samples=1, buffer_rate_hz=4)
+        assert avg.add_sample(100.0) == 100.0
+
+    def test_main_module_reexports_core_objects(self):
+        """A fő modul ugyanazokat az objektumokat exportálja, mint a core (identitás)."""
+        import swift_fan_controller_new_v8_PySide6 as app
+        from smart_fan_controller import core
+        assert app.calculate_power_zones is core.calculate_power_zones
+        assert app.PowerAverager is core.PowerAverager
+        assert app.compute_average is core.compute_average
+
+
+# ============================================================
 # Headless import (PySide6 nélkül)
 # ============================================================
 
