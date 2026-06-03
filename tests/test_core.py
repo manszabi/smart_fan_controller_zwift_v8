@@ -987,6 +987,31 @@ class TestBleConfig:
         cfg = BleConfig.from_dict({"scan_timeout": 30.5})
         assert cfg.scan_timeout == 10
 
+    @pytest.mark.parametrize("bad", [123, 1.5, [], {"x": 1}, True])
+    def test_from_dict_device_name_wrong_type_warns(self, bad, caplog):
+        """device_name rossz típus (nem string/null) → figyelmeztetés + default None."""
+        import logging
+        with caplog.at_level(logging.WARNING, logger="user"):
+            cfg = BleConfig.from_dict({"device_name": bad})
+        assert cfg.device_name is None
+        assert any("device_name" in r.message for r in caplog.records)
+
+    @pytest.mark.parametrize("key", ["service_uuid", "characteristic_uuid"])
+    @pytest.mark.parametrize("bad", ["", "   ", None, 123, []])
+    def test_from_dict_uuid_invalid_warns(self, key, bad, caplog):
+        """UUID üres/rossz típus → figyelmeztetés + default marad."""
+        import logging
+        default = getattr(BleConfig(), key)
+        with caplog.at_level(logging.WARNING, logger="user"):
+            cfg = BleConfig.from_dict({key: bad})
+        assert getattr(cfg, key) == default
+        assert any(key in r.message for r in caplog.records)
+
+    def test_from_dict_uuid_stripped(self):
+        """UUID körüli whitespace levágva."""
+        cfg = BleConfig.from_dict({"service_uuid": "  abcd-1234  "})
+        assert cfg.service_uuid == "abcd-1234"
+
 
 # ============================================================
 # DatasourceConfig dataclass

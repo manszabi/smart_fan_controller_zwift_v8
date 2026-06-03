@@ -379,13 +379,16 @@ class BleConfig:
         d = cls()
         kwargs: dict[str, Any] = dataclasses.asdict(d)
 
-        # device_name
+        # device_name: null vagy "" → auto-discovery (csendes, nem hiba);
+        # nem-üres string → használt név; bármi más típus → figyelmeztetés.
         if "device_name" in raw:
             dn = raw["device_name"]
             if dn is None or (isinstance(dn, str) and not dn.strip()):
                 kwargs["device_name"] = None
-            elif isinstance(dn, str) and dn.strip():
+            elif isinstance(dn, str):
                 kwargs["device_name"] = dn.strip()
+            else:
+                user_logger.warning(f"⚠ Érvénytelen 'device_name' érték: {dn!r} (string vagy null kell)")
 
         # Int fields with ranges
         _from_dict_int(raw, kwargs, "scan_timeout", 1, 60)
@@ -394,10 +397,14 @@ class BleConfig:
         _from_dict_int(raw, kwargs, "max_retries", 1, 100)
         _from_dict_int(raw, kwargs, "command_timeout", 1, 30)
 
-        if isinstance(raw.get("service_uuid"), str) and raw["service_uuid"]:
-            kwargs["service_uuid"] = raw["service_uuid"]
-        if isinstance(raw.get("characteristic_uuid"), str) and raw["characteristic_uuid"]:
-            kwargs["characteristic_uuid"] = raw["characteristic_uuid"]
+        # UUID-k: nem-üres string kell, különben figyelmeztetés + default marad.
+        for uuid_key in ("service_uuid", "characteristic_uuid"):
+            if uuid_key in raw:
+                v = raw[uuid_key]
+                if isinstance(v, str) and v.strip():
+                    kwargs[uuid_key] = v.strip()
+                else:
+                    user_logger.warning(f"⚠ Érvénytelen '{uuid_key}' érték: {v!r} (nem-üres string kell)")
 
         # pin_code
         if "pin_code" in raw:
