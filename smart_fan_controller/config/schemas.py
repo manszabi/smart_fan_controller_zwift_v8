@@ -347,8 +347,15 @@ class HeartRateZonesConfig:
                     user_logger.warning(f"⚠ Érvénytelen '{key}' érték: {v} (true/false kell)")
 
         # Enum field
-        if "zone_mode" in raw and raw["zone_mode"] in VALID_ZONE_MODES:
-            kwargs["zone_mode"] = raw["zone_mode"]
+        if "zone_mode" in raw:
+            v = raw["zone_mode"]
+            if v in VALID_ZONE_MODES:
+                kwargs["zone_mode"] = v
+            else:
+                valid = ", ".join(m.value for m in VALID_ZONE_MODES)
+                user_logger.warning(
+                    f"⚠ Érvénytelen 'zone_mode' érték: {v!r} ({valid} valamelyike kell, default: {kwargs['zone_mode']})"
+                )
 
         return cls(**kwargs)
 

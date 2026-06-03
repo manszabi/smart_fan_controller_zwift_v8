@@ -892,6 +892,15 @@ class TestHeartRateZonesConfig:
         cfg = HeartRateZonesConfig.from_dict({"zone_mode": "banana"})
         assert cfg.zone_mode == ZoneMode.HIGHER_WINS
 
+    @pytest.mark.parametrize("bad", ["banana", "", "POWER_ONLY", 5, None, True])
+    def test_from_dict_invalid_zone_mode_warns(self, bad, caplog):
+        """Bármilyen el nem fogadott zone_mode (elírás/szám/üres) → figyelmeztetés + default."""
+        import logging
+        with caplog.at_level(logging.WARNING, logger="user"):
+            cfg = HeartRateZonesConfig.from_dict({"zone_mode": bad})
+        assert cfg.zone_mode == ZoneMode.HIGHER_WINS
+        assert any("zone_mode" in r.message for r in caplog.records)
+
     def test_from_dict_bool_fields(self):
         cfg = HeartRateZonesConfig.from_dict({
             "enabled": False, "zero_hr_immediate": True
