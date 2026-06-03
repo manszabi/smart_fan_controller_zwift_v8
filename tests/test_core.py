@@ -870,7 +870,10 @@ class TestHeartRateZonesConfig:
         assert cfg.zone_mode == "power_only"
 
     def test_post_init_z1_ge_z2(self):
+        """z1 >= z2 → default visszaállítás (Power-rel konzisztens)."""
         cfg = HeartRateZonesConfig(z1_max_percent=90, z2_max_percent=70)
+        assert cfg.z1_max_percent == 70  # default
+        assert cfg.z2_max_percent == 80  # default
         assert cfg.z1_max_percent < cfg.z2_max_percent
 
     def test_post_init_resting_ge_max(self):
@@ -888,6 +891,15 @@ class TestHeartRateZonesConfig:
         """Érvénytelen zone_mode → default marad."""
         cfg = HeartRateZonesConfig.from_dict({"zone_mode": "banana"})
         assert cfg.zone_mode == ZoneMode.HIGHER_WINS
+
+    @pytest.mark.parametrize("bad", ["banana", "", "POWER_ONLY", 5, None, True])
+    def test_from_dict_invalid_zone_mode_warns(self, bad, caplog):
+        """Bármilyen el nem fogadott zone_mode (elírás/szám/üres) → figyelmeztetés + default."""
+        import logging
+        with caplog.at_level(logging.WARNING, logger="user"):
+            cfg = HeartRateZonesConfig.from_dict({"zone_mode": bad})
+        assert cfg.zone_mode == ZoneMode.HIGHER_WINS
+        assert any("zone_mode" in r.message for r in caplog.records)
 
     def test_from_dict_bool_fields(self):
         cfg = HeartRateZonesConfig.from_dict({
