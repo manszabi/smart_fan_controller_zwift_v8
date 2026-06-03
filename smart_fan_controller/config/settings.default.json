@@ -27,7 +27,7 @@
     "valid_max_hr": 220,
     "zero_hr_immediate": false
   },
-  "ble": {
+  "ble_fan": {
     "device_name": null,
     "scan_timeout": 10,
     "connection_timeout": 15,

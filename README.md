@@ -81,7 +81,7 @@ Röviden a `settings.json` fő szekciói:
 | `global_settings` | cooldown, buffer, dropout timeout, loggolás (be/ki + könyvtár) |
 | `power_zones` | FTP, watt tartomány, zóna százalékok, 0W azonnali leállás |
 | `heart_rate_zones` | HR zónák, zone_mode (power_only/hr_only/higher_wins) |
-| `ble` | ESP32 ventilátor vezérlő (kimenet) |
+| `ble_fan` | ESP32 ventilátor vezérlő (kimenet) |
 | `datasource` | Adatforrás kiválasztás (antplus/ble/zwiftudp/null), ANT+/BLE/Zwift specifikus beállítások |
 | `hud` | LCARS hang be/ki, hangerő, Zwift exit figyelés |
 
@@ -94,7 +94,7 @@ Kommentezett referencia: `settings.example.jsonc`
 ```json
 {
   "power_zones": { "ftp": 200 },
-  "ble": { "device_name": "FanController" },
+  "ble_fan": { "device_name": "FanController" },
   "datasource": {
     "power_source": "antplus",
     "hr_source": "antplus"
@@ -111,7 +111,7 @@ Kommentezett referencia: `settings.example.jsonc`
 ```json
 {
   "power_zones": { "ftp": 250 },
-  "ble": { "device_name": null },
+  "ble_fan": { "device_name": null },
   "datasource": {
     "power_source": "ble",
     "hr_source": "ble"
@@ -128,7 +128,7 @@ Kommentezett referencia: `settings.example.jsonc`
 ```json
 {
   "power_zones": { "ftp": 180 },
-  "ble": { "device_name": "FanController", "pin_code": 123456 },
+  "ble_fan": { "device_name": "FanController", "pin_code": 123456 },
   "datasource": {
     "power_source": "zwiftudp",
     "hr_source": "ble"

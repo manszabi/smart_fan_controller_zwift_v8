@@ -76,7 +76,7 @@
   // ============================================================
   // BLE VENTILÁTOR KIMENET (ESP32 vezérlő)
   // ============================================================
-  "ble": {
+  "ble_fan": {
     // Az ESP32 BLE eszköz neve. null, "", "null" vagy "none" → auto-discovery
     // (service UUID alapján). Bármely más string → konkrét eszköznév.
     "device_name": null,

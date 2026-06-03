@@ -46,7 +46,7 @@ A program kétféleképpen reagál a hibákra, attól függően, hogy **érték-
 1. Indítsd el a programot egyszer – ekkor automatikusan létrejön a `settings.json` az alapértelmezésekkel. (Vagy másold kézzel a `settings.example.json`-t `settings.json` néven.)
 2. Állítsd be az FTP értékedet (`power_zones.ftp`), és szükség esetén a cooldown-t (`global_settings.cooldown_seconds`).
 3. Válaszd ki az adatforrást (`datasource.power_source`, `datasource.hr_source`).
-4. Ha BLE ventilátort használsz, állítsd be a `ble.device_name` mezőt (vagy hagyd `null`-on az auto-discovery-hez).
+4. Ha BLE ventilátort használsz, állítsd be a `ble_fan.device_name` mezőt (vagy hagyd `null`-on az auto-discovery-hez).
 5. Indítsd el: `python swift_fan_controller_new_v8_PySide6.py`
 
 ---
@@ -169,9 +169,11 @@ _Példa:_ `buffer_seconds=3`, `buffer_rate_hz=2` → max `6`; ha `minimum_sample
 
 ---
 
-## BLE ventilátor kimenet (`ble`)
+## BLE ventilátor kimenet (`ble_fan`)
 
 Az ESP32 BLE vezérlőhöz való csatlakozás beállításai. A program `LEVEL:N` (N=0–3) parancsokat küld a GATT karakterisztikára.
+
+> **Megjegyzés:** ezt a szekciót korábban `ble` néven hívták. A régi `ble` kulcsot a program még elfogadja (deprecation figyelmeztetéssel), de érdemes átnevezni `ble_fan`-ra.
 
 > **Firmware:** a projekthez tartozó `esp32_fan_controller.ino` (Xiao ESP32-C3, v5.2.0) alapértelmezetten a lenti UUID-kat és `123456` PIN-t használja. Ha az alapértékeket megtartod, csak a `device_name` mezőt kell beállítani (vagy hagyni `null`-on az auto-discoveryhez).
 
@@ -333,7 +335,7 @@ A LCARS stílusú HUD ablak viselkedését szabályozó beállítások.
 Az `opacity`, `sound_volume` és `window_geometry` értékek változása **csak akkor** kerül a `settings.json`-ba, ha `save_hud_settings=true`. Ez a mód biztosítja, hogy:
 
 - **Ha `save_hud_settings=true`:** a HUD-on végzett módosítások (ablak elhúzása, átlátszóság állítás, hangerő) automatikusan mentődnek – az elvárt működés.
-- **Ha `save_hud_settings=false` (alapértelmezés):** a HUD-on végzett módosítások NEM írják felül a `settings.json`-t – így a kézi szerkesztéseid (pl. egyéb szekciók: `power_zones.ftp`, `ble.device_name` stb.) nem vesznek el egy ablak-elhúzással vagy átlátszóság állítással.
+- **Ha `save_hud_settings=false` (alapértelmezés):** a HUD-on végzett módosítások NEM írják felül a `settings.json`-t – így a kézi szerkesztéseid (pl. egyéb szekciók: `power_zones.ftp`, `ble_fan.device_name` stb.) nem vesznek el egy ablak-elhúzással vagy átlátszóság állítással.
 
 A `window_geometry` mező automatikusan kezelődik: bezáráskor a program menti az ablak pozícióját és méretét az aktuális monitor nevéhez. Induláskor visszaállítja az utoljára használt monitor geometriáját. Ha a monitor nem létezik (pl. külső kijelző lecsatlakoztatva), az elsődleges monitorra kerül az ablak. Több monitor esetén mindegyikhez külön pozíció/méret tárolódik:
 

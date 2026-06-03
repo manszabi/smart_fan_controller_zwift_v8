@@ -362,7 +362,12 @@ class HeartRateZonesConfig:
 
 @dataclasses.dataclass
 class BleConfig:
-    """BLE kimeneti (ventillátor) beállítások – típusbiztos."""
+    """BLE kimeneti (ventilátor) beállítások – típusbiztos.
+
+    Megjegyzés: ez a settings.json ``"ble_fan"`` szekciójához tartozik (a BLE
+    ventilátor kimenet). Az osztály neve történeti okból maradt ``BleConfig``.
+    A loader visszafelé kompatibilisen a régi ``"ble"`` kulcsot is elfogadja.
+    """
 
     device_name: Optional[str] = None
     scan_timeout: int = 10
@@ -625,7 +630,7 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
     "global_settings": GlobalSettingsConfig(),
     "power_zones": PowerZonesConfig(),
     "heart_rate_zones": HeartRateZonesConfig(),
-    "ble": BleConfig(),
+    "ble_fan": BleConfig(),
     "datasource": DatasourceConfig(),
     "hud": HudConfig(),
 }
