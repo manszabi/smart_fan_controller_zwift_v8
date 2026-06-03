@@ -149,42 +149,42 @@ class PowerZonesConfig:
             if isinstance(v, int) and not isinstance(v, bool) and 0 <= v <= 1000:
                 ftp = v
             else:
-                user_logger.warning(f"⚠ Érvénytelen 'ftp' érték: {v} (0–1000 közötti egész kell, default: {d.ftp})")
+                user_logger.warning(f"⚠ Érvénytelen 'ftp' érték: {v!r} (0–1000 közötti egész kell, default: {d.ftp})")
 
         if "min_watt" in raw:
             v = raw["min_watt"]
             if isinstance(v, int) and not isinstance(v, bool) and 0 <= v <= 1000:
                 min_watt = v
             else:
-                user_logger.warning(f"⚠ Érvénytelen 'min_watt' érték: {v} (0–1000 közötti egész kell, default: {d.min_watt})")
+                user_logger.warning(f"⚠ Érvénytelen 'min_watt' érték: {v!r} (0–1000 közötti egész kell, default: {d.min_watt})")
 
         if "max_watt" in raw:
             v = raw["max_watt"]
             if isinstance(v, int) and not isinstance(v, bool) and 0 <= v <= 1000:
                 max_watt = v
             else:
-                user_logger.warning(f"⚠ Érvénytelen 'max_watt' érték: {v} (0–1000 közötti egész kell, default: {d.max_watt})")
+                user_logger.warning(f"⚠ Érvénytelen 'max_watt' érték: {v!r} (0–1000 közötti egész kell, default: {d.max_watt})")
 
         if "z1_max_percent" in raw:
             v = raw["z1_max_percent"]
             if isinstance(v, int) and not isinstance(v, bool) and 1 <= v <= 100:
                 z1 = v
             else:
-                user_logger.warning(f"⚠ Érvénytelen 'z1_max_percent' érték: {v} (1–100 közötti egész kell)")
+                user_logger.warning(f"⚠ Érvénytelen 'z1_max_percent' érték: {v!r} (1–100 közötti egész kell)")
 
         if "z2_max_percent" in raw:
             v = raw["z2_max_percent"]
             if isinstance(v, int) and not isinstance(v, bool) and 1 <= v <= 100:
                 z2 = v
             else:
-                user_logger.warning(f"⚠ Érvénytelen 'z2_max_percent' érték: {v} (1–100 közötti egész kell)")
+                user_logger.warning(f"⚠ Érvénytelen 'z2_max_percent' érték: {v!r} (1–100 közötti egész kell)")
 
         if "zero_power_immediate" in raw:
             v = raw["zero_power_immediate"]
             if isinstance(v, bool):
                 zpi = v
             else:
-                user_logger.warning(f"⚠ Érvénytelen 'zero_power_immediate' érték: {v} (true/false kell)")
+                user_logger.warning(f"⚠ Érvénytelen 'zero_power_immediate' érték: {v!r} (true/false kell)")
 
         return cls(ftp=ftp, min_watt=min_watt, max_watt=max_watt,
                    z1_max_percent=z1, z2_max_percent=z2, zero_power_immediate=zpi)
@@ -234,15 +234,11 @@ class GlobalSettingsConfig:
         _from_dict_int(raw, kwargs, "buffer_seconds", 1, 60)
         _from_dict_int(raw, kwargs, "minimum_samples", 1, 600)
         _from_dict_int(raw, kwargs, "buffer_rate_hz", 1, 60)
-        _from_dict_int(raw, kwargs, "dropout_timeout", 1, 120)
+        # dropout_timeout: 1–300 (egységes a forrás-specifikus *_dropout_timeout-tal)
+        _from_dict_int(raw, kwargs, "dropout_timeout", 1, 300)
 
         # logging: bool – globális loggolás be/ki
-        if "logging" in raw:
-            v = raw["logging"]
-            if isinstance(v, bool):
-                kwargs["logging"] = v
-            else:
-                user_logger.warning(f"⚠ Érvénytelen 'logging' érték: {v} (true/false kell)")
+        _from_dict_bool(raw, kwargs, "logging")
 
         # log_directory: null vagy nem-üres string.
         # null, "null" string, vagy hiányzó kulcs → None (program könyvtár), csendben.
@@ -339,12 +335,7 @@ class HeartRateZonesConfig:
 
         # Bool fields
         for key in ("enabled", "zero_hr_immediate"):
-            if key in raw:
-                v = raw[key]
-                if isinstance(v, bool):
-                    kwargs[key] = v
-                else:
-                    user_logger.warning(f"⚠ Érvénytelen '{key}' érték: {v} (true/false kell)")
+            _from_dict_bool(raw, kwargs, key)
 
         # Enum field
         if "zone_mode" in raw:
@@ -386,7 +377,7 @@ class BleConfig:
 
         # device_name: null / "" / "null" / "none" → auto-discovery (csendes);
         # nem-üres string → használt név; bármi más típus → figyelmeztetés.
-        _from_dict_device_name(raw, kwargs, "device_name")
+        _from_dict_nullable_str(raw, kwargs, "device_name")
 
         # Int fields with ranges
         _from_dict_int(raw, kwargs, "scan_timeout", 1, 60)
@@ -420,7 +411,7 @@ class BleConfig:
             elif isinstance(pc, str) and pc.isdigit() and 0 < len(pc) <= 20:
                 kwargs["pin_code"] = pc
             else:
-                user_logger.warning(f"⚠ Érvénytelen 'pin_code' érték: {pc}")
+                user_logger.warning(f"⚠ Érvénytelen 'pin_code' érték: {pc!r}")
 
         return cls(**kwargs)
 
@@ -511,7 +502,7 @@ class DatasourceConfig:
         # BLE sensor device names: null/""/"null"/"none" → auto-discovery (csendes);
         # nem-üres string → trimmed név; rossz típus → figyelmeztetés.
         for key in ("ble_power_device_name", "ble_hr_device_name"):
-            _from_dict_device_name(raw, kwargs, key)
+            _from_dict_nullable_str(raw, kwargs, key)
         for key in ("ble_power_scan_timeout", "ble_power_reconnect_interval",
                      "ble_hr_scan_timeout", "ble_hr_reconnect_interval"):
             _from_dict_int(raw, kwargs, key, 1, 60)
@@ -534,16 +525,9 @@ class DatasourceConfig:
             else:
                 user_logger.warning(f"⚠ Érvénytelen 'zwift_auto_launch' érték: {v!r} (true/false kell)")
 
-        # zwift_launcher_path: null/""/whitespace → None (automatikus keresés);
-        # nem-üres string → trimmed útvonal; rossz típus → figyelmeztetés.
-        if "zwift_launcher_path" in raw:
-            lp = raw["zwift_launcher_path"]
-            if lp is None:
-                kwargs["zwift_launcher_path"] = None
-            elif isinstance(lp, str):
-                kwargs["zwift_launcher_path"] = lp.strip() or None
-            else:
-                user_logger.warning(f"⚠ Érvénytelen 'zwift_launcher_path' érték: {lp!r} (string vagy null kell)")
+        # zwift_launcher_path: null/""/"null"/"none"/whitespace → None (automatikus
+        # keresés); nem-üres string → trimmed útvonal; rossz típus → figyelmeztetés.
+        _from_dict_nullable_str(raw, kwargs, "zwift_launcher_path")
 
         # Per-source buffer settings
         for prefix in ("BLE", "ANT", "zwiftUDP"):
@@ -570,16 +554,19 @@ class HudConfig:
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> "HudConfig":
         kwargs: dict[str, Any] = {}
-        if "save_hud_settings" in raw and isinstance(raw["save_hud_settings"], bool):
-            kwargs["save_hud_settings"] = raw["save_hud_settings"]
-        if "sound_enabled" in raw and isinstance(raw["sound_enabled"], bool):
-            kwargs["sound_enabled"] = raw["sound_enabled"]
-        if "sound_volume" in raw and isinstance(raw["sound_volume"], (int, float)):
-            kwargs["sound_volume"] = float(raw["sound_volume"])
-        # Support both old key "close_at_zwiftapp.exe" and new "close_at_zwiftapp_exe"
-        for key in ("close_at_zwiftapp.exe", "close_at_zwiftapp_exe"):
-            if key in raw and isinstance(raw[key], bool):
-                kwargs["close_at_zwiftapp_exe"] = raw[key]
+        _from_dict_bool(raw, kwargs, "save_hud_settings")
+        _from_dict_bool(raw, kwargs, "sound_enabled")
+        _from_dict_float(raw, kwargs, "sound_volume", 0.0, 1.0)
+        # close_at_zwiftapp_exe: az új kulcs elsőbbséget élvez; a régi
+        # "close_at_zwiftapp.exe" kulcsot visszafelé kompatibilisen elfogadjuk.
+        if "close_at_zwiftapp_exe" in raw:
+            _from_dict_bool(raw, kwargs, "close_at_zwiftapp_exe")
+        elif "close_at_zwiftapp.exe" in raw:
+            v = raw["close_at_zwiftapp.exe"]
+            if isinstance(v, bool):
+                kwargs["close_at_zwiftapp_exe"] = v
+            else:
+                user_logger.warning(f"⚠ Érvénytelen 'close_at_zwiftapp.exe' érték: {v!r} (true/false kell)")
         _from_dict_int(raw, kwargs, "opacity", 20, 100)
         if "window_geometry" in raw and isinstance(raw["window_geometry"], dict):
             geo: Dict[str, Dict[str, int]] = {}
@@ -616,19 +603,42 @@ def _from_dict_int(src: dict[str, Any], dst: dict[str, Any], key: str, lo: int, 
         user_logger.warning(f"⚠ Érvénytelen '{key}' érték: {v!r} ({lo}–{hi} közötti egész kell)")
         return
     if isinstance(v, float) and not v.is_integer():
-        user_logger.warning(f"⚠ Érvénytelen '{key}' érték: {v} (törtrész nem elfogadott, egész kell)")
+        user_logger.warning(f"⚠ Érvénytelen '{key}' érték: {v!r} (törtrész nem elfogadott, egész kell)")
         return
     if isinstance(v, (int, float)) and lo <= v <= hi:
         dst[key] = int(v)
     else:
-        user_logger.warning(f"⚠ Érvénytelen '{key}' érték: {v} ({lo}–{hi} közötti egész kell)")
+        user_logger.warning(f"⚠ Érvénytelen '{key}' érték: {v!r} ({lo}–{hi} közötti egész kell)")
 
 
-def _from_dict_device_name(src: dict[str, Any], dst: dict[str, Any], key: str) -> None:
-    """Helper: BLE eszköznév normalizálás.
+def _from_dict_bool(src: dict[str, Any], dst: dict[str, Any], key: str) -> None:
+    """Helper: bool mezőt olvas validálva. Rossz típus → figyelmeztetés, default marad."""
+    if key not in src:
+        return
+    v = src[key]
+    if isinstance(v, bool):
+        dst[key] = v
+    else:
+        user_logger.warning(f"⚠ Érvénytelen '{key}' érték: {v!r} (true/false kell)")
 
-    null / "" / "null" / "none" (kis-nagybetű érzéketlen) → None (auto-discovery),
-    csendben. Egyéb nem-üres string → trimmed érték. Rossz típus → figyelmeztetés,
+
+def _from_dict_float(src: dict[str, Any], dst: dict[str, Any], key: str, lo: float, hi: float) -> None:
+    """Helper: float mezőt olvas tartomány-validálva (bool kizárva)."""
+    if key not in src:
+        return
+    v = src[key]
+    if isinstance(v, bool) or not isinstance(v, (int, float)) or not (lo <= v <= hi):
+        user_logger.warning(f"⚠ Érvénytelen '{key}' érték: {v!r} ({lo}–{hi} közötti szám kell)")
+        return
+    dst[key] = float(v)
+
+
+def _from_dict_nullable_str(src: dict[str, Any], dst: dict[str, Any], key: str) -> None:
+    """Helper: nullable string mező normalizálás (eszköznév, útvonal stb.).
+
+    null / "" / "null" / "none" (kis-nagybetű érzéketlen) → None, csendben
+    (az adott mezőnél ez auto-discovery / automatikus keresés jelentésű).
+    Egyéb nem-üres string → trimmed érték. Rossz típus → figyelmeztetés,
     a default (None) marad.
     """
     if key not in src:

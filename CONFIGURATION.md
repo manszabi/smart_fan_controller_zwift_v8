@@ -59,7 +59,7 @@ A program kétféleképpen reagál a hibákra, attól függően, hogy **érték-
 | `buffer_seconds` | int | 1–60 | 3 | Gördülő átlag ablak (fallback ha forrás-specifikus nincs). |
 | `minimum_samples` | int | 1–600 | 6 | Minimum minta érvényes átlaghoz (fallback). |
 | `buffer_rate_hz` | int | 1–60 | 4 | Várt mintavételi frekvencia Hz-ben (fallback). |
-| `dropout_timeout` | int | 1–120 | 5 | Adatforrás kiesés timeout másodpercben (fallback). |
+| `dropout_timeout` | int | 1–300 | 5 | Adatforrás kiesés timeout másodpercben (fallback). |
 | `logging` | bool | – | true | Globális loggolás be/ki. Ha `false`, nincs sem fájl-, sem konzol-loggolás (teljes némaság) – csak az indítási összefoglaló jelenik meg. |
 | `log_directory` | string\|null | – | null | Log fájlok könyvtára. `null` = a program könyvtára. Fájlok: `smart_fan_controller.log`, `ble_devices.log`, `ant_devices.log`. Ha a megadott könyvtár nem létezik vagy nem írható, automatikusan a program könyvtárát használja. |
 
@@ -280,7 +280,7 @@ A `logging` és `log_directory` ugyanúgy viselkedik, mint a fő app `global_set
 | Mező | Típus | Értékek | Alapértelmezett | Leírás |
 |------|-------|---------|-----------------|--------|
 | `zwift_auto_launch` | bool | true/false | true | Ha true, a program automatikusan elindítja a Zwift-et ha az nem fut. |
-| `zwift_launcher_path` | string/null | – | null | ZwiftLauncher.exe egyedi útvonala. `null` vagy `""` → automatikus keresés (Registry + ismert útvonalak). |
+| `zwift_launcher_path` | string/null | – | null | ZwiftLauncher.exe egyedi útvonala. `null`, `""`, `"null"` vagy `"none"` → automatikus keresés (Registry + ismert útvonalak). |
 
 **Működés:** ha a `ZwiftApp.exe` nem fut és `zwift_auto_launch` értéke `true`:
 

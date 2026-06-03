@@ -720,11 +720,16 @@ class TestGlobalSettingsConfig:
         assert cfg.dropout_timeout == 120
 
     def test_dropout_timeout_invalid_range(self):
-        """dropout_timeout: 0 vagy 121 → default marad."""
+        """dropout_timeout: 0 vagy 301 → default marad (érvényes: 1–300)."""
         cfg = GlobalSettingsConfig.from_dict({"dropout_timeout": 0})
         assert cfg.dropout_timeout == 5
-        cfg = GlobalSettingsConfig.from_dict({"dropout_timeout": 121})
+        cfg = GlobalSettingsConfig.from_dict({"dropout_timeout": 301})
         assert cfg.dropout_timeout == 5
+
+    def test_dropout_timeout_extended_range(self):
+        """dropout_timeout: 300 (max, egységes a forrás-specifikussal) → elfogadva."""
+        cfg = GlobalSettingsConfig.from_dict({"dropout_timeout": 300})
+        assert cfg.dropout_timeout == 300
 
     def test_dropout_timeout_float_fraction_rejected(self):
         """dropout_timeout: 10.3 (törtrész) → default marad."""
@@ -1130,9 +1135,9 @@ class TestDatasourceConfig:
         assert cfg.zwift_auto_launch is True
         assert any("zwift_auto_launch" in r.message for r in caplog.records)
 
-    @pytest.mark.parametrize("val", [None, "", "   "])
+    @pytest.mark.parametrize("val", [None, "", "   ", "null", "NULL", "none", "None"])
     def test_from_dict_zwift_launcher_path_none_like(self, val):
-        """null/""/whitespace → None (automatikus keresés)."""
+        """null/""/"null"/"none"/whitespace → None (automatikus keresés)."""
         cfg = DatasourceConfig.from_dict({"zwift_launcher_path": val})
         assert cfg.zwift_launcher_path is None
 
@@ -1186,6 +1191,41 @@ class TestHudConfig:
         cfg = HudConfig.from_dict({"sound_volume": 1})
         assert cfg.sound_volume == 1.0
         assert isinstance(cfg.sound_volume, float)
+
+    @pytest.mark.parametrize("val,expected", [(0.0, 0.0), (1.0, 1.0), (0.3, 0.3)])
+    def test_from_dict_volume_boundary(self, val, expected):
+        """sound_volume határértékek (0.0–1.0) elfogadva."""
+        cfg = HudConfig.from_dict({"sound_volume": val})
+        assert cfg.sound_volume == expected
+
+    @pytest.mark.parametrize("bad", [5.0, -3.0, 1.5, -0.1, "loud", True])
+    def test_from_dict_volume_invalid_warns(self, bad, caplog):
+        """sound_volume tartományon kívül / rossz típus → figyelmeztetés + default."""
+        import logging
+        with caplog.at_level(logging.WARNING, logger="user"):
+            cfg = HudConfig.from_dict({"sound_volume": bad})
+        assert cfg.sound_volume == 0.5  # default
+        assert any("sound_volume" in r.message for r in caplog.records)
+
+    @pytest.mark.parametrize("key,default", [
+        ("save_hud_settings", False), ("sound_enabled", True), ("close_at_zwiftapp_exe", True),
+    ])
+    @pytest.mark.parametrize("bad", ["yes", 1, 0, None])
+    def test_from_dict_bool_invalid_warns(self, key, default, bad, caplog):
+        """HUD bool mezők rossz típusa → figyelmeztetés + default marad."""
+        import logging
+        with caplog.at_level(logging.WARNING, logger="user"):
+            cfg = HudConfig.from_dict({key: bad})
+        assert getattr(cfg, key) is default
+        assert any(key in r.message for r in caplog.records)
+
+    def test_from_dict_legacy_key_invalid_warns(self, caplog):
+        """A régi 'close_at_zwiftapp.exe' kulcs rossz típusa → figyelmeztetés."""
+        import logging
+        with caplog.at_level(logging.WARNING, logger="user"):
+            cfg = HudConfig.from_dict({"close_at_zwiftapp.exe": "igen"})
+        assert cfg.close_at_zwiftapp_exe is True  # default
+        assert any("close_at_zwiftapp.exe" in r.message for r in caplog.records)
 
     def test_from_dict_opacity(self):
         cfg = HudConfig.from_dict({"opacity": 75})
