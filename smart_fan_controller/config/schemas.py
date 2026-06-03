@@ -484,15 +484,21 @@ class DatasourceConfig:
         d = cls()
         kwargs: dict[str, Any] = dataclasses.asdict(d)
 
-        # power_source / hr_source
-        if raw.get("power_source") in VALID_DATA_SOURCES:
-            kwargs["power_source"] = raw["power_source"]
-        elif "power_source" in raw and raw["power_source"] is None:
-            kwargs["power_source"] = None
-        if raw.get("hr_source") in VALID_DATA_SOURCES:
-            kwargs["hr_source"] = raw["hr_source"]
-        elif "hr_source" in raw and raw["hr_source"] is None:
-            kwargs["hr_source"] = None
+        # power_source / hr_source: érvényes adatforrás (antplus/ble/zwiftudp)
+        # vagy null (kikapcsolva). Bármi más → figyelmeztetés + default marad.
+        for key in ("power_source", "hr_source"):
+            if key not in raw:
+                continue
+            v = raw[key]
+            if v is None:
+                kwargs[key] = None
+            elif v in VALID_DATA_SOURCES:
+                kwargs[key] = v
+            else:
+                valid = ", ".join(src.value for src in VALID_DATA_SOURCES)
+                user_logger.warning(
+                    f"⚠ Érvénytelen '{key}' érték: {v!r} ({valid} vagy null kell)"
+                )
 
         # ANT+ device IDs
         for key in ("ant_power_device_id", "ant_hr_device_id"):
@@ -512,17 +518,32 @@ class DatasourceConfig:
         for key in ("ble_power_max_retries", "ble_hr_max_retries"):
             _from_dict_int(raw, kwargs, key, 1, 100)
 
-        # Zwift UDP
-        if isinstance(raw.get("zwift_udp_host"), str) and raw["zwift_udp_host"]:
-            kwargs["zwift_udp_host"] = raw["zwift_udp_host"]
+        # Zwift UDP host: nem-üres string kell (whitespace levágva).
+        if "zwift_udp_host" in raw:
+            v = raw["zwift_udp_host"]
+            if isinstance(v, str) and v.strip():
+                kwargs["zwift_udp_host"] = v.strip()
+            else:
+                user_logger.warning(f"⚠ Érvénytelen 'zwift_udp_host' érték: {v!r} (nem-üres string kell)")
         _from_dict_int(raw, kwargs, "zwift_udp_port", 1024, 65535)
 
-        if "zwift_auto_launch" in raw and isinstance(raw["zwift_auto_launch"], bool):
-            kwargs["zwift_auto_launch"] = raw["zwift_auto_launch"]
+        if "zwift_auto_launch" in raw:
+            v = raw["zwift_auto_launch"]
+            if isinstance(v, bool):
+                kwargs["zwift_auto_launch"] = v
+            else:
+                user_logger.warning(f"⚠ Érvénytelen 'zwift_auto_launch' érték: {v!r} (true/false kell)")
+
+        # zwift_launcher_path: null/""/whitespace → None (automatikus keresés);
+        # nem-üres string → trimmed útvonal; rossz típus → figyelmeztetés.
         if "zwift_launcher_path" in raw:
             lp = raw["zwift_launcher_path"]
-            if lp is None or isinstance(lp, str):
-                kwargs["zwift_launcher_path"] = lp
+            if lp is None:
+                kwargs["zwift_launcher_path"] = None
+            elif isinstance(lp, str):
+                kwargs["zwift_launcher_path"] = lp.strip() or None
+            else:
+                user_logger.warning(f"⚠ Érvénytelen 'zwift_launcher_path' érték: {lp!r} (string vagy null kell)")
 
         # Per-source buffer settings
         for prefix in ("BLE", "ANT", "zwiftUDP"):
