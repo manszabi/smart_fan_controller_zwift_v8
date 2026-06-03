@@ -277,7 +277,7 @@ class HeartRateZonesConfig:
     """Szívfrekvencia zóna beállítások – típusbiztos, validált.
 
     Validáció a __post_init__-ben:
-      - z1_max_percent < z2_max_percent
+      - z1_max_percent < z2_max_percent (érvénytelen sorrend → default visszaállítás)
       - resting_hr < max_hr
       - valid_min_hr < valid_max_hr
     """
@@ -293,20 +293,17 @@ class HeartRateZonesConfig:
     zero_hr_immediate: bool = False
 
     def __post_init__(self) -> None:
-        # z1/z2 százalék kereszt-validáció
+        # z1_max_percent < z2_max_percent logikai check
+        # (PowerZonesConfig-gal konzisztens: érvénytelen sorrend → default visszaállítás)
         if self.z1_max_percent >= self.z2_max_percent:
-            low = min(self.z1_max_percent, self.z2_max_percent)
-            high = max(self.z1_max_percent, self.z2_max_percent)
-            if low == high:
-                if low >= 100:
-                    low, high = 99, 100
-                else:
-                    high = low + 1
+            default_z1 = HeartRateZonesConfig.__dataclass_fields__["z1_max_percent"].default
+            default_z2 = HeartRateZonesConfig.__dataclass_fields__["z2_max_percent"].default
             user_logger.warning(
-                f"⚠ Érvénytelen HR zóna százalékok (z1={self.z1_max_percent}, z2={self.z2_max_percent}). "
-                f"Értékek rendezése és legalább 1% különbség biztosítása."
+                f"⚠ Érvénytelen HR zóna százalékok: z1_max_percent ({self.z1_max_percent}) >= z2_max_percent ({self.z2_max_percent}). "
+                f"Alapértelmezésre állítva: z1_max_percent={default_z1}, z2_max_percent={default_z2}."
             )
-            self.z1_max_percent, self.z2_max_percent = low, high
+            self.z1_max_percent = default_z1
+            self.z2_max_percent = default_z2
 
         # resting_hr < max_hr
         if self.resting_hr >= self.max_hr:

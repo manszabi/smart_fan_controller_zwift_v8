@@ -870,7 +870,10 @@ class TestHeartRateZonesConfig:
         assert cfg.zone_mode == "power_only"
 
     def test_post_init_z1_ge_z2(self):
+        """z1 >= z2 → default visszaállítás (Power-rel konzisztens)."""
         cfg = HeartRateZonesConfig(z1_max_percent=90, z2_max_percent=70)
+        assert cfg.z1_max_percent == 70  # default
+        assert cfg.z2_max_percent == 80  # default
         assert cfg.z1_max_percent < cfg.z2_max_percent
 
     def test_post_init_resting_ge_max(self):
