@@ -1,12 +1,14 @@
-"""Throttle-olt konzol kiírás – nincs Qt/BLE/IO függőség.
+"""Throttle-olt konzol kiírás – szálbiztos, nincs Qt/BLE/IO függőség.
 
 A ConsolePrinter kezeli az üzeneteket: ugyanaz az üzenet nem jelenhet meg
 túl sűrűn. Üzenetkulcsonként külön időzítőt tart, és csak akkor ír ki, ha
-az interval eltelt az utolsó kiírás óta.
+az interval eltelt az utolsó kiírás óta. A threading.Lock védi a _last_times
+dict-et az egyidejű hozzáférés ellen.
 """
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from typing import Dict
 
@@ -27,6 +29,7 @@ class ConsolePrinter:
     """
 
     def __init__(self) -> None:
+        self._lock = threading.Lock()
         self._last_times: Dict[str, float] = {}
 
     def emit(self, key: str, message: str, interval: float = 1.0) -> bool:
@@ -41,8 +44,9 @@ class ConsolePrinter:
             True, ha az üzenet kiírásra kerül; False, ha throttle-olt.
         """
         now = time.monotonic()
-        if now - self._last_times.get(key, 0.0) >= interval:
-            user_logger.info(message)
-            self._last_times[key] = now
-            return True
-        return False
+        with self._lock:
+            if now - self._last_times.get(key, 0.0) >= interval:
+                user_logger.info(message)
+                self._last_times[key] = now
+                return True
+            return False
