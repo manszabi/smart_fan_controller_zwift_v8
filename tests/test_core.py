@@ -13,6 +13,7 @@ from unittest.mock import patch
 import pytest
 
 from smart_fan_controller.core import resolve_log_dir as _resolve_log_dir
+from smart_fan_controller.handlers._ble import _log_ble_devices_to_file
 from swift_fan_controller_new_v8_PySide6 import (
     ZoneMode,
     DataSource,
@@ -33,7 +34,6 @@ from swift_fan_controller_new_v8_PySide6 import (
     _setup_early_logging,
     _flush_early_logging,
     _discard_early_logging,
-    _log_ble_devices_to_file,
     _log_ant_device_to_file,
 )
 import logging as _logging
@@ -1513,7 +1513,7 @@ class TestLoggingToggle:
         try:
             _mainmod._log_dir = tmp
             _mainmod._logging_enabled = False
-            _log_ble_devices_to_file([("Fan", "AA:BB", ["uuid"])], "BLE Fan")
+            _log_ble_devices_to_file([("Fan", "AA:BB", ["uuid"])], "BLE Fan", tmp, False)
             _log_ant_device_to_file("PowerMeter", 123, "info")
             assert not os.path.exists(os.path.join(tmp, "ble_devices.log"))
             assert not os.path.exists(os.path.join(tmp, "ant_devices.log"))
@@ -1529,7 +1529,8 @@ class TestLoggingToggle:
         try:
             _mainmod._log_dir = tmp
             _mainmod._logging_enabled = True
-            _log_ble_devices_to_file([("Fan", "AA:BB", ["uuid"])], "BLE Fan")
+            _log_ble_devices_to_file([("Fan", "AA:BB", ["uuid"])], "BLE Fan", tmp, True)
+            _log_ble_devices_to_file([("Fan", "AA:BB", ["uuid"])], "BLE Fan", tmp, True)
             _log_ant_device_to_file("PowerMeter", 123, "info")
             assert os.path.exists(os.path.join(tmp, "ble_devices.log"))
             assert os.path.exists(os.path.join(tmp, "ant_devices.log"))
