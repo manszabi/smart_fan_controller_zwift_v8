@@ -17,6 +17,9 @@ main_a = Analysis(
         # Config package data: a verziókövetett default sablon. A loader.py a
         # __file__-hez képest keresi, ezért a package-beli helyre kell tenni.
         ('smart_fan_controller/config/settings.default.json', 'smart_fan_controller/config'),
+        # LCARS Antonio fontok: a hud.py a package-beli fonts/ mappából tölti
+        # (frozen esetben <exe_dir>/smart_fan_controller/fonts).
+        ('smart_fan_controller/fonts', 'smart_fan_controller/fonts'),
     ],
     hiddenimports=[
         'PySide6',

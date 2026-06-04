@@ -602,20 +602,24 @@ class HUDWindow(QWidget):
     # ────────── FONT BETÖLTÉS ──────────
 
     def _try_load_lcars_font(self) -> None:
-        """Antonio font betöltése a script melletti fonts/ mappából.
+        """Antonio font betöltése a smart_fan_controller package fonts/ mappájából.
 
         Keresési sorrend:
-          1. <script_dir>/fonts/Antonio-{Bold,Regular}.ttf
-          2. <exe_dir>/fonts/...  (PyInstaller frozen)
+          1. <package_dir>/fonts/Antonio-{Bold,Regular}.ttf   (smart_fan_controller/fonts)
+          2. <exe_dir>/smart_fan_controller/fonts/...         (PyInstaller frozen)
         Ha a fontok nem találhatók, a program rendszer fontot használ fallback-ként.
         """
         if _platform.system() != "Windows":
             return
         try:
             if getattr(sys, "frozen", False):
-                base_dir = os.path.dirname(os.path.abspath(sys.executable))
+                base_dir = os.path.join(
+                    os.path.dirname(os.path.abspath(sys.executable)),
+                    "smart_fan_controller",
+                )
             else:
-                base_dir = os.path.dirname(os.path.abspath(__file__))
+                # hud.py: smart_fan_controller/ui/hud.py → package gyökér két szinttel feljebb
+                base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
             font_dir = os.path.join(base_dir, "fonts")
 
             loaded = 0
