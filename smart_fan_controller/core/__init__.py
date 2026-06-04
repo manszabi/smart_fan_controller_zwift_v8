@@ -14,6 +14,14 @@ from .averaging import (
 )
 from .cooldown import CooldownController
 from .helpers import generate_tone, resolve_log_dir
+from .logging_setup import (
+    logger,
+    user_logger,
+    setup_logging,
+    setup_early_logging,
+    flush_early_logging,
+    discard_early_logging,
+)
 from .printers import ConsolePrinter
 from .state import ControllerState, UISnapshot
 from .zones import (
@@ -44,6 +52,13 @@ __all__ = [
     "HRAverager",
     # cooldown
     "CooldownController",
+    # logging
+    "logger",
+    "user_logger",
+    "setup_logging",
+    "setup_early_logging",
+    "flush_early_logging",
+    "discard_early_logging",
     # printers
     "ConsolePrinter",
     # state
