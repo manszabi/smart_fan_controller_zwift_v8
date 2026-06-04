@@ -1387,15 +1387,23 @@ class TestResolveLogDir:
 
     @property
     def _default_dir(self) -> str:
-        """Az elvárt default könyvtár (a fő modul helye)."""
-        import swift_fan_controller_new_v8_PySide6 as mod
-        return os.path.dirname(os.path.abspath(mod.__file__))
+        """A tiszta függvény default könyvtára (CWD, ha nincs default_dir)."""
+        return os.getcwd()
 
     def test_none_returns_default(self):
         assert _resolve_log_dir(None) == self._default_dir
 
     def test_empty_returns_default(self):
         assert _resolve_log_dir("") == self._default_dir
+
+    def test_explicit_default_dir(self):
+        """default_dir átadása felülírja a CWD fallback-et."""
+        tmp = tempfile.mkdtemp()
+        try:
+            assert _resolve_log_dir(None, default_dir=tmp) == tmp
+            assert _resolve_log_dir("", default_dir=tmp) == tmp
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
 
     def test_creates_new_directory(self):
         tmp = tempfile.mkdtemp()

@@ -34,7 +34,6 @@ Architektúra:
 Verziószám: 8.0.0
 """
 
-import abc
 import asyncio
 import copy
 import dataclasses
@@ -235,7 +234,9 @@ def _setup_logging(log_directory: Optional[str] = None, logging_enabled: bool = 
         logging.getLogger("openant").setLevel(logging.CRITICAL)
         return
 
-    _log_dir = resolve_log_dir(log_directory)
+    _log_dir = resolve_log_dir(
+        log_directory, default_dir=os.path.dirname(os.path.abspath(__file__))
+    )
     log_file = os.path.join(_log_dir, "smart_fan_controller.log")
 
     file_fmt = logging.Formatter(
@@ -381,6 +382,7 @@ from smart_fan_controller.handlers import (
     BLEHRInputHandler,
     BLEPowerInputHandler,
     ZwiftUDPInputHandler,
+    _BLESensorInputHandler,
     send_zone,
 )
 from smart_fan_controller.processors import (
@@ -445,8 +447,9 @@ from smart_fan_controller.processors import (
 
 # A send_zone(), BLE logolás és scan függvények a
 # smart_fan_controller.handlers._ble modulba kerültek.
-# Fent re-importálva az alábbi nevek alatt:
-# - send_zone, _scan_ble_with_autodiscovery (belső modulokból)
+# A send_zone fent re-importálva; a _scan_ble_with_autodiscovery és a
+# BLE logoló segédfüggvények csak a _ble modulon belül használatosak
+# (a BLE handlerek hívják), ezért a fő modulba nincsenek re-importálva.
 
 
 # BLEFanOutputController a smart_fan_controller.handlers._ble modulba került.
@@ -842,244 +845,12 @@ class ANTPlusInputHandler:
 
 
 # ============================================================
-# BLE SZENZOR KÖZÖS ŐSOSZTÁLY (DRY)
+# BLE SZENZOR HANDLEREK (smart_fan_controller.handlers._ble modulba kerültek)
 # ============================================================
-
-
-class _BLESensorInputHandler(abc.ABC):
-    """Közös ősosztály BLE szenzor handlerekhez (Power, HR).
-
-    Asyncio korrutin alapú implementáció. A scan, csatlakozás, notification
-    subscribe és retry/reconnect logika itt van, az alosztályok csak a
-    szenzor-specifikus konstansokat és az adat-parse-olást definiálják.
-
-    Alosztályoknak felül kell írniuk:
-        SERVICE_UUID: A BLE service UUID string.
-        MEASUREMENT_UUID: A BLE measurement characteristic UUID string.
-        _sensor_label: Rövid név logokhoz (pl. "BLE Power").
-        _settings_prefix: Settings kulcs prefix (pl. "ble_power").
-        _parse_notification(data): Nyers bájt → szám konverzió.
-
-    Attribútumok:
-        device_name: A keresett BLE eszköz neve (None = auto-discovery).
-        is_connected: True, ha a BLE kapcsolat aktív.
-        lastdata: Utolsó sikeres adat időbélyege (time.monotonic).
-    """
-
-    SERVICE_UUID: str
-    MEASUREMENT_UUID: str
-    _sensor_label: str
-    _settings_prefix: str
-    RETRY_RESET_SECONDS = 30
-
-    def __init__(
-        self, settings: Dict[str, Any], queue: asyncio.Queue[float]
-    ) -> None:
-        ds: DatasourceConfig = settings["datasource"]
-        pfx = self._settings_prefix
-        self.device_name: Optional[str] = getattr(ds, f"{pfx}_device_name")
-        self.scan_timeout: int = getattr(ds, f"{pfx}_scan_timeout", 10)
-        self.reconnect_interval: int = getattr(ds, f"{pfx}_reconnect_interval", 5)
-        self.max_retries: int = getattr(ds, f"{pfx}_max_retries", 10)
-        self._queue = queue
-        self.is_connected = False
-        self._retry_count = 0
-        self.lastdata = 0.0
-
-    @abc.abstractmethod
-    def _parse_notification(self, data: bytes) -> Optional[float]:
-        """Nyers BLE notification bájtokból kinyeri a mért értéket.
-
-        Returns:
-            A kinyert érték (float), vagy None ha az adat érvénytelen/túl rövid.
-        """
-        ...
-
-    async def run(self) -> None:
-        """A BLE szenzor fogadó fő korrutinja – újracsatlakozási logikával.
-
-        Ha nincs device_name, automatikusan keres a SERVICE_UUID alapján
-        hirdető eszközt, és folyamatosan próbálkozik, amíg talál egyet.
-        """
-        label = self._sensor_label
-        if not _BLEAK_AVAILABLE:
-            user_logger.warning(f"⚠ {label}: bleak könyvtár nem elérhető!")
-            return
-
-        if self.device_name:
-            user_logger.info(f"{label} keresés indítva: {self.device_name}")
-        else:
-            user_logger.info(f"{label}: nincs eszköznév megadva, automatikus felderítés...")
-
-        while True:
-            try:
-                await self._scan_and_subscribe()
-                # _scan_and_subscribe normálisan tért vissza (pl. a BLE eszköz
-                # lekapcsolódott de a connect/subscribe sikeres volt).
-                # Rövid várakozás az újracsatlakozás előtt, hogy ne legyen
-                # gyors végtelen loop ha az eszköz ismételten megszakad.
-                self._retry_count = 0
-                self.is_connected = False
-                user_logger.warning(
-                    f"⚠ {label} kapcsolat megszakadt, újracsatlakozás "
-                    f"{self.reconnect_interval}s múlva..."
-                )
-                await asyncio.sleep(self.reconnect_interval)
-            except asyncio.CancelledError:
-                break
-            except Exception as exc:
-                self._retry_count += 1
-                self.is_connected = False
-                user_logger.warning(
-                    f"⚠ {label} hiba "
-                    f"({self._retry_count}/{self.max_retries}): {exc}"
-                )
-                if self._retry_count >= self.max_retries:
-                    user_logger.warning(
-                        f"⚠ {label}: {self.max_retries} sikertelen próbálkozás, "
-                        f"{self.RETRY_RESET_SECONDS}s várakozás..."
-                    )
-                    await asyncio.sleep(self.RETRY_RESET_SECONDS)
-                    self._retry_count = 0
-                    user_logger.info(f"{label} keresés újraindítása...")
-                else:
-                    await asyncio.sleep(self.reconnect_interval)
-
-    async def _scan_and_subscribe(self) -> None:
-        """BLE eszköz keresése, csatlakozás, notification feliratkozás.
-
-        Ha device_name megadva: név alapján keres.
-        Ha device_name üres: auto-discovery a SERVICE_UUID alapján.
-        """
-        if not _BLEAK_AVAILABLE:
-            return
-
-        label = self._sensor_label
-        addr = None
-
-        if self.device_name:
-            # --- Név alapú keresés ---
-            logger.debug(f"{label} keresés: {self.device_name}...")
-            devices = await BleakScanner.discover(timeout=self.scan_timeout)
-            for d in devices:
-                if d.name == self.device_name:
-                    addr = d.address
-                    user_logger.info(f"✓ {label} eszköz megtalálva: {d.name} ({d.address})")
-                    break
-                if d.name is None:
-                    logger.debug(f"BLE eszköz név nélkül: {d.address}")
-            if not addr:
-                raise Exception(f"{label} eszköz nem található: '{self.device_name}'")
-        else:
-            # --- Automatikus felderítés service UUID alapján ---
-            matched, _ = await _scan_ble_with_autodiscovery(
-                self.scan_timeout,
-                self.SERVICE_UUID,
-                f"{label} (auto)",
-            )
-            if matched is None:
-                raise Exception(
-                    f"{label}: nem található szolgáltatás eszköz – "
-                    "újrapróbálkozás..."
-                )
-            addr = matched.address
-            user_logger.info(
-                f"\u2713 {label} auto-csatlakozás: "
-                f"{matched.name or '(névtelen)'} ({matched.address})"
-            )
-
-        async with BleakClient(addr) as client:
-            self.is_connected = True
-            self._retry_count = 0
-            user_logger.info(f"✓ {label} csatlakozva: {addr}")
-
-            def _handler(sender: Any, data: bytes) -> None:
-                try:
-                    value = self._parse_notification(data)
-                    if value is None:
-                        return
-                    self.lastdata = time.monotonic()
-                    try:
-                        self._queue.put_nowait(value)
-                    except asyncio.QueueFull:
-                        logger.debug(f"{label} queue teli, adat elvetve")
-                except Exception as exc:
-                    logger.warning(f"{label} notification hiba: {exc}")
-
-            await client.start_notify(self.MEASUREMENT_UUID, _handler)
-            while client.is_connected:
-                await asyncio.sleep(1)
-            # stop_notify felesleges bontott kapcsolaton – a context manager kezeli
-
-        self.is_connected = False
-
-
-# ============================================================
-# BLE POWER BEMENŐ ADATKEZELÉS
-# ============================================================
-
-
-class BLEPowerInputHandler(_BLESensorInputHandler):
-    """BLE Cycling Power Service (UUID: 0x1818) fogadó.
-
-    Parse: flags (2 bájt LE) → instantaneous power (2 bájt LE, signed int16).
-    """
-
-    SERVICE_UUID = "00001818-0000-1000-8000-00805f9b34fb"
-    MEASUREMENT_UUID = "00002a63-0000-1000-8000-00805f9b34fb"
-    _sensor_label = "BLE Power"
-    _settings_prefix = "ble_power"
-
-    @property
-    def power_lastdata(self) -> float:
-        """Visszafelé kompatibilis alias a lastdata attribútumhoz."""
-        return self.lastdata
-
-    @power_lastdata.setter
-    def power_lastdata(self, value: float) -> None:
-        self.lastdata = value
-
-    def _parse_notification(self, data: bytes) -> Optional[float]:
-        if len(data) < 4:
-            return None
-        return float(int.from_bytes(data[2:4], byteorder="little", signed=True))
-
-
-# ============================================================
-# BLE HR BEMENŐ ADATKEZELÉS
-# ============================================================
-
-
-class BLEHRInputHandler(_BLESensorInputHandler):
-    """BLE Heart Rate Service (UUID: 0x180D) fogadó.
-
-    Parse: flags byte bit 0 → 0 = 8-bites HR, 1 = 16-bites HR.
-    """
-
-    SERVICE_UUID = "0000180d-0000-1000-8000-00805f9b34fb"
-    MEASUREMENT_UUID = "00002a37-0000-1000-8000-00805f9b34fb"
-    _sensor_label = "BLE HR"
-    _settings_prefix = "ble_hr"
-
-    @property
-    def hr_lastdata(self) -> float:
-        """Visszafelé kompatibilis alias a lastdata attribútumhoz."""
-        return self.lastdata
-
-    @hr_lastdata.setter
-    def hr_lastdata(self, value: float) -> None:
-        self.lastdata = value
-
-    def _parse_notification(self, data: bytes) -> Optional[float]:
-        if len(data) < 2:
-            return None
-        flags = data[0]
-        # bit 0: 0 = 8-bites HR, 1 = 16-bites HR
-        if flags & 0x01:
-            if len(data) < 3:
-                return None
-            return float(int.from_bytes(data[1:3], byteorder="little"))
-        return float(data[1])
+# A _BLESensorInputHandler ősosztály és a BLEPowerInputHandler /
+# BLEHRInputHandler alosztályok a smart_fan_controller.handlers._ble
+# modulba kerültek. Fent re-importálva a smart_fan_controller.handlers
+# csomagból (a _scan_ble_with_autodiscovery segédfüggvénnyel együtt).
 
 
 # ============================================================
@@ -2125,7 +1896,7 @@ class LCARSSoundManager:
             return
         for name, tones in self._SOUND_DEFS.items():
             try:
-                wav_data = _generate_tone(tones)
+                wav_data = generate_tone(tones)
                 wav_path = os.path.join(self._temp_dir, f"{name}.wav")
                 with open(wav_path, "wb") as f:
                     f.write(wav_data)

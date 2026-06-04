@@ -273,8 +273,9 @@ class BLEFanOutputController:
         # Utolsó reconnect kísérlet ideje – non-blocking reconnect logikához
         self._last_reconnect_attempt: float = 0.0
         self._loop: Optional[asyncio.AbstractEventLoop] = None
-        self._log_dir: str = resolve_log_dir(None)
-        self._logging_enabled: bool = settings.get("logging", {}).get("enabled", False)
+        gs = settings["global_settings"]
+        self._log_dir: str = resolve_log_dir(gs.log_directory)
+        self._logging_enabled: bool = gs.logging
 
     @property
     def auth_failed(self) -> bool:
@@ -705,8 +706,9 @@ class _BLESensorInputHandler(abc.ABC):
         self.is_connected = False
         self._retry_count = 0
         self.lastdata = 0.0
-        self._log_dir: str = resolve_log_dir(None)
-        self._logging_enabled: bool = settings.get("logging", {}).get("enabled", False)
+        gs = settings["global_settings"]
+        self._log_dir: str = resolve_log_dir(gs.log_directory)
+        self._logging_enabled: bool = gs.logging
 
     @abc.abstractmethod
     def _parse_notification(self, data: bytes) -> Optional[float]:

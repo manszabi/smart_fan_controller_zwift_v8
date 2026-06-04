@@ -16,19 +16,28 @@ from typing import List, Optional, Tuple
 user_logger = logging.getLogger("user")
 
 
-def resolve_log_dir(log_directory: Optional[str]) -> str:
+def resolve_log_dir(
+    log_directory: Optional[str], default_dir: Optional[str] = None
+) -> str:
     """Log könyvtár meghatározása és validálása.
 
     Ha ``log_directory`` None, üres, vagy nem létezik / nem hozható létre,
-    az alkalmazás indítási könyvtárát (CWD) használja fallback-ként.
+    a ``default_dir`` fallback-et használja. Ha ``default_dir`` None,
+    az aktuális munkakönyvtárat (CWD) használja.
+
+    A fő alkalmazás a saját modul-könyvtárát adja át ``default_dir``-ként,
+    hogy a logok a script mellé kerüljenek (a refaktor előtti viselkedés),
+    nem pedig az indítási munkakönyvtárba.
 
     Args:
         log_directory: Kérésezett log könyvtár elérési útja, vagy None.
+        default_dir: Fallback könyvtár (None = aktuális munkakönyvtár).
 
     Returns:
         Érvényes, írható könyvtár elérési útja.
     """
-    default_dir = os.getcwd()
+    if default_dir is None:
+        default_dir = os.getcwd()
 
     if not log_directory:
         return default_dir
