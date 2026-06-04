@@ -1,4 +1,4 @@
-"""Tiszta domain-logika (zóna számítás, validáció, átlagolás, cooldown, UI).
+"""Tiszta domain-logika (zóna számítás, validáció, átlagolás, cooldown, UI state).
 
 Ez a csomag a mellékhatás-mentes (Qt/BLE/IO-független) magfüggvényeket és
 -osztályokat gyűjti össze, amelyek korábban a fő alkalmazás moduljában éltek.
@@ -13,6 +13,7 @@ from .averaging import (
 )
 from .cooldown import CooldownController
 from .printers import ConsolePrinter
+from .state import UISnapshot
 from .zones import (
     apply_zone_mode,
     calculate_hr_zones,
@@ -43,4 +44,6 @@ __all__ = [
     "CooldownController",
     # printers
     "ConsolePrinter",
+    # state
+    "UISnapshot",
 ]
