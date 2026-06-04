@@ -1,9 +1,8 @@
-"""Tiszta domain-logika (zóna számítás, validáció, átlagolás, cooldown, asyncio state).
+"""Tiszta domain-logika (zóna, átlagolás, cooldown, state, helpers, asyncio).
 
 Ez a csomag a mellékhatás-mentes (Qt/BLE/IO-független) magfüggvényeket és
--osztályokat gyűjti össze, amelyek korábban a fő alkalmazás moduljában éltek.
-Az asyncio.Lock használat lehetővé teszi az async korrutinok közötti
-szálbiztos adatcserét.
+-osztályokat gyűjti össze. Az asyncio.Lock használat lehetővé teszi az async
+korrutinok közötti szálbiztos adatcserét.
 """
 from __future__ import annotations
 
@@ -14,6 +13,7 @@ from .averaging import (
     compute_average,
 )
 from .cooldown import CooldownController
+from .helpers import generate_tone, resolve_log_dir
 from .printers import ConsolePrinter
 from .state import ControllerState, UISnapshot
 from .zones import (
@@ -49,4 +49,7 @@ __all__ = [
     # state
     "ControllerState",
     "UISnapshot",
+    # helpers
+    "resolve_log_dir",
+    "generate_tone",
 ]

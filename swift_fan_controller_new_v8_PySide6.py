@@ -189,38 +189,7 @@ logger = logging.getLogger("swift_fan_controller_new")
 user_logger = logging.getLogger("user")
 
 
-def _resolve_log_dir(log_directory: Optional[str]) -> str:
-    """Log könyvtár meghatározása és validálása.
-
-    Ha ``log_directory`` None, üres, vagy nem létezik / nem hozható létre,
-    a program indítási könyvtárát (CWD) használja fallback-ként.
-
-    Returns:
-        Érvényes, írható könyvtár elérési útja.
-    """
-    default_dir = os.path.dirname(os.path.abspath(__file__))
-
-    if not log_directory:
-        return default_dir
-
-    log_directory = os.path.expanduser(log_directory)
-    log_directory = os.path.abspath(log_directory)
-
-    try:
-        os.makedirs(log_directory, exist_ok=True)
-        # Írhatóság tesztelése
-        test_file = os.path.join(log_directory, ".log_write_test")
-        with open(test_file, "w") as f:
-            f.write("test")
-        os.remove(test_file)
-        return log_directory
-    except OSError:
-        # Nem sikerült létrehozni / írni – fallback
-        user_logger.warning(
-            f"⚠ log_directory nem elérhető: '{log_directory}', "
-            f"alapértelmezett használata: '{default_dir}'"
-        )
-        return default_dir
+# (A _resolve_log_dir a smart_fan_controller.core.helpers modulba kerül; fent re-exportálva.)
 
 
 # Modul-szintű változó: a feloldott log könyvtár (_setup_logging állítja be)
@@ -266,7 +235,7 @@ def _setup_logging(log_directory: Optional[str] = None, logging_enabled: bool = 
         logging.getLogger("openant").setLevel(logging.CRITICAL)
         return
 
-    _log_dir = _resolve_log_dir(log_directory)
+    _log_dir = resolve_log_dir(log_directory)
     log_file = os.path.join(_log_dir, "smart_fan_controller.log")
 
     file_fmt = logging.Formatter(
@@ -403,6 +372,8 @@ from smart_fan_controller.core import (
     ConsolePrinter,
     ControllerState,
     UISnapshot,
+    resolve_log_dir,
+    generate_tone,
 )
 
 
@@ -3267,42 +3238,7 @@ class LCARSSidebarWidget(QWidget):
 # ────────────────────────────────────────────────────────────────────────────
 
 
-def _generate_tone(
-    frequencies: List[Tuple[float, float, float]],
-    sample_rate: int = 22050,
-    volume: float = 0.4,
-) -> bytes:
-    """Szinuszhullám-alapú WAV generálás memóriában.
-
-    Args:
-        frequencies: lista (freq_hz, duration_sec, amplitude_mult) tuple-ökből.
-                     Több elem esetén egymás után fűzi a hangokat.
-        sample_rate: mintavételezési ráta
-        volume: hangerő szorzó (0.0–1.0)
-    """
-    samples: list[int] = []
-    for freq, duration, amp in frequencies:
-        n_samples = int(sample_rate * duration)
-        for i in range(n_samples):
-            t = i / sample_rate
-            # Hullámforma + fade in/out a kattanás elkerülésére
-            fade_samples = min(200, n_samples // 4)
-            fade = 1.0
-            if fade_samples > 0:
-                if i < fade_samples:
-                    fade = i / fade_samples
-                elif i > n_samples - fade_samples:
-                    fade = (n_samples - i) / fade_samples
-            val = math.sin(2 * math.pi * freq * t) * volume * amp * fade
-            samples.append(int(val * 32767))
-
-    buf = io.BytesIO()
-    with wave.open(buf, "wb") as wf:
-        wf.setnchannels(1)
-        wf.setsampwidth(2)
-        wf.setframerate(sample_rate)
-        wf.writeframes(struct.pack(f"<{len(samples)}h", *samples))
-    return buf.getvalue()
+# (A _generate_tone a smart_fan_controller.core.helpers modulba kerül; fent re-exportálva.)
 
 
 class LCARSSoundManager:
