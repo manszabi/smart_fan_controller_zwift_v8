@@ -12,6 +12,7 @@ from unittest.mock import patch
 
 import pytest
 
+from smart_fan_controller.core import resolve_log_dir as _resolve_log_dir
 from swift_fan_controller_new_v8_PySide6 import (
     ZoneMode,
     DataSource,
@@ -28,7 +29,6 @@ from swift_fan_controller_new_v8_PySide6 import (
     BleConfig,
     DatasourceConfig,
     HudConfig,
-    _resolve_log_dir,
     _setup_logging,
     _setup_early_logging,
     _flush_early_logging,
