@@ -34,7 +34,6 @@ from swift_fan_controller_new_v8_PySide6 import (
     _setup_early_logging,
     _flush_early_logging,
     _discard_early_logging,
-    _log_ant_device_to_file,
 )
 import logging as _logging
 import json as _json
@@ -1514,7 +1513,7 @@ class TestLoggingToggle:
             shutil.rmtree(tmp, ignore_errors=True)
 
     def test_device_logs_gated_when_disabled(self):
-        """logging:false → ble/ant eszköz-fájlok sem jönnek létre."""
+        """logging:false → ble eszköz-fájl sem jön létre."""
         self._reset()
         tmp = tempfile.mkdtemp()
         old_dir, old_flag = _mainmod._log_dir, _mainmod._logging_enabled
@@ -1522,15 +1521,13 @@ class TestLoggingToggle:
             _mainmod._log_dir = tmp
             _mainmod._logging_enabled = False
             _log_ble_devices_to_file([("Fan", "AA:BB", ["uuid"])], "BLE Fan", tmp, False)
-            _log_ant_device_to_file("PowerMeter", 123, "info")
             assert not os.path.exists(os.path.join(tmp, "ble_devices.log"))
-            assert not os.path.exists(os.path.join(tmp, "ant_devices.log"))
         finally:
             _mainmod._log_dir, _mainmod._logging_enabled = old_dir, old_flag
             shutil.rmtree(tmp, ignore_errors=True)
 
     def test_device_logs_written_when_enabled(self):
-        """logging:true → ble/ant eszköz-fájlok létrejönnek."""
+        """logging:true → ble eszköz-fájl létrejön."""
         self._reset()
         tmp = tempfile.mkdtemp()
         old_dir, old_flag = _mainmod._log_dir, _mainmod._logging_enabled
@@ -1539,9 +1536,7 @@ class TestLoggingToggle:
             _mainmod._logging_enabled = True
             _log_ble_devices_to_file([("Fan", "AA:BB", ["uuid"])], "BLE Fan", tmp, True)
             _log_ble_devices_to_file([("Fan", "AA:BB", ["uuid"])], "BLE Fan", tmp, True)
-            _log_ant_device_to_file("PowerMeter", 123, "info")
             assert os.path.exists(os.path.join(tmp, "ble_devices.log"))
-            assert os.path.exists(os.path.join(tmp, "ant_devices.log"))
         finally:
             _mainmod._log_dir, _mainmod._logging_enabled = old_dir, old_flag
             shutil.rmtree(tmp, ignore_errors=True)
