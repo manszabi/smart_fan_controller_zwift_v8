@@ -1,4 +1,4 @@
-"""Tiszta domain-logika (zóna számítás, validáció, átlagolás).
+"""Tiszta domain-logika (zóna számítás, validáció, átlagolás, cooldown).
 
 Ez a csomag a mellékhatás-mentes (Qt/BLE/IO-független) magfüggvényeket és
 -osztályokat gyűjti össze, amelyek korábban a fő alkalmazás moduljában éltek.
@@ -11,6 +11,7 @@ from .averaging import (
     _RollingAverager,
     compute_average,
 )
+from .cooldown import CooldownController
 from .zones import (
     apply_zone_mode,
     calculate_hr_zones,
@@ -37,4 +38,6 @@ __all__ = [
     "_RollingAverager",
     "PowerAverager",
     "HRAverager",
+    # cooldown
+    "CooldownController",
 ]
