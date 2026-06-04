@@ -13,18 +13,15 @@ This module contains the visual components for the LCARS-style HUD:
 from __future__ import annotations
 
 import atexit
-import io
 import logging
 import math
 import os
 import platform as _platform
 import shutil
-import struct
 import sys
 import tempfile
 import threading
 import time
-import wave
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 from PySide6.QtCore import Qt, QTimer, QPoint, QSize, QRectF, QUrl
@@ -38,15 +35,16 @@ from PySide6.QtWidgets import (
     QSlider, QMenu, QFrame,
 )
 
+from smart_fan_controller import __version__
 from smart_fan_controller.config import DataSource, ZoneMode
 from smart_fan_controller.config.loader import HudConfig, DatasourceConfig
 from smart_fan_controller.core.helpers import generate_tone
 
 if TYPE_CHECKING:
-    from smart_fan_controller.controller import FanController
-    from PySide6.QtWidgets import QApplication
-
-__version__ = "8.0.0"
+    # A FanController jelenleg a gyökér scriptben él (swift_fan_controller_new_v8_PySide6).
+    # Hogy a package ne hivatkozzon vissza a scriptre, a típust Any-ként kezeljük;
+    # a controller egy lazán kezelt, csak továbbadott objektum.
+    FanController = Any
 
 logger = logging.getLogger("swift_fan_controller_new")
 
@@ -1220,7 +1218,7 @@ class HUDWindow(QWidget):
                 # QTimer.singleShot háttérszálból NEM működik (nincs Qt event
                 # loop). QMetaObject.invokeMethod thread-safe: a fő szál event
                 # loop-jába ütemezi a close() hívást.
-                from PySide6.QtCore import QMetaObject, Qt, Q_ARG
+                from PySide6.QtCore import QMetaObject
                 QMetaObject.invokeMethod(
                     self, "close", Qt.ConnectionType.QueuedConnection,
                 )
