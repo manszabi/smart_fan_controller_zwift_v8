@@ -218,8 +218,15 @@ class CooldownController:
             return True, remaining
 
     def __repr__(self) -> str:
-        active, remaining = self.snapshot()
+        with self._lock:
+            if not self.active:
+                active, remaining = False, 0.0
+            else:
+                remaining = max(0.0, self.cooldown_seconds - (time.monotonic() - self.start_time))
+                active = True
+            pending = self.pending_zone
+            cd_seconds = self.cooldown_seconds
         return (
             f"CooldownController(active={active}, remaining={remaining:.1f}s, "
-            f"pending_zone={self.pending_zone}, cooldown={self.cooldown_seconds}s)"
+            f"pending_zone={pending}, cooldown={cd_seconds}s)"
         )
