@@ -52,9 +52,10 @@ if errorlevel 1 (
     exit /b 1
 )
 
-:: Copy settings files to dist
+:: Copy settings to dist (a Zwift API beallitasok is ebben a fajlban vannak,
+:: a "zwift_api" szekcioban - nincs kulon zwift_api_settings.json tobbe).
 echo.
-echo Settings fajlok masolasa...
+echo Settings fajl masolasa...
 if not exist "dist\SmartFanController\settings.json" (
     if exist "settings.json" (
         copy settings.json "dist\SmartFanController\settings.json" >nul
@@ -63,13 +64,6 @@ if not exist "dist\SmartFanController\settings.json" (
         copy settings.example.json "dist\SmartFanController\settings.json" >nul
         echo [OK] settings.example.json masolva mint settings.json
     )
-)
-if exist "zwift_api_settings.json" (
-    copy zwift_api_settings.json "dist\SmartFanController\zwift_api_settings.json" >nul
-    echo [OK] zwift_api_settings.json masolva
-) else if exist "zwift_api_settings.example.json" (
-    copy zwift_api_settings.example.json "dist\SmartFanController\zwift_api_settings.example.json" >nul
-    echo [OK] zwift_api_settings.example.json masolva
 )
 
 echo.
