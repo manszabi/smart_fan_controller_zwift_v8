@@ -22,6 +22,17 @@ main_a = Analysis(
         ('smart_fan_controller/fonts', 'smart_fan_controller/fonts'),
     ],
     hiddenimports=[
+        # A belépő script vékony – a tényleges kód a smart_fan_controller csomagban.
+        # A fő modulokat expliciten felvesszük, hogy a PyInstaller biztosan bekösse.
+        'smart_fan_controller',
+        'smart_fan_controller.app',
+        'smart_fan_controller.controller',
+        'smart_fan_controller.config',
+        'smart_fan_controller.core',
+        'smart_fan_controller.handlers',
+        'smart_fan_controller.processors',
+        'smart_fan_controller.ui',
+        'smart_fan_controller.zwift_api',
         'PySide6',
         'PySide6.QtWidgets',
         'PySide6.QtCore',

@@ -41,9 +41,9 @@ from smart_fan_controller.config.loader import HudConfig, DatasourceConfig
 from smart_fan_controller.core.helpers import generate_tone
 
 if TYPE_CHECKING:
-    # A FanController jelenleg a gyökér scriptben él (swift_fan_controller_new_v8_PySide6).
-    # Hogy a package ne hivatkozzon vissza a scriptre, a típust Any-ként kezeljük;
-    # a controller egy lazán kezelt, csak továbbadott objektum.
+    # A FanController a smart_fan_controller.controller modulban él. A körkörös
+    # import elkerülésére a típust itt Any-ként kezeljük; a controller egy
+    # lazán kezelt, csak továbbadott objektum.
     FanController = Any
 
 logger = logging.getLogger("swift_fan_controller_new")
