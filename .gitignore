@@ -205,3 +205,23 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# ============================================================
+# Smart Fan Controller – projekt-specifikus
+# ============================================================
+# Felhasznaloi konfiguracio: a program a settings.default.json-bol hozza letre,
+# es a "zwift_api" szekcioban PLAINTEXT Zwift jelszot tartalmazhat – soha ne
+# kerüljön a repóba. (A verziokovetett sablonok: settings.example.json/.jsonc.)
+settings.json
+# A loader.py szintaxishibas settings.json eseten ide menti a felhasznalo
+# kezi szerkeszteseit (szinten tartalmazhat jelszot).
+settings.json.incorrect
+
+# Generalt log fajlok (a *.log mar fent ignoralt, itt csak egyertelmusites):
+smart_fan_controller.log
+zwift_api_polling.log
+ble_devices.log
+ant_devices.log
+
+# A verziokovetett PyInstaller spec NE essen a fenti '*.spec' minta ala.
+!smart_fan_controller.spec
