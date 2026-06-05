@@ -22,6 +22,7 @@ __all__ = [
     "setup_early_logging",
     "flush_early_logging",
     "discard_early_logging",
+    "is_logging_enabled",
 ]
 
 logger = logging.getLogger("swift_fan_controller_new")
@@ -157,3 +158,12 @@ def discard_early_logging() -> None:
         mh.buffer.clear()
         mh.close()
     _early_mem_handlers = []
+
+
+def is_logging_enabled() -> bool:
+    """Visszaadja, hogy a loggolás engedélyezve van-e (setup_logging állítja).
+
+    A ``print_startup_info`` használja: ha a loggolás ki van kapcsolva,
+    ``print()``-re vált, hogy a startup összefoglaló akkor is megjelenjen.
+    """
+    return _logging_enabled

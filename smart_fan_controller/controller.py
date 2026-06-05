@@ -9,7 +9,6 @@ A FanController feladata:
 """
 
 import asyncio
-import logging
 import os
 import platform as _platform
 import subprocess
@@ -22,7 +21,6 @@ from smart_fan_controller.config import (
     BleConfig,
     DataSource,
     DatasourceConfig,
-    GlobalSettingsConfig,
     HeartRateZonesConfig,
     PowerZonesConfig,
     get_effective_zone_mode,
@@ -37,12 +35,8 @@ from smart_fan_controller.core import (
     PowerAverager,
     calculate_hr_zones,
     calculate_power_zones,
-    discard_early_logging,
-    flush_early_logging,
-    generate_tone,
+    is_logging_enabled,
     logger,
-    setup_early_logging,
-    setup_logging,
     user_logger,
 )
 from smart_fan_controller.handlers import (
@@ -53,7 +47,6 @@ from smart_fan_controller.handlers import (
     BLEPowerInputHandler,
     ZwiftUDPInputHandler,
     _ANTPLUS_AVAILABLE,
-    send_zone,
 )
 from smart_fan_controller.processors import (
     _guarded_task,
@@ -65,9 +58,6 @@ from smart_fan_controller.processors import (
 
 __version__ = "8.0.0"
 __all__ = ["FanController"]
-
-# Global state for logging
-_logging_enabled: bool = True
 
 
 class FanController:
@@ -426,22 +416,29 @@ class FanController:
             finally:
                 self._zwift_proc = None
 
+        # A settings.json útvonalát átadjuk – a subprocess a "zwift_api"
+        # szekcióból olvassa a bejelentkezési adatokat és a beállításokat.
+        settings_arg = ["--settings", os.path.abspath(self.settings_file)]
+        # Külön ablak (saját konzol) a zwift_api.separate_window flag szerint.
+        zwift_cfg = self.settings.get("zwift_api")
+        separate_window = getattr(zwift_cfg, "separate_window", True)
+
         try:
             if getattr(sys, "frozen", False):
                 exe_dir = os.path.dirname(os.path.abspath(sys.executable))
-                cmd = [os.path.join(exe_dir, f"{script_name}.exe")]
+                cmd = [os.path.join(exe_dir, f"{script_name}.exe"), *settings_arg]
             else:
-                monitor_script = os.path.join(
-                    os.path.dirname(os.path.abspath(__file__)), f"{script_name}.py"
-                )
-                cmd = [sys.executable, monitor_script]
+                # -m modul futtatás: nem függ a script útvonalától (a csomag
+                # importálható), a vékony shim (zwift_api_polling.py) helyett.
+                cmd = [sys.executable, "-m", "smart_fan_controller.zwift_api", *settings_arg]
 
-            if _platform.system() == "Windows":
+            if _platform.system() == "Windows" and separate_window:
                 startupinfo = subprocess.STARTUPINFO()
                 startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
                 startupinfo.wShowWindow = 4  # SW_SHOWNOACTIVATE
                 creation_flags = subprocess.CREATE_NEW_CONSOLE
             else:
+                # Nincs külön ablak: a subprocess a háttérben fut (vagy nem-Windows).
                 startupinfo = None
                 creation_flags = 0
 
@@ -455,14 +452,14 @@ class FanController:
                 popen_kwargs["close_fds"] = True
 
             self._zwift_proc = subprocess.Popen(cmd, **popen_kwargs)
-            logger.info(f"{script_name}.py elindítva (PID: {self._zwift_proc.pid})")
+            logger.info(f"{script_name} elindítva (PID: {self._zwift_proc.pid})")
 
         except FileNotFoundError as exc:
-            logger.error(f"{script_name}.py nem található: {exc}")
+            logger.error(f"{script_name} nem található: {exc}")
         except OSError as exc:
-            logger.error(f"{script_name}.py indítása sikertelen: {exc}")
+            logger.error(f"{script_name} indítása sikertelen: {exc}")
         except Exception as exc:
-            logger.error(f"Váratlan hiba {script_name}.py indításakor: {exc}")
+            logger.error(f"Váratlan hiba {script_name} indításakor: {exc}")
 
     def print_startup_info(self) -> None:
         """Kiírja az indítási konfigurációs összefoglalót.
@@ -471,7 +468,7 @@ class FanController:
         ``print()``-tel ír, hogy a startup info akkor is megjelenjen.
         """
         # Loggolás kikapcsolva → print(); egyébként user_logger.info
-        emit = user_logger.info if _logging_enabled else print
+        emit = user_logger.info if is_logging_enabled() else print
 
         s = self.settings
         ds: DatasourceConfig = s["datasource"]

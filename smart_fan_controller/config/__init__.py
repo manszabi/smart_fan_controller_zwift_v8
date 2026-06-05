@@ -17,6 +17,7 @@ from .schemas import (
     HudConfig,
     PowerZonesConfig,
     ZoneMode,
+    ZwiftApiConfig,
 )
 from .loader import (
     get_effective_zone_mode,
@@ -37,6 +38,7 @@ __all__ = [
     "BleConfig",
     "DatasourceConfig",
     "HudConfig",
+    "ZwiftApiConfig",
     # Betöltés és lekérdezések
     "DEFAULT_SETTINGS",
     "load_settings",

@@ -186,5 +186,29 @@
     // elsődleges monitorra kerül az ablak.
     // Formátum: {"<monitor_név>": {"x": .., "y": .., "w": .., "h": ..}}
     "window_geometry": {}
+  },
+
+  // ============================================================
+  // ZWIFT API POLLING – a Zwift HTTPS API lekérdező segédprocessz
+  // ============================================================
+  // Akkor használatos, ha a datasource power_source vagy hr_source értéke
+  // "zwiftudp". A fő program külön processzként (alapból külön ablakban)
+  // indítja, és UDP-n (datasource.zwift_udp_host:zwift_udp_port) kapja az
+  // adatokat. A broadcast cél a datasource szekcióból jön – itt nincs duplikálva.
+  "zwift_api": {
+    // Zwift fiók bejelentkezési adatok (a regisztrációkor megadott e-mail és jelszó).
+    // FIGYELEM: a jelszó titkosítatlanul (plaintext) tárolódik ebben a fájlban.
+    // Biztonságosabb alternatíva: ZWIFT_USERNAME / ZWIFT_PASSWORD környezeti változók,
+    // amelyek elsőbbséget élveznek az itteni értékekkel szemben.
+    "username": "",
+    "password": "",
+
+    // Lekérdezési gyakoriság másodpercben (1.0–60.0). Ajánlott: 3.0–5.0.
+    // Alacsonyabb érték = gyakoribb frissítés, de nagyobb API terhelés.
+    "poll_interval": 3.0,
+
+    // Ha true, a segédprocessz saját konzol-ablakban fut (Windows: CREATE_NEW_CONSOLE),
+    // így látszik a bejelentkezés és a lekérdezett adatok folyama. Ha false, a háttérben fut.
+    "separate_window": true
   }
 }

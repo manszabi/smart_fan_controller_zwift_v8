@@ -79,5 +79,11 @@
     "close_at_zwiftapp.exe": true,
     "opacity": 92,
     "window_geometry": {}
+  },
+  "zwift_api": {
+    "username": "",
+    "password": "",
+    "poll_interval": 3.0,
+    "separate_window": true
   }
 }

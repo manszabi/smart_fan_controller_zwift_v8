@@ -89,13 +89,29 @@ zwift_a = Analysis(
     ['zwift_api_polling.py'],
     pathex=[],
     binaries=[],
-    datas=[],
+    datas=[
+        # A config package data: a default sablon (a zwift_api szekcióval) – a
+        # loader.py a __file__-hez képest keresi, ezért a package-beli helyre kell.
+        ('smart_fan_controller/config/settings.default.json', 'smart_fan_controller/config'),
+    ],
     hiddenimports=[
         'requests',
         'urllib3',
         'charset_normalizer',
         'certifi',
         'idna',
+        # A tényleges implementáció a smart_fan_controller.zwift_api csomagban van
+        # (a zwift_api_polling.py csak vékony belépő), plus a config a settings.json-hoz.
+        'smart_fan_controller',
+        'smart_fan_controller.zwift_api',
+        'smart_fan_controller.zwift_api.__main__',
+        'smart_fan_controller.zwift_api.api',
+        'smart_fan_controller.zwift_api.decoder',
+        'smart_fan_controller.zwift_api.runtime',
+        'smart_fan_controller.zwift_api.logsetup',
+        'smart_fan_controller.config',
+        'smart_fan_controller.config.schemas',
+        'smart_fan_controller.config.loader',
     ],
     hookspath=[],
     hooksconfig={},

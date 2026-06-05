@@ -255,25 +255,24 @@ Minden forrásnak saját buffer paraméterei vannak. Ha nincs megadva, a globál
 | `zwift_udp_port` | int | 1024–65535 | 7878 | UDP port, amelyen a háttérprogram adatot küld. |
 | `zwift_udp_host` | string | – | `"127.0.0.1"` | UDP host (localhost). |
 
-Ha `power_source` vagy `hr_source` értéke `"zwiftudp"`, a program automatikusan elindítja a `zwift_api_polling.py` scriptet subprocessként. A script Zwift HTTPS API OAuth2 lekérdezéssel szerzi meg az adatokat (Zwift fiókhoz bejelentkezés szükséges), majd JSON formátumban (power, heartrate, cadence, speed_kmh) továbbítja azokat a `zwift_udp_host:zwift_udp_port` címre.
+Ha `power_source` vagy `hr_source` értéke `"zwiftudp"`, a program automatikusan elindítja a Zwift API polling segédprocesszt (`python -m smart_fan_controller.zwift_api`, illetve frozen exe esetén `zwift_api_polling.exe`). A segédprocessz Zwift HTTPS API OAuth2 lekérdezéssel szerzi meg az adatokat (Zwift fiókhoz bejelentkezés szükséges), majd JSON formátumban (power, heartrate, cadence, speed_kmh) továbbítja azokat a `zwift_udp_host:zwift_udp_port` címre.
 
-Ha a `zwift_api_polling.py` nem küld adatot, a szokásos dropout logika (ventilátor leállítása) lép életbe.
+Ha a segédprocessz nem küld adatot, a szokásos dropout logika (ventilátor leállítása) lép életbe.
 
-#### `zwift_api_polling.py` saját beállításai (`zwift_api_settings.json`)
+#### Zwift API polling beállításai (`zwift_api` szekció)
 
-A háttérscript **külön** beállításfájlt használ (`zwift_api_settings.json`), a fő `settings.json`-tól függetlenül:
+A segédprocessz a fő `settings.json` **`zwift_api`** szekciójából olvas (nincs külön beállításfájl). A fő app a `settings.json` útvonalát adja át neki (`--settings`):
 
 | Mező | Típus | Tartomány | Alapértelmezett | Leírás |
 |------|-------|-----------|-----------------|--------|
 | `username` | string | – | `""` | Zwift felhasználónév / e-mail. |
 | `password` | string | – | `""` | Zwift jelszó (titkosítatlanul mentve!). |
-| `broadcast_host` | string | – | `"127.0.0.1"` | UDP cél host. |
-| `broadcast_port` | int | 1–65535 | 7878 | UDP cél port. |
-| `poll_interval` | szám | > 0 | 3.0 | Lekérdezési intervallum másodpercben. |
-| `logging` | bool | – | true | Loggolás be/ki. Ha `false`, nincs konzol- és fájl-kimenet (Windows + Linux egyformán). |
-| `log_directory` | string\|null | – | null | A `zwift_api_polling.log` könyvtára. `null`/`"null"`/hiányzó → a script könyvtára. |
+| `poll_interval` | szám | 1.0–60.0 | 3.0 | Lekérdezési intervallum másodpercben. |
+| `separate_window` | bool | – | true | Ha `true`, a segédprocessz saját konzol-ablakban fut (Windows: `CREATE_NEW_CONSOLE`); ha `false`, a háttérben. |
 
-A `logging` és `log_directory` ugyanúgy viselkedik, mint a fő app `global_settings`-ében: `logging: false` → teljes némaság, nem jön létre `zwift_api_polling.log`; `logging: true` → konzol + rotált log fájl (500 KB, 2 backup). A `--debug` CLI kapcsoló DEBUG szintre állítja a részletes diagnosztikai logokat.
+**A broadcast cél (UDP host/port) nem itt van**, hanem a `datasource.zwift_udp_host` / `zwift_udp_port` mezőkből jön – így nem duplikálódik. A **loggolást** a fő app `global_settings.logging` / `log_directory` vezérli (egységesen): `logging: false` → nem jön létre `zwift_api_polling.log`; `logging: true` → konzol + rotált log fájl (500 KB, 2 backup) a `log_directory`-ban. A `--debug` CLI kapcsoló DEBUG szintre állítja a részletes diagnosztikai logokat.
+
+**Credential prioritás:** `--username`/`--password` CLI > `ZWIFT_USERNAME`/`ZWIFT_PASSWORD` környezeti változó > `settings.json` `zwift_api` szekció > interaktív bekérés (külön ablak esetén; az eredmény a `settings.json`-ba mentődik).
 
 ### Zwift automatikus indítás
 
