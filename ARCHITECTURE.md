@@ -1,44 +1,44 @@
-# Smart Fan Controller v8 - Architecture
+# Smart Fan Controller v8 - Architektura
 
-## High-Level Overview
+## Magas szintu attekintes
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
-│                          MAIN THREAD                                    │
-│                  (Qt event loop + signal handling)                       │
+│                          FO SZAL (MAIN THREAD)                          │
+│                  (Qt esemenyhurok + jelkezeles)                          │
 │                                                                         │
 │  ┌───────────────────────────────────────────────────────────────────┐  │
-│  │                    HUD Window (PySide6)                           │  │
-│  │                  Star Trek LCARS Theme                            │  │
-│  │          500ms refresh, sound effects, always-on-top              │  │
+│  │                    HUD Ablak (PySide6)                            │  │
+│  │                  Star Trek LCARS Tema                             │  │
+│  │          500ms frissites, hangeffektek, mindig felul              │  │
 │  └──────────────────────────┬────────────────────────────────────────┘  │
-│                             │ reads UISnapshot (thread-safe)            │
+│                             │ UISnapshot olvasas (szalbiztos)           │
 └─────────────────────────────┼───────────────────────────────────────────┘
                               │
 ┌─────────────────────────────┼───────────────────────────────────────────┐
-│                    ASYNCIO THREAD (daemon)                               │
+│                    ASYNCIO SZAL (daemon)                                 │
 │                                                                         │
 │  ┌──────────────────────────┴────────────────────────────────────────┐  │
 │  │                    FanController.run()                             │  │
-│  │                   (main orchestrator)                              │  │
+│  │                   (fo vezerloelemem)                               │  │
 │  └───────────────────────────────────────────────────────────────────┘  │
 │                                                                         │
-│  ┌─────────────────── INPUT HANDLERS ──────────────────────────────┐   │
+│  ┌───────────────── BEMENETI KEZELOK ─────────────────────────────┐   │
 │  │                                                                  │   │
 │  │  ┌──────────────┐  ┌──────────────┐  ┌───────────────────────┐  │   │
-│  │  │  ANT+ Input  │  │  BLE Input   │  │   Zwift Input         │  │   │
-│  │  │  (Thread)    │  │  (async)     │  │   (async)             │  │   │
+│  │  │  ANT+ Bemenet│  │  BLE Bemenet │  │   Zwift Bemenet       │  │   │
+│  │  │  (Szal)      │  │  (async)     │  │   (async)             │  │   │
 │  │  │              │  │              │  │                       │  │   │
 │  │  │ ┌──────────┐ │  │ ┌──────────┐ │  │  ┌─────────────────┐ │  │   │
-│  │  │ │Power     │ │  │ │Power     │ │  │  │ ZwiftAuth       │ │  │   │
-│  │  │ │Meter     │ │  │ │Service   │ │  │  │ (OAuth2)        │ │  │   │
+│  │  │ │Teljesit- │ │  │ │Teljesit- │ │  │  │ ZwiftAuth       │ │  │   │
+│  │  │ │menymero  │ │  │ │meny      │ │  │  │ (OAuth2)        │ │  │   │
 │  │  │ │(openant) │ │  │ │(0x1818)  │ │  │  ├─────────────────┤ │  │   │
 │  │  │ └──────────┘ │  │ └──────────┘ │  │  │ ZwiftAPIClient  │ │  │   │
 │  │  │ ┌──────────┐ │  │ ┌──────────┐ │  │  │ (HTTPS polling) │ │  │   │
-│  │  │ │Heart     │ │  │ │HR        │ │  │  ├─────────────────┤ │  │   │
-│  │  │ │Rate      │ │  │ │Service   │ │  │  │ProtobufDecoder  │ │  │   │
-│  │  │ │(openant) │ │  │ │(0x180D)  │ │  │  │ → queue         │ │  │   │
-│  │  │ └──────────┘ │  │ └──────────┘ │  │  └─────────────────┘ │  │   │
+│  │  │ │Pulzus-   │ │  │ │Pulzus    │ │  │  ├─────────────────┤ │  │   │
+│  │  │ │mero      │ │  │ │(0x180D)  │ │  │  │ProtobufDecoder  │ │  │   │
+│  │  │ │(openant) │ │  │ └──────────┘ │  │  │ → queue         │ │  │   │
+│  │  │ └──────────┘ │  │              │  │  └─────────────────┘ │  │   │
 │  │  └──────┬───────┘  └──────┬───────┘  └───────────┬───────────┘  │   │
 │  │         │                 │                       │              │   │
 │  └─────────┼─────────────────┼───────────────────────┼──────────────┘   │
@@ -50,13 +50,14 @@
 │  ┌─────────┼─────────────────┼───────────────────────┼──────────────┐   │
 │  │         ▼                 ▼                       ▼              │   │
 │  │  ┌─────────────────────────────────────────────────────────┐    │   │
-│  │  │              PROCESSING PIPELINE                         │    │   │
+│  │  │              FELDOLGOZASI FOLYAMAT                       │    │   │
 │  │  │                                                          │    │   │
 │  │  │  ┌──────────────────┐     ┌──────────────────┐          │    │   │
-│  │  │  │ PowerProcessor   │     │  HRProcessor     │          │    │   │
+│  │  │  │ Teljesitmeny-    │     │  Pulzus-          │          │    │   │
+│  │  │  │ feldolgozo       │     │  feldolgozo       │          │    │   │
 │  │  │  │                  │     │                   │          │    │   │
 │  │  │  │ PowerAverager    │     │  HRAverager       │          │    │   │
-│  │  │  │ (rolling mean)   │     │  (rolling mean)   │          │    │   │
+│  │  │  │ (gorditett atlag)│     │  (gorditett atlag)│          │    │   │
 │  │  │  │       │          │     │       │           │          │    │   │
 │  │  │  │       ▼          │     │       ▼           │          │    │   │
 │  │  │  │ zone_for_power() │     │ zone_for_hr()    │          │    │   │
@@ -66,36 +67,36 @@
 │  │  │          ▼                        ▼                      │    │   │
 │  │  │  ┌────────────────────────────────────────────┐          │    │   │
 │  │  │  │         apply_zone_mode()                  │          │    │   │
-│  │  │  │  (power_only / hr_only / higher_wins)      │          │    │   │
+│  │  │  │  (csak_telj / csak_pulzus / magasabb_nyer) │          │    │   │
 │  │  │  └────────────────────┬───────────────────────┘          │    │   │
 │  │  │                       │                                  │    │   │
 │  │  │                       ▼                                  │    │   │
 │  │  │  ┌────────────────────────────────────────────┐          │    │   │
 │  │  │  │         CooldownController                 │          │    │   │
-│  │  │  │  Zone UP   → instant                       │          │    │   │
-│  │  │  │  Zone DOWN → cooldown timer                │          │    │   │
-│  │  │  │  Adaptive: halve (big drop) / double       │          │    │   │
+│  │  │  │  Zona FEL   → azonnali                     │          │    │   │
+│  │  │  │  Zona LE    → varakozasi ido               │          │    │   │
+│  │  │  │  Adaptiv: felezes (nagy eses) / duplazas   │          │    │   │
 │  │  │  └────────────────────┬───────────────────────┘          │    │   │
 │  │  │                       │                                  │    │   │
 │  │  │  ┌────────────────────┴───────────────────────┐          │    │   │
 │  │  │  │         DropoutChecker                     │          │    │   │
-│  │  │  │  No data > timeout → Z0 + reset averagers  │          │    │   │
+│  │  │  │  Nincs adat > timeout → Z0 + atlag reset   │          │    │   │
 │  │  │  └────────────────────┬───────────────────────┘          │    │   │
 │  │  └───────────────────────┼──────────────────────────────────┘    │   │
 │  │                          │                                       │   │
-│  └──────── PROCESSING ──────┼───────────────────────────────────────┘   │
+│  └──────── FELDOLGOZAS ─────┼───────────────────────────────────────┘   │
 │                             │                                           │
 │                             ▼                                           │
 │                       zone_queue (0-3)                                  │
 │                             │                                           │
 │  ┌──────────────────────────┼───────────────────────────────────────┐   │
-│  │                OUTPUT    ▼                                       │   │
+│  │               KIMENET    ▼                                       │   │
 │  │  ┌────────────────────────────────────────────┐                 │   │
 │  │  │       BLEFanOutputController               │                 │   │
 │  │  │                                            │                 │   │
-│  │  │  scan → connect → authenticate (PIN)       │                 │   │
-│  │  │  → write "LEVEL:N" to GATT (FFE0/FFE1)    │                 │   │
-│  │  │  → auto-reconnect on disconnect            │                 │   │
+│  │  │  kereses → csatlakozas → hitlesites (PIN)  │                 │   │
+│  │  │  → "LEVEL:N" iras GATT-ra (FFE0/FFE1)     │                 │   │
+│  │  │  → automatikus ujracsatlakozas             │                 │   │
 │  │  └────────────────────┬───────────────────────┘                 │   │
 │  └───────────────────────┼─────────────────────────────────────────┘   │
 │                          │ BLE                                          │
@@ -106,160 +107,169 @@
               │   ESP32-C3 Firmware    │
               │   (Xiao SEEED Studio)  │
               │                        │
-              │  BLE Server (FFE0)     │
-              │  "LEVEL:N" → Relays    │
+              │  BLE Szerver (FFE0)    │
+              │  "LEVEL:N" → Relek     │
               │                        │
-              │  Z0: All OFF           │
-              │  Z1: FAN1 (33%)        │
-              │  Z2: FAN1+FAN2 (66%)   │
-              │  Z3: FAN1+2+3 (100%)   │
+              │  Z0: Mind KI           │
+              │  Z1: VENT1 (33%)       │
+              │  Z2: VENT1+VENT2 (66%) │
+              │  Z3: VENT1+2+3 (100%)  │
               │                        │
               │  + OTA, WebSerial      │
               │  + WiFi AP/STA         │
-              │  + Deep Sleep (30min)  │
-              │  + Manual Button       │
+              │  + Melyal. (30perc)    │
+              │  + Kezi gomb           │
               └────────────────────────┘
 ```
 
 ---
 
-## Data Flow (Sequence)
+## Adatfolyam (Szekvencia)
 
 ```
-Sensor/Zwift → Input Handler → raw queue → Processor → Averager → Zone Calc
-    → Zone Mode → Cooldown → zone_queue → BLE Output → ESP32 → Fans
+Szenzor/Zwift → Bemeneti kezelo → nyers queue → Feldolgozo → Atlagolo → Zona szamitas
+    → Zona mod → Cooldown → zone_queue → BLE Kimenet → ESP32 → Ventilatorok
                                               ↓
-                                         HUD (display)
+                                         HUD (kijelzo)
 ```
 
-1. **Input**: ANT+/BLE/Zwift provides raw power (W) and heart rate (bpm)
-2. **Averaging**: Rolling mean buffer smooths data (configurable per source)
-3. **Zone Calculation**: Power/HR mapped to zones 0-3 based on FTP/max HR
-4. **Zone Mode**: Combines power + HR zones (`power_only`, `hr_only`, `higher_wins`)
-5. **Cooldown**: Zone UP = instant, Zone DOWN = configurable delay with adaptive logic
-6. **Dropout**: No data for N seconds → force Z0, reset averagers
-7. **Output**: Send `LEVEL:N` over BLE to ESP32
-8. **Display**: HUD shows live data every 500ms with sound effects
+1. **Bemenet**: ANT+/BLE/Zwift nyers teljesitmenyt (W) es pulzust (bpm) ad
+2. **Atlagolas**: Gorditett atlag puffer simitas (forrasankent konfiguralhato)
+3. **Zona szamitas**: Teljesitmeny/Pulzus lekepezes 0-3 zonara FTP/max pulzus alapjan
+4. **Zona mod**: Teljesitmeny + pulzus zonakat kombinalja (`csak_teljesitmeny`, `csak_pulzus`, `magasabb_nyer`)
+5. **Cooldown**: Zona FEL = azonnali, Zona LE = konfiguralhato kesleltetes adaptiv logikaval
+6. **Dropout**: Nincs adat N masodpercig → Z0 kenyszerites, atlagolok reset
+7. **Kimenet**: `LEVEL:N` kuldes BLE-n keresztul az ESP32-nek
+8. **Megjelenit**: HUD elo adatokat mutat 500ms-enkent hangeffektekkel
 
 ---
 
-## Zone Definitions
+## Zona definiciok
 
-| Zone | Fan Level | Power Range           | HR Range              |
-|------|-----------|-----------------------|-----------------------|
-| Z0   | OFF       | 0W (no pedaling)      | < resting HR          |
-| Z1   | Low (33%) | 1W → z1_max% of FTP  | resting → z1_max% HR  |
-| Z2   | Med (66%) | z1%+1 → z2_max% FTP  | z1%+1 → z2_max% HR   |
-| Z3   | Max (100%)| > z2_max% of FTP     | > z2_max% of max HR   |
+| Zona | Ventilator szint | Teljesitmeny tartomany     | Pulzus tartomany            |
+|------|------------------|----------------------------|-----------------------------|
+| Z0   | KI               | 0W (nem teker)             | < nyugalmi pulzus           |
+| Z1   | Alacsony (33%)   | 1W → z1_max% FTP-bol      | nyugalmi → z1_max% pulzus   |
+| Z2   | Kozepes (66%)    | z1%+1 → z2_max% FTP       | z1%+1 → z2_max% pulzus      |
+| Z3   | Maximum (100%)   | > z2_max% FTP              | > z2_max% max pulzus         |
 
 ---
 
-## Cooldown State Machine
+## Cooldown allapotgep
 
 ```
-                    new_zone > current
-INACTIVE ──────────────────────────────────→ apply immediately
+                    uj_zona > jelenlegi
+INAKTIV ──────────────────────────────────→ azonnali alkalmazas
     │
-    │ new_zone < current
+    │ uj_zona < jelenlegi
     ▼
-ACTIVE (timer running)
+AKTIV (idozito fut)
     │
-    ├── drop ≥2 zones or zone→0  → HALVE cooldown time
-    ├── pending zone rises       → DOUBLE cooldown time
+    ├── eses ≥2 zona vagy zona→0  → FELEZES cooldown ido
+    ├── fuggoben levo zona emelkedik → DUPLAZAS cooldown ido
     │
-    └── timer expired            → apply pending zone → INACTIVE
+    └── idozito lejart            → fuggo zona alkalmazasa → INAKTIV
 ```
 
 ---
 
-## Threading Model
+## Szalkezeles (Threading) modell
 
-| Thread          | Type    | Purpose                                      |
-|-----------------|---------|----------------------------------------------|
-| Main            | -       | Qt event loop (HUD), signal handling          |
-| AsyncioThread   | daemon  | All async tasks (BLE, processing, control)    |
-| ANT+ Thread     | daemon  | openant blocking loop (bridges via queue)     |
+| Szal             | Tipus      | Cel                                              |
+|------------------|------------|--------------------------------------------------|
+| Fo szal          | -          | Qt esemenyhurok (HUD), jelkezeles                |
+| AsyncioThread    | daemon     | Osszes async feladat (BLE, feldolgozas, vezerles)|
+| ANT+ szal        | daemon     | openant blokkolo ciklus (queue-n keresztul hidal) |
 
-**Synchronization:**
-- `asyncio.Queue` - data flow between input handlers and processors
-- `asyncio.Lock` - protects shared controller state
-- `threading.Lock` - protects UISnapshot (HUD ↔ async thread)
-- `threading.Event` - shutdown coordination
-
----
-
-## Current File Structure
-
-| File | Purpose |
-|------|---------|
-| `swift_fan_controller.py` | Thin entry point: calls `app.main()` from the `smart_fan_controller` package |
-| `zwift_api_polling.py` | Zwift API polling: OAuth2, protobuf decode, UDP send |
-| `esp32_fan_controller.ino` | ESP32-C3 firmware: BLE server, relay control, OTA |
-| `settings.json` | User configuration (auto-created with defaults) |
-| `settings.example.json` / `.jsonc` | Configuration templates |
-| `CONFIGURATION.md` | Settings documentation |
+**Szinkronizacio:**
+- `asyncio.Queue` - adatfolyam bemeneti kezelok es feldolgozok kozott
+- `asyncio.Lock` - megosztott vezerlo allapot vedelem
+- `threading.Lock` - UISnapshot vedelem (HUD ↔ async szal)
+- `threading.Event` - leallas koordinacio
 
 ---
 
-## Planned Refactoring Structure
+## Jelenlegi fajl struktura
 
-The former monolithic main file and the separate subprocess have been
-refactored into the current `smart_fan_controller` package structure:
+| Fajl | Cel |
+|------|-----|
+| `swift_fan_controller.py` | Fo belepo (vekony): az `smart_fan_controller` csomag `app.main()`-jet hivja |
+| `zwift_api_polling.py` | Vekony belepo a Zwift API polling segedprocesszhez (logika: `smart_fan_controller/zwift_api/`) |
+| `esp32_fan_controller.ino` | ESP32-C3 firmware: BLE szerver, rele vezerles, OTA |
+| `settings.json` | Felhasznaloi konfiguracio (automatikusan letrejon alapertelmezettekkel) |
+| `settings.example.json` / `.jsonc` | Konfiguracios sablonok |
+| `CONFIGURATION.md` | Beallitasok dokumentacioja |
+
+---
+
+## smart_fan_controller csomag-struktura
+
+A korabbi monolitikus fo fajl es a kulon alfolyamat teljes logikaja a
+`smart_fan_controller` csomagba szervezodott; a `swift_fan_controller.py` mar
+csak vekony belepo, ami az `app.main()`-t hivja.
 
 ```
 smart_fan_controller/
-├── __init__.py              # Main class exports
-├── __main__.py              # Entry point (python -m smart_fan_controller)
+├── app.py               # Belepopont: asyncio event loop + PySide6 HUD osszehangolasa, jelkezeles
+├── controller.py        # FanController orchestrator (komponensek + eletciklus)
 │
 ├── config/
-│   ├── loader.py            # load_settings(), validation, defaults
-│   └── schemas.py           # Setting dataclasses/TypedDicts
+│   ├── loader.py        # load_settings(), validacio, save_hud/zwift helperek
+│   ├── schemas.py       # Beallitas dataclass-ok + DEFAULT_SETTINGS
+│   └── settings.default.json
 │
-├── core/
-│   ├── controller.py        # FanController orchestrator
-│   ├── zones.py             # zone_for_power(), zone_for_hr(), apply_zone_mode()
-│   ├── cooldown.py          # CooldownController state machine
-│   ├── averager.py          # PowerAverager, HRAverager
-│   ├── dropout.py           # dropout_checker_task
-│   ├── power_processor.py   # power_processor_task
-│   ├── hr_processor.py      # hr_processor_task
-│   └── zone_controller.py   # zone_controller_task
+├── core/                # Tiszta domain-logika (PySide6/BLE-fuggetlen, unit-tesztelheto)
+│   ├── zones.py         # zone_for_power/hr, calculate_*, apply_zone_mode, is_valid_*
+│   ├── averaging.py     # PowerAverager, HRAverager, compute_average
+│   ├── cooldown.py      # CooldownController allapotgep
+│   ├── printers.py      # ConsolePrinter (throttle-olt)
+│   ├── state.py         # ControllerState, UISnapshot (szalbiztos HUD-csere)
+│   ├── helpers.py       # resolve_log_dir, generate_tone (LCARS hangok)
+│   └── logging_setup.py # logger/user_logger, setup_logging, korai pufferelo
 │
-├── input/
-│   ├── antplus.py           # ANTPlusInputHandler
-│   ├── ble_power.py         # BLEPowerInputHandler
-│   ├── ble_hr.py            # BLEHRInputHandler
-│   └── zwift.py             # ZwiftInputHandler (OAuth2 + polling + protobuf → queue)
+├── handlers/            # Be- es kimeneti adatkezelok
+│   ├── _ant.py          # ANTPlusInputHandler (daemon szal + asyncio hid)
+│   ├── _ble.py          # BLEFanOutputController, BLE szenzor handlerek, send_zone
+│   └── zwift_udp.py     # ZwiftUDPInputHandler (a subprocess UDP csomagjait fogadja)
 │
-├── output/
-│   └── ble_fan.py           # BLEFanOutputController
+├── processors/
+│   └── processors.py    # power/hr_processor_task, zone_controller_task, dropout_checker_task
 │
-├── hud/
-│   ├── window.py            # HUDWindow (PySide6 LCARS UI)
-│   ├── sounds.py            # Sound generation & playback
-│   └── theme.py             # LCARS colors, fonts, styling
+├── ui/
+│   └── hud.py           # HUDWindow (PySide6 LCARS HUD + hangeffektek)
 │
-└── zwift/
-    ├── auth.py              # ZwiftAuth (OAuth2 token management)
-    ├── api_client.py        # ZwiftAPIClient (HTTPS calls)
-    ├── protobuf_decoder.py  # ProtobufDecoder (binary protobuf parsing)
-    └── polling.py           # Polling loop logic
+├── zwift_api/           # Zwift HTTPS API polling segedprocessz (kulon processz)
+│   ├── __main__.py      # belepo: settings.json betoltes, CLI, credential feloldas
+│   ├── api.py           # ZwiftAuth (OAuth2) + ZwiftAPIClient (REST)
+│   ├── decoder.py       # ProtobufDecoder + PlayerState dekodolas
+│   ├── runtime.py       # ZwiftDataStore, UDPBroadcaster, run_polling_loop
+│   └── logsetup.py      # sajat loggolas (zwift_api_polling.log)
+│
+└── fonts/               # LCARS Antonio fontok (.ttf)
 ```
 
-### Key design decisions
-- **No more subprocess/UDP**: Zwift polling runs in-process as an async task, communicates
-  via `asyncio.Queue` just like ANT+ and BLE input handlers
-- **No UDPBroadcaster**: Removed — data flows directly through queues
-- **Processor tasks split out**: `power_processor_task`, `hr_processor_task`,
-  `zone_controller_task` each in their own file under `core/`
-- **`input/zwift.py`** uses classes from `zwift/` module but follows the same queue pattern
-  as all other input handlers
-- **BLE input duplication kept**: `ble_power.py` and `ble_hr.py` may share similar
-  scan/connect logic but remain separate files for simplicity
+### Fo tervezesi dontesek
+- **Vekony belepo**: a `swift_fan_controller.py` (~76 sor) csak az `app.main()`-t
+  hivja, es nehany szimbolumot re-exportal a tesztek/visszafelekompatibilitas miatt.
+- **Tiszta mag**: a `core/` csomag PySide6- es BLE-fuggetlen, igy a domain-logika
+  (zonazas, atlagolas, cooldown) izolaltan, fuggosegek nelkul unit-tesztelheto.
+- **Zwift polling kulon processzben (subprocess + UDP)**: a HTTPS lekerdezes
+  (blokkolo `requests`, OAuth2 login, protobuf dekodolas) a fo asyncio loop-tol
+  elkulonitve, sajat processzben fut (`smart_fan_controller.zwift_api`), es UDP-n
+  (`127.0.0.1:7878`) tovabbitja az adatokat a `ZwiftUDPInputHandler`-nek. Igy a
+  blokkolo halozati hivasok es egy esetleges osszeomlas nem zavarja a HUD-ot, a
+  bejelentkezes pedig kulon ablakban lathato. A subprocess a kozos `settings.json`
+  `zwift_api` szekciojabol olvas (a fo app a `--settings` kapcsoloval inditja).
+- **Egyseges queue minta**: minden bemeneti forras (ANT+, BLE, Zwift UDP) ugyanabba
+  a `raw_power_queue` / `raw_hr_queue`-ba ir; a feldolgozok forrasfuggetlenek.
+- **Feldolgozo task-ok egy helyen**: a `processors/processors.py` tartalmazza a 4
+  async task-ot (teljesitmeny/pulzus feldolgozo, zona vezerlo, dropout figyelo).
 
-### Benefits
-- **Testability**: Pure functions (zones, cooldown) easily unit-testable
-- **Readability**: Each file has a single responsibility (~200-500 lines)
-- **Maintainability**: Changes isolated to relevant module
-- **Reusability**: Input handlers, averagers, cooldown logic reusable independently
-- **Unified communication**: All data sources use the same asyncio.Queue pattern
+### Elonyok
+- **Tesztelhetoseg**: a tiszta fuggvenyek (zonazas, cooldown, atlagolas) a `core/`
+  csomagbol fuggosegek nelkul, kozvetlenul unit-tesztelhetok.
+- **Olvashatosag**: minden modul egyetlen felelosseggel rendelkezik.
+- **Karbantarthatosag**: a valtoztatasok az adott modulra korlatozodnak.
+- **Izolacio**: a blokkolo Zwift-lekerdezes kulon processzben fut, nem veszelyezteti
+  a HUD valaszkeszseget.
+- **Egyseges kommunikacio**: minden adatforras ugyanazt az `asyncio.Queue` mintat hasznalja.

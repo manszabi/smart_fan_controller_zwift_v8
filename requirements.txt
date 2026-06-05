@@ -1,29 +1,34 @@
-# Smart Fan Controller - Python dependencies
+# Smart Fan Controller - Python függőségek
 #
 # Python >= 3.10 szükséges
-# Telepítés: pip install -r requirements.txt
+# Telepítés:   pip install -r requirements.txt
+# Alternatíva: pip install -e ".[all]"   (a pyproject.toml extras-ai)
 #
-# Megjegyzés: az openant és a bleak opcionálisak –
-# a program a rendelkezésre álló könyvtárak alapján
-# automatikusan engedélyezi/letiltja az adatforrásokat.
-# Az npcap NEM szükséges a programhoz.
+# Megjegyzés: runtime-ban minden alábbi könyvtár opcionális – a program a
+# rendelkezésre álló könyvtárak alapján automatikusan engedélyezi/letiltja az
+# adott funkciót (adatforrás, HUD, auto-launch). Ez a fájl a TELJES
+# funkcionalitáshoz telepíti mindet. Az npcap NEM szükséges a programhoz.
 
-# --- BLE kommunikáció (ventilátor vezérlés + BLE szenzorok) ---
+# --- BLE kommunikáció: ventilátor kimenet + BLE power/HR szenzorok ---
+#     (smart_fan_controller.handlers._ble)
 bleak>=0.21.0
 
-# --- ANT+ kommunikáció (power meter, HR monitor) ---
+# --- ANT+ kommunikáció: power meter, HR monitor ---
+#     (smart_fan_controller.handlers._ant)
 openant>=1.0.0
 
-# --- Zwift API polling (zwiftudp adatforrás, zwift_api_polling.py) ---
+# --- Zwift HTTPS API polling: a "zwiftudp" adatforrás segédprocessze ---
+#     (smart_fan_controller.zwift_api – külön processzben fut, UDP-n továbbít a fő appnak)
 requests>=2.28.0
 
-# --- Zwift auto-launch (Windows UI automatizáció, opcionális) ---
+# --- Zwift auto-launch: Windows UI automatizáció (opcionális, csak Windows) ---
 pywinauto>=0.6.8
 
-# --- HUD (PySide6 / Qt6, opcionális – nélküle headless módban fut) ---
+# --- HUD: PySide6 / Qt6 LCARS felület (opcionális – nélküle headless módban fut) ---
+#     (smart_fan_controller.ui)
 PySide6>=6.5.0
 
-# --- Standard library (nem kell telepíteni, referencia) ---
-# asyncio, threading, json, signal, subprocess, abc,
-# collections, dataclasses, enum, math, logging, time, atexit, os, sys,
-# wave, struct, io, tempfile (LCARS hangeffekt generáláshoz)
+# --- Standard library (nem kell telepíteni, csak referencia) ---
+# asyncio, threading, json, signal, subprocess, collections, dataclasses,
+# enum, math, logging, time, atexit, os, sys, platform, copy,
+# wave, struct, io, tempfile (a core.helpers LCARS hangeffekt-generáláshoz)
