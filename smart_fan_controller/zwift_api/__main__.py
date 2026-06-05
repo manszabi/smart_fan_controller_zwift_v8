@@ -92,7 +92,11 @@ def resolve_credentials(
       1. CLI args (--username / --password)
       2. Environment variables (ZWIFT_USERNAME / ZWIFT_PASSWORD)
       3. settings.json zwift_api szekció
-      4. Interaktív bekérés (az eredmény a settings.json-ba mentve)
+      4. Interaktív bekérés (csak ha a stdin interaktív; az eredmény mentve)
+
+    Ha hiányzik az adat ÉS a stdin nem interaktív (pl. a fő app DEVNULL stdin-nel
+    indította, vagy nincs külön konzol-ablak), tiszta hibaüzenetet ad és üres
+    ("", "") párt térít vissza – a main() ezt érti és kilép, traceback nélkül.
     """
     username = (
         args.username
@@ -106,12 +110,32 @@ def resolve_credentials(
     )
 
     from_prompt = False
-    if not username:
-        username = input("Zwift felhasználónév / Username: ").strip()
-        from_prompt = True
-    if not password:
-        password = getpass.getpass("Zwift jelszó / Password: ")
-        from_prompt = True
+    if not username or not password:
+        # Interaktív bekérés csak valódi TTY esetén. A fő app DEVNULL stdin-nel
+        # indítja a subprocesst, és a külön konzol-ablak (CREATE_NEW_CONSOLE) is
+        # csak Windows-on létezik – minden más esetben az input() EOFError-t adna.
+        if not sys.stdin or not sys.stdin.isatty():
+            log.error(
+                "❌ Hiányzó Zwift bejelentkezési adat / Missing Zwift credentials. "
+                "Töltsd ki a settings.json 'zwift_api' szekciójában a username és "
+                "password mezőket, vagy add meg a ZWIFT_USERNAME / ZWIFT_PASSWORD "
+                "környezeti változókat."
+            )
+            return "", ""
+        try:
+            if not username:
+                username = input("Zwift felhasználónév / Username: ").strip()
+                from_prompt = True
+            if not password:
+                password = getpass.getpass("Zwift jelszó / Password: ")
+                from_prompt = True
+        except EOFError:
+            log.error(
+                "❌ A bejelentkezési adat bekérése megszakadt (nincs interaktív "
+                "bemenet). Add meg a username/password mezőket a settings.json "
+                "'zwift_api' szekciójában."
+            )
+            return "", ""
 
     if from_prompt:
         if save_zwift_api_credentials(settings_path, username, password):
@@ -166,6 +190,9 @@ def main(argv: list[str] | None = None) -> int:
     broadcast_port = ds.zwift_udp_port
 
     username, password = resolve_credentials(args, cfg, settings_path)
+    if not username or not password:
+        # A hiba okát a resolve_credentials már logolta – tiszta kilépés.
+        return 1
 
     auth = ZwiftAuth(username, password, debug=args.debug)
     log.info("Bejelentkezés folyamatban / Logging in …")
