@@ -241,6 +241,14 @@ class BLEFanOutputController:
     asyncio.Queue-n keresztül fogadja, és a BLE GATT karakterisztikára
     írja ki az ESP32 vezérlőnek. PIN autentikáció is támogatott.
 
+    Újracsatlakozás: egy időzített háttér-task (``_reconnect_loop``)
+    ``reconnect_interval`` időközönként próbál újracsatlakozni, ha a kapcsolat
+    áll – a zóna-parancsoktól függetlenül. A zóna-küldés (``_send_zone``)
+    soha nem blokkol reconnect-en: ha a kapcsolat áll vagy épp reconnect
+    zajlik, csak elmenti a kért zónát, amit a háttér-loop sikeres
+    újracsatlakozás után kiküld. A ``_conn_lock`` sorosítja a BLE
+    műveleteket, így a párhuzamos zóna-küldés és reconnect nem ütközik.
+
     Attribútumok:
         device_name: A keresett BLE eszköz neve.
         is_connected: True, ha a BLE kapcsolat aktív.
@@ -270,8 +278,15 @@ class BLEFanOutputController:
         self._retry_reset_time: Optional[float] = None
         self._auth_failed: bool = False
         self.last_sent_time: float = 0.0
-        # Utolsó reconnect kísérlet ideje – non-blocking reconnect logikához
-        self._last_reconnect_attempt: float = 0.0
+        # Legutóbb kért zóna – az időzített háttér-újracsatlakozás ezt küldi ki
+        # sikeres reconnect után (akkor is, ha közben nem jött új parancs).
+        self._desired_zone: Optional[int] = None
+        # A BLE kliens műveleteit (connect / write) sorosító lock, hogy a
+        # háttér-reconnect és a zóna-küldés ne fusson egyszerre ugyanazon a
+        # kliensen. (Python ≥3.10: futó loop nélkül is létrehozható.)
+        self._conn_lock: asyncio.Lock = asyncio.Lock()
+        # Az időzített háttér-újracsatlakozó task (a run() indítja/állítja le).
+        self._reconnect_task: Optional[asyncio.Task[None]] = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         gs = settings["global_settings"]
         self._log_dir: str = resolve_log_dir(gs.log_directory)
@@ -306,9 +321,23 @@ class BLEFanOutputController:
         user_logger.info("BLE Fan kimenet elindítva")
         await self._initial_connect()
 
-        while True:
-            zone = await zone_queue.get()
-            await self._send_zone(zone)
+        # Időzített háttér-újracsatlakozás külön task-ban: a zóna-parancsoktól
+        # függetlenül próbál újracsatlakozni, ha a kapcsolat áll. Külön task,
+        # ezért nem blokkolja a zone_queue olvasását.
+        self._reconnect_task = asyncio.create_task(self._reconnect_loop())
+        try:
+            while True:
+                zone = await zone_queue.get()
+                await self._send_zone(zone)
+        finally:
+            task = self._reconnect_task
+            self._reconnect_task = None
+            if task is not None:
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
 
     async def _initial_connect(self) -> None:
         """Kezdeti BLE csatlakozás indításkor (hiba esetén folytatja)."""
@@ -316,7 +345,7 @@ class BLEFanOutputController:
         if not ok:
             user_logger.warning(
                 "⚠ BLE Fan: kezdeti csatlakozás sikertelen, "
-                "automatikus újrapróbálkozás parancs küldéskor"
+                "automatikus háttér-újracsatlakozás folyamatban"
             )
 
     async def _scan_and_connect(self) -> bool:
@@ -519,15 +548,19 @@ class BLEFanOutputController:
         self.last_sent = None
 
     async def _send_zone(self, zone: int) -> None:
-        """Zóna parancs küldése BLE-n, szükség esetén újracsatlakozással.
+        """Zóna parancs küldése BLE-n – soha nem blokkol újracsatlakozáson.
 
-        A reconnect non-blocking: ha az utolsó kísérlet óta még nem telt el
-        reconnect_interval másodperc, a parancsot kihagyja (nem blokkolja
-        a zone_queue olvasását).
+        Az újracsatlakozást az időzített háttér-loop (``_reconnect_loop``)
+        végzi, nem ez a metódus. Itt csak akkor írunk, ha a kapcsolat aktív
+        és épp nincs folyamatban BLE művelet (reconnect). Ha a kapcsolat áll,
+        a kért zónát elmentjük (``_desired_zone``); a háttér-loop sikeres
+        újracsatlakozás után automatikusan kiküldi a legutóbbi kért zónát.
 
         Args:
             zone: Ventilátor zóna szintje (0–3).
         """
+        self._desired_zone = zone
+
         if self._auth_failed:
             logger.error(
                 "BLE Fan: AUTH hiba, parancs elutasítva! Javítsd a pin_code-ot."
@@ -537,17 +570,19 @@ class BLEFanOutputController:
         if self.last_sent == zone and self.is_connected:
             return
 
-        if not self.is_connected:
-            now = time.monotonic()
-            # Csak akkor próbálunk újra, ha elég idő telt el az utolsó kísérlet óta
-            if now - self._last_reconnect_attempt < self.reconnect_interval:
-                return
-            self._last_reconnect_attempt = now
-            ok = await self._reconnect_once()
-            if not ok:
-                return
+        # Nincs kapcsolat → nem blokkolunk; a háttér-loop újracsatlakozik és
+        # a _desired_zone-t küldi ki. Ha épp reconnect zajlik (lock foglalt),
+        # szintén kihagyjuk – a reconnect végén úgyis kimegy a friss zóna.
+        if not self.is_connected or self._conn_lock.locked():
+            return
 
-        await self._write_level(zone)
+        # A lock itt szabad → az acquire azonnal, await-yield nélkül lefut
+        # (asyncio: foglalatlan lock megszerzése nem ad vissza vezérlést),
+        # így nincs versenyhelyzet a fenti ellenőrzés és az acquire között.
+        async with self._conn_lock:
+            if not self.is_connected:
+                return
+            await self._write_level(zone)
 
     async def _reconnect_once(self) -> bool:
         """Egyetlen újracsatlakozási kísérlet, sleep nélkül.
@@ -585,6 +620,35 @@ class BLEFanOutputController:
         if self._device_address:
             return await self._connect()
         return await self._scan_and_connect()
+
+    async def _reconnect_loop(self) -> None:
+        """Időzített háttér-újracsatlakozás – a zóna-parancsoktól függetlenül.
+
+        ``reconnect_interval`` időközönként ébred, és ha a kapcsolat áll (és
+        nincs AUTH hiba), megpróbál újracsatlakozni. A ``_conn_lock`` sorosítja
+        a BLE műveleteket, így a párhuzamos zóna-küldés (``_send_zone``) nem
+        ütközik a reconnect-tel. Sikeres újracsatlakozás után kiküldi a
+        legutóbb kért zónát (``_desired_zone``), hogy a ventilátor a kívánt
+        állapotba kerüljön akkor is, ha közben nem érkezett új parancs.
+
+        A ``_reconnect_once`` kezeli a ``max_retries`` számlálót és az azt
+        követő ``RETRY_RESET_SECONDS`` várakozást; ez a loop csak az időzítést
+        adja. Külön task-ban fut, ezért nem blokkolja a zone_queue olvasását.
+        """
+        while True:
+            await asyncio.sleep(self.reconnect_interval)
+
+            if self.is_connected or self._auth_failed:
+                continue
+
+            async with self._conn_lock:
+                # Újraellenőrzés a lock megszerzése után (közben már
+                # csatlakozhatott egy zóna-küldés mellékhatásaként).
+                if self.is_connected or self._auth_failed:
+                    continue
+                ok = await self._reconnect_once()
+                if ok and self._desired_zone is not None:
+                    await self._write_level(self._desired_zone)
 
     async def _write_level(self, zone: int) -> None:
         """LEVEL:N parancs írása a BLE GATT karakterisztikára.
