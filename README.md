@@ -207,13 +207,12 @@ main()
 | Fájl | Leírás |
 |------|--------|
 | `swift_fan_controller_new_v8_PySide6.py` | Fő program (LCARS HUD + ventilátor vezérlés) |
-| `zwift_api_polling.py` | Zwift HTTPS API polling script (automatikusan indul, ha power/hr forrás `"zwiftudp"`) |
+| `zwift_api_polling.py` | Vékony belépő a Zwift API polling segédprocesszhez (a logika a `smart_fan_controller/zwift_api/` csomagban) |
+| `smart_fan_controller/zwift_api/` | Zwift HTTPS API polling csomag (automatikusan indul, ha power/hr forrás `"zwiftudp"`) |
 | `esp32_fan_controller.ino` | ESP32 firmware (Arduino – Xiao ESP32-C3) |
-| `settings.json` | Aktív beállítások |
+| `settings.json` | Aktív beállítások (a Zwift fiók is itt, a `zwift_api` szekcióban) |
 | `settings.example.json` | Példa beállítások (alapértelmezett értékek) |
 | `settings.example.jsonc` | Kommentezett beállítás referencia |
-| `zwift_api_settings.json` | A `zwift_api_polling.py` saját beállításai (Zwift fiók, loggolás) |
-| `zwift_api_settings.example.json` | Példa a Zwift API beállításokhoz |
 | `smart_fan_controller.log` | Fő program log (automatikusan generált, ha `logging: true`) |
 | `zwift_api_polling.log` | Zwift polling log (automatikusan generált, ha `logging: true`) |
 | `ble_devices.log` | Talált BLE eszközök (automatikusan generált) |

@@ -416,22 +416,29 @@ class FanController:
             finally:
                 self._zwift_proc = None
 
+        # A settings.json útvonalát átadjuk – a subprocess a "zwift_api"
+        # szekcióból olvassa a bejelentkezési adatokat és a beállításokat.
+        settings_arg = ["--settings", os.path.abspath(self.settings_file)]
+        # Külön ablak (saját konzol) a zwift_api.separate_window flag szerint.
+        zwift_cfg = self.settings.get("zwift_api")
+        separate_window = getattr(zwift_cfg, "separate_window", True)
+
         try:
             if getattr(sys, "frozen", False):
                 exe_dir = os.path.dirname(os.path.abspath(sys.executable))
-                cmd = [os.path.join(exe_dir, f"{script_name}.exe")]
+                cmd = [os.path.join(exe_dir, f"{script_name}.exe"), *settings_arg]
             else:
-                monitor_script = os.path.join(
-                    os.path.dirname(os.path.abspath(__file__)), f"{script_name}.py"
-                )
-                cmd = [sys.executable, monitor_script]
+                # -m modul futtatás: nem függ a script útvonalától (a csomag
+                # importálható), a vékony shim (zwift_api_polling.py) helyett.
+                cmd = [sys.executable, "-m", "smart_fan_controller.zwift_api", *settings_arg]
 
-            if _platform.system() == "Windows":
+            if _platform.system() == "Windows" and separate_window:
                 startupinfo = subprocess.STARTUPINFO()
                 startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
                 startupinfo.wShowWindow = 4  # SW_SHOWNOACTIVATE
                 creation_flags = subprocess.CREATE_NEW_CONSOLE
             else:
+                # Nincs külön ablak: a subprocess a háttérben fut (vagy nem-Windows).
                 startupinfo = None
                 creation_flags = 0
 
@@ -445,14 +452,14 @@ class FanController:
                 popen_kwargs["close_fds"] = True
 
             self._zwift_proc = subprocess.Popen(cmd, **popen_kwargs)
-            logger.info(f"{script_name}.py elindítva (PID: {self._zwift_proc.pid})")
+            logger.info(f"{script_name} elindítva (PID: {self._zwift_proc.pid})")
 
         except FileNotFoundError as exc:
-            logger.error(f"{script_name}.py nem található: {exc}")
+            logger.error(f"{script_name} nem található: {exc}")
         except OSError as exc:
-            logger.error(f"{script_name}.py indítása sikertelen: {exc}")
+            logger.error(f"{script_name} indítása sikertelen: {exc}")
         except Exception as exc:
-            logger.error(f"Váratlan hiba {script_name}.py indításakor: {exc}")
+            logger.error(f"Váratlan hiba {script_name} indításakor: {exc}")
 
     def print_startup_info(self) -> None:
         """Kiírja az indítási konfigurációs összefoglalót.

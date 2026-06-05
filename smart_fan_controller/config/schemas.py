@@ -653,6 +653,54 @@ def _from_dict_nullable_str(src: dict[str, Any], dst: dict[str, Any], key: str) 
         user_logger.warning(f"⚠ Érvénytelen '{key}' érték: {v!r} (string vagy null kell)")
 
 
+@dataclasses.dataclass
+class ZwiftApiConfig:
+    """Zwift API polling beállítások – típusbiztos.
+
+    A settings.json ``"zwift_api"`` szekciójához tartozik. A
+    ``zwift_api_polling`` segédprocessz konfigurációja: bejelentkezési adatok,
+    lekérdezési gyakoriság és a külön-ablak (saját konzol) opció.
+
+    A broadcast cél (host/port) NEM itt van: a ``datasource.zwift_udp_host`` /
+    ``datasource.zwift_udp_port`` értékekből jön, hogy ne duplikálódjon. A
+    loggolást a ``global_settings.logging`` / ``log_directory`` vezérli.
+
+    Biztonsági figyelmeztetés: a jelszó titkosítatlanul (plaintext) kerül a
+    settings.json-ba. A CLI ``--password`` és a ``ZWIFT_PASSWORD`` környezeti
+    változó elsőbbséget élvez, ha biztonságosabb tárolást szeretnél.
+    """
+
+    username: str = ""
+    password: str = ""
+    poll_interval: float = 3.0
+    # Külön konzol ablak (Windows: CREATE_NEW_CONSOLE). Ha False, a subprocess
+    # a fő program ablakában/háttérben fut.
+    separate_window: bool = True
+
+    @classmethod
+    def from_dict(cls, raw: dict[str, Any]) -> "ZwiftApiConfig":
+        kwargs: dict[str, Any] = {}
+        for key in ("username", "password"):
+            if key in raw:
+                v = raw[key]
+                if isinstance(v, str):
+                    kwargs[key] = v
+                else:
+                    user_logger.warning(f"⚠ Érvénytelen '{key}' érték: {v!r} (string kell)")
+        _from_dict_float(raw, kwargs, "poll_interval", 1.0, 60.0)
+        _from_dict_bool(raw, kwargs, "separate_window")
+        return cls(**kwargs)
+
+    def to_dict(self) -> Dict[str, Any]:
+        """JSON-kompatibilis dict."""
+        return {
+            "username": self.username,
+            "password": self.password,
+            "poll_interval": self.poll_interval,
+            "separate_window": self.separate_window,
+        }
+
+
 # ============================================================
 # ALAPÉRTELMEZETT BEÁLLÍTÁSOK
 # ============================================================
@@ -664,4 +712,5 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
     "ble_fan": BleConfig(),
     "datasource": DatasourceConfig(),
     "hud": HudConfig(),
+    "zwift_api": ZwiftApiConfig(),
 }

@@ -32,6 +32,7 @@ from .schemas import (
     BleConfig,
     HudConfig,
     ZoneMode,
+    ZwiftApiConfig,
 )
 
 # A felhasználói üzeneteket a "user" nevű logger kezeli; lásd schemas.py.
@@ -114,6 +115,8 @@ def load_settings(settings_file: str = "settings.json") -> Dict[str, Any]:
         settings["datasource"] = DatasourceConfig.from_dict(loaded["datasource"])
     if isinstance(loaded.get("hud"), dict):
         settings["hud"] = HudConfig.from_dict(loaded["hud"])
+    if isinstance(loaded.get("zwift_api"), dict):
+        settings["zwift_api"] = ZwiftApiConfig.from_dict(loaded["zwift_api"])
 
     # --- Kereszt-validáció: zone_mode + null forrás ---
     try:
@@ -234,6 +237,46 @@ def _backup_incorrect_settings(settings_path: str) -> str | None:
             f"'{settings_path}' fájlról: {exc}"
         )
         return None
+
+
+def save_zwift_api_credentials(settings_file: str, username: str, password: str) -> bool:
+    """Csak a "zwift_api" szekció username/password mezőit frissíti a settings.json-ban.
+
+    A zwift_api segédprocessz használja, ha a bejelentkezési adatokat interaktívan
+    kérte be (a többi mezőt – poll_interval, separate_window – és a többi szekciót
+    érintetlenül hagyja). Ha a "zwift_api" szekció még nem létezik, létrehozza.
+
+    Args:
+        settings_file: A settings.json fájl elérési útja.
+        username: A mentendő Zwift felhasználónév.
+        password: A mentendő Zwift jelszó (figyelem: plaintext).
+
+    Returns:
+        True ha sikeres, False ha hiba történt.
+    """
+    try:
+        with open(settings_file, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError, OSError) as exc:
+        user_logger.warning(f"⚠ Zwift API adatok mentési hiba (olvasás): {exc}")
+        return False
+
+    if not isinstance(data, dict):
+        return False
+    section = data.get("zwift_api")
+    if not isinstance(section, dict):
+        section = {}
+    section["username"] = username
+    section["password"] = password
+    data["zwift_api"] = section
+
+    try:
+        with open(settings_file, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+        return True
+    except OSError as exc:
+        user_logger.warning(f"⚠ Zwift API adatok mentési hiba (írás): {exc}")
+        return False
 
 
 def save_hud_settings_only(settings_file: str, hud_config: HudConfig) -> bool:
