@@ -28,8 +28,26 @@ __all__ = [
 logger = logging.getLogger("swift_fan_controller_new")
 user_logger = logging.getLogger("user")
 
+
+def _default_log_dir() -> str:
+    """Az alapértelmezett log könyvtár: a ``swift_fan_controller.py`` belépő
+    script könyvtára (frozen exe esetén az exe melletti mappa).
+
+    Ez a modul a ``smart_fan_controller/core/`` alatt él, ezért a belépő
+    script (projekt gyökér) három szinttel feljebb van. A refaktor előtt a
+    loggolás magában a belépő scriptben volt, így a logok a script mellé
+    kerültek – ezt a viselkedést állítja vissza.
+    """
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(os.path.abspath(sys.executable))
+    # .../<gyökér>/smart_fan_controller/core/logging_setup.py → <gyökér>
+    return os.path.dirname(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    )
+
+
 # Modul-szintű state
-_log_dir: str = os.path.dirname(os.path.abspath(__file__))
+_log_dir: str = _default_log_dir()
 _logging_enabled: bool = True
 _early_mem_handlers: list = []
 
@@ -43,7 +61,8 @@ def setup_logging(log_directory: Optional[str] = None, logging_enabled: bool = T
       - ``logger``: Belső debug/info logok (fájlba mindig, konzolra WARNING+ felett).
 
     A log fájlok a ``log_directory``-ba kerülnek (ha érvényes), különben
-    a program indítási könyvtárába.
+    a ``swift_fan_controller.py`` belépő script könyvtárába (frozen exe
+    esetén az exe melletti mappába).
 
     Ha ``logging_enabled`` False, mindkét logger NullHandler-t kap (teljes
     némaság – se fájl, se konzol). A program-indítási összefoglaló ettől
@@ -69,9 +88,7 @@ def setup_logging(log_directory: Optional[str] = None, logging_enabled: bool = T
         logging.getLogger("openant").setLevel(logging.CRITICAL)
         return
 
-    _log_dir = resolve_log_dir(
-        log_directory, default_dir=os.path.dirname(os.path.abspath(__file__))
-    )
+    _log_dir = resolve_log_dir(log_directory, default_dir=_default_log_dir())
     log_file = os.path.join(_log_dir, "smart_fan_controller.log")
 
     file_fmt = logging.Formatter(
