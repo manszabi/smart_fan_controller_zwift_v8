@@ -47,7 +47,7 @@ A program kétféleképpen reagál a hibákra, attól függően, hogy **érték-
 2. Állítsd be az FTP értékedet (`power_zones.ftp`), és szükség esetén a cooldown-t (`global_settings.cooldown_seconds`).
 3. Válaszd ki az adatforrást (`datasource.power_source`, `datasource.hr_source`).
 4. Ha BLE ventilátort használsz, állítsd be a `ble_fan.device_name` mezőt (vagy hagyd `null`-on az auto-discovery-hez).
-5. Indítsd el: `python swift_fan_controller_new_v8_PySide6.py`
+5. Indítsd el: `python swift_fan_controller.py`
 
 ---
 

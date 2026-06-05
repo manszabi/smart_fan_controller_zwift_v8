@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""swift_fan_controller_new_v8_PySide6.py – vékony belépő.
+"""swift_fan_controller.py – vékony belépő.
 
 Smart Fan Controller – moduláris, párhuzamos implementáció (v8).
 

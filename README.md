@@ -62,12 +62,12 @@ A program a rendelkezésre álló könyvtárak alapján automatikusan engedélye
 
 ```bash
 # Alapértelmezett settings.json-nal
-python swift_fan_controller_new_v8_PySide6.py
+python swift_fan_controller.py
 
 # Vagy a példa beállítások másolása után
 cp settings.example.json settings.json
 # ... settings.json szerkesztése ...
-python swift_fan_controller_new_v8_PySide6.py
+python swift_fan_controller.py
 ```
 
 ## Konfiguráció
@@ -206,7 +206,7 @@ main()
 
 | Fájl | Leírás |
 |------|--------|
-| `swift_fan_controller_new_v8_PySide6.py` | Fő program (LCARS HUD + ventilátor vezérlés) |
+| `swift_fan_controller.py` | Fő program belépő (vékony – a logika a `smart_fan_controller/` csomagban) |
 | `zwift_api_polling.py` | Vékony belépő a Zwift API polling segédprocesszhez (a logika a `smart_fan_controller/zwift_api/` csomagban) |
 | `smart_fan_controller/zwift_api/` | Zwift HTTPS API polling csomag (automatikusan indul, ha power/hr forrás `"zwiftudp"`) |
 | `esp32_fan_controller.ino` | ESP32 firmware (Arduino – Xiao ESP32-C3) |

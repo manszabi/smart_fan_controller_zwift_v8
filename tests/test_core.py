@@ -14,7 +14,7 @@ import pytest
 
 from smart_fan_controller.core import resolve_log_dir as _resolve_log_dir
 from smart_fan_controller.handlers._ble import _log_ble_devices_to_file
-from swift_fan_controller_new_v8_PySide6 import (
+from swift_fan_controller import (
     ZoneMode,
     DataSource,
     calculate_hr_zones,
@@ -43,7 +43,7 @@ from smart_fan_controller.core import (
 from smart_fan_controller.core import logging_setup as _logmod
 import logging as _logging
 import json as _json
-import swift_fan_controller_new_v8_PySide6 as _mainmod
+import swift_fan_controller as _mainmod
 from smart_fan_controller.zwift_api import logsetup as _zaplog
 
 
@@ -1773,7 +1773,7 @@ class TestCorePackage:
 
     def test_main_module_reexports_core_objects(self):
         """A fő modul ugyanazokat az objektumokat exportálja, mint a core (identitás)."""
-        import swift_fan_controller_new_v8_PySide6 as app
+        import swift_fan_controller as app
         from smart_fan_controller import core
         assert app.calculate_power_zones is core.calculate_power_zones
         assert app.PowerAverager is core.PowerAverager
@@ -1810,7 +1810,7 @@ class TestHeadlessImport:
             "                raise ModuleNotFoundError(name)\n"
             "            return None\n"
             "    sys.meta_path.insert(0, _Blocker())\n"
-            "import swift_fan_controller_new_v8_PySide6 as m\n"
+            "import swift_fan_controller as m\n"
             "assert m._PYSIDE6_AVAILABLE is (not {block})\n"
             "print('OK')\n"
         ).format(block=block_pyside6)
