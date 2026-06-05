@@ -9,7 +9,6 @@ A FanController feladata:
 """
 
 import asyncio
-import logging
 import os
 import platform as _platform
 import subprocess
@@ -22,7 +21,6 @@ from smart_fan_controller.config import (
     BleConfig,
     DataSource,
     DatasourceConfig,
-    GlobalSettingsConfig,
     HeartRateZonesConfig,
     PowerZonesConfig,
     get_effective_zone_mode,
@@ -37,12 +35,8 @@ from smart_fan_controller.core import (
     PowerAverager,
     calculate_hr_zones,
     calculate_power_zones,
-    discard_early_logging,
-    flush_early_logging,
-    generate_tone,
+    is_logging_enabled,
     logger,
-    setup_early_logging,
-    setup_logging,
     user_logger,
 )
 from smart_fan_controller.handlers import (
@@ -53,7 +47,6 @@ from smart_fan_controller.handlers import (
     BLEPowerInputHandler,
     ZwiftUDPInputHandler,
     _ANTPLUS_AVAILABLE,
-    send_zone,
 )
 from smart_fan_controller.processors import (
     _guarded_task,
@@ -65,9 +58,6 @@ from smart_fan_controller.processors import (
 
 __version__ = "8.0.0"
 __all__ = ["FanController"]
-
-# Global state for logging
-_logging_enabled: bool = True
 
 
 class FanController:
@@ -471,7 +461,7 @@ class FanController:
         ``print()``-tel ír, hogy a startup info akkor is megjelenjen.
         """
         # Loggolás kikapcsolva → print(); egyébként user_logger.info
-        emit = user_logger.info if _logging_enabled else print
+        emit = user_logger.info if is_logging_enabled() else print
 
         s = self.settings
         ds: DatasourceConfig = s["datasource"]

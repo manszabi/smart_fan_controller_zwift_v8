@@ -21,6 +21,7 @@ from .logging_setup import (
     setup_early_logging,
     flush_early_logging,
     discard_early_logging,
+    is_logging_enabled,
 )
 from .printers import ConsolePrinter
 from .state import ControllerState, UISnapshot
@@ -59,6 +60,7 @@ __all__ = [
     "setup_early_logging",
     "flush_early_logging",
     "discard_early_logging",
+    "is_logging_enabled",
     # printers
     "ConsolePrinter",
     # state

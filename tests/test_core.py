@@ -30,11 +30,17 @@ from swift_fan_controller_new_v8_PySide6 import (
     BleConfig,
     DatasourceConfig,
     HudConfig,
-    _setup_logging,
-    _setup_early_logging,
-    _flush_early_logging,
-    _discard_early_logging,
 )
+# A loggolás-infrastruktúra a smart_fan_controller.core.logging_setup modulba
+# került. A régi alulvonásos neveket aliasként importáljuk a tesztek
+# visszafelé kompatibilitásáért; a modulszintű állapotot a _logmod-on át érjük el.
+from smart_fan_controller.core import (
+    setup_logging as _setup_logging,
+    setup_early_logging as _setup_early_logging,
+    flush_early_logging as _flush_early_logging,
+    discard_early_logging as _discard_early_logging,
+)
+from smart_fan_controller.core import logging_setup as _logmod
 import logging as _logging
 import json as _json
 import swift_fan_controller_new_v8_PySide6 as _mainmod
@@ -1469,8 +1475,8 @@ class TestLoggingToggle:
             lg.handlers.clear()
             lg.propagate = True
             lg.setLevel(_logging.NOTSET)
-        _mainmod._logging_enabled = True
-        _mainmod._early_mem_handlers = []
+        _logmod._logging_enabled = True
+        _logmod._early_mem_handlers = []
 
     def test_disabled_uses_nullhandler(self):
         """logging:false → mindkét logger NullHandler-t kap."""
@@ -1478,7 +1484,7 @@ class TestLoggingToggle:
         tmp = tempfile.mkdtemp()
         try:
             _setup_logging(tmp, logging_enabled=False)
-            assert _mainmod._logging_enabled is False
+            assert _logmod._logging_enabled is False
             for name in ("user", "swift_fan_controller_new"):
                 handlers = _logging.getLogger(name).handlers
                 assert len(handlers) == 1
@@ -1503,7 +1509,7 @@ class TestLoggingToggle:
         tmp = tempfile.mkdtemp()
         try:
             _setup_logging(tmp, logging_enabled=True)
-            assert _mainmod._logging_enabled is True
+            assert _logmod._logging_enabled is True
             _logging.getLogger("user").warning("EZ_BEKERÜL")
             logf = os.path.join(tmp, "smart_fan_controller.log")
             assert os.path.exists(logf)
@@ -1513,32 +1519,28 @@ class TestLoggingToggle:
             shutil.rmtree(tmp, ignore_errors=True)
 
     def test_device_logs_gated_when_disabled(self):
-        """logging:false → ble eszköz-fájl sem jön létre."""
+        """logging:false → ble eszköz-fájl sem jön létre.
+
+        A log_dir és a logging_enabled paraméterként megy a függvénynek,
+        ezért nincs szükség modulszintű állapot beállítására.
+        """
         self._reset()
         tmp = tempfile.mkdtemp()
-        old_dir, old_flag = _mainmod._log_dir, _mainmod._logging_enabled
         try:
-            _mainmod._log_dir = tmp
-            _mainmod._logging_enabled = False
             _log_ble_devices_to_file([("Fan", "AA:BB", ["uuid"])], "BLE Fan", tmp, False)
             assert not os.path.exists(os.path.join(tmp, "ble_devices.log"))
         finally:
-            _mainmod._log_dir, _mainmod._logging_enabled = old_dir, old_flag
             shutil.rmtree(tmp, ignore_errors=True)
 
     def test_device_logs_written_when_enabled(self):
         """logging:true → ble eszköz-fájl létrejön."""
         self._reset()
         tmp = tempfile.mkdtemp()
-        old_dir, old_flag = _mainmod._log_dir, _mainmod._logging_enabled
         try:
-            _mainmod._log_dir = tmp
-            _mainmod._logging_enabled = True
             _log_ble_devices_to_file([("Fan", "AA:BB", ["uuid"])], "BLE Fan", tmp, True)
             _log_ble_devices_to_file([("Fan", "AA:BB", ["uuid"])], "BLE Fan", tmp, True)
             assert os.path.exists(os.path.join(tmp, "ble_devices.log"))
         finally:
-            _mainmod._log_dir, _mainmod._logging_enabled = old_dir, old_flag
             shutil.rmtree(tmp, ignore_errors=True)
 
     def test_early_buffer_flush_replays_to_file(self):
@@ -1569,7 +1571,7 @@ class TestLoggingToggle:
             _setup_logging(tmp, logging_enabled=False)
             _discard_early_logging()
             assert not os.path.exists(os.path.join(tmp, "smart_fan_controller.log"))
-            assert _mainmod._early_mem_handlers == []
+            assert _logmod._early_mem_handlers == []
         finally:
             self._reset()
             shutil.rmtree(tmp, ignore_errors=True)
