@@ -4,6 +4,7 @@ Futtatás: pytest tests/ -v
 """
 from __future__ import annotations
 
+import asyncio
 import os
 import shutil
 import tempfile
@@ -2228,3 +2229,233 @@ class TestExampleFilesMirrorDefault:
             "(hiányzó/extra mező vagy eltérő érték). Frissítsd a "
             "settings.default.json-t (és a settings.example.json / .jsonc fájlokat)."
         )
+
+
+# ============================================================
+# BLE Fan – időzített háttér-újracsatlakozás (regressziós tesztek)
+# ============================================================
+
+
+async def _wait_until(predicate, timeout=2.0, interval=0.01):
+    """Vár, amíg ``predicate()`` igaz lesz, vagy lejár a timeout (AssertionError)."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return
+        await asyncio.sleep(interval)
+    raise AssertionError("A feltétel nem teljesült a megadott időn belül")
+
+
+async def _cancel(task):
+    """Task lemondása és bevárása (a CancelledError-t elnyeli)."""
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+
+
+class TestBleFanReconnect:
+    """A BLEFanOutputController időzített, nem-blokkoló háttér-újracsatlakozása.
+
+    A BLE primitíveket (scan/connect/write) stubok helyettesítik, így a tesztek
+    valódi hardver és bleak nélkül futnak. Az aszinkron forgatókönyveket
+    ``asyncio.run()`` hajtja (a projekt nem használ pytest-asyncio-t).
+    """
+
+    @pytest.fixture(autouse=True)
+    def _bleak_and_quiet(self):
+        """A bleak-et "elérhetőnek" jelöli és elnémítja a loggereket a teszt idejére."""
+        from smart_fan_controller.handlers import _ble
+
+        prev_avail = _ble._BLEAK_AVAILABLE
+        _ble._BLEAK_AVAILABLE = True
+        loggers = [_logging.getLogger("user"), _logging.getLogger("swift_fan_controller_new")]
+        prev_levels = [lg.level for lg in loggers]
+        for lg in loggers:
+            lg.setLevel(_logging.CRITICAL)
+        try:
+            yield
+        finally:
+            _ble._BLEAK_AVAILABLE = prev_avail
+            for lg, lvl in zip(loggers, prev_levels):
+                lg.setLevel(lvl)
+
+    def _make_fan(self, connect_succeeds=True, reconnect_interval=0.05, **cfg):
+        """Létrehoz egy BLEFanOutputController-t stubolt BLE primitívekkel.
+
+        Returns:
+            (ctl, state) – state["connect_calls"] és state["writes"] követhető.
+        """
+        from smart_fan_controller.handlers import _ble
+
+        settings = {
+            "ble_fan": BleConfig(**cfg),
+            "global_settings": GlobalSettingsConfig(logging=False),
+        }
+        ctl = _ble.BLEFanOutputController(settings)
+        # Gyors teszt: rövid reconnect intervallum (megkerüli a config min=1-et).
+        ctl.reconnect_interval = reconnect_interval
+        state = {"connect_calls": 0, "writes": []}
+
+        async def fake_connect():
+            state["connect_calls"] += 1
+            if connect_succeeds:
+                ctl.is_connected = True
+                ctl.last_sent = None
+                ctl._retry_count = 0
+                return True
+            ctl.is_connected = False
+            return False
+
+        # A _reconnect_once a _scan_and_connect-et hívja (nincs _device_address).
+        ctl._scan_and_connect = fake_connect
+        ctl._connect = fake_connect
+
+        async def fake_write_level(zone):
+            if not ctl.is_connected:
+                return
+            state["writes"].append(zone)
+            ctl.last_sent = zone
+
+        ctl._write_level = fake_write_level
+        return ctl, state
+
+    # ---------- alapviselkedés ----------
+
+    def test_send_zone_writes_when_connected(self):
+        """Kapcsolódott állapotban a _send_zone kiírja a zónát."""
+        ctl, state = self._make_fan()
+
+        async def scenario():
+            ctl.is_connected = True
+            await ctl._send_zone(2)
+            assert state["writes"] == [2]
+            assert ctl.last_sent == 2
+            # Ugyanaz a zóna újra → nincs duplikált írás
+            await ctl._send_zone(2)
+            assert state["writes"] == [2]
+
+        asyncio.run(scenario())
+
+    # ---------- nem-blokkoló garanciák ----------
+
+    def test_send_zone_non_blocking_when_disconnected(self):
+        """Kapcsolat nélkül a _send_zone azonnal visszatér, csak elmenti a zónát."""
+        ctl, state = self._make_fan()
+
+        async def scenario():
+            ctl.is_connected = False
+            t0 = time.monotonic()
+            await ctl._send_zone(3)
+            dt = time.monotonic() - t0
+            assert dt < 0.1, f"_send_zone blokkolt: {dt:.3f}s"
+            assert ctl._desired_zone == 3
+            assert state["writes"] == []  # nem írt, mert nincs kapcsolat
+
+        asyncio.run(scenario())
+
+    def test_send_zone_non_blocking_during_reconnect(self):
+        """Folyamatban lévő reconnect (lock foglalt) alatt a _send_zone nem vár."""
+        ctl, _state = self._make_fan()
+
+        async def scenario():
+            ctl.is_connected = False
+
+            async def holder():
+                async with ctl._conn_lock:
+                    await asyncio.sleep(1.0)
+
+            h = asyncio.create_task(holder())
+            await asyncio.sleep(0.02)  # hagyjuk, hogy megszerezze a lockot
+            assert ctl._conn_lock.locked()
+
+            t0 = time.monotonic()
+            await ctl._send_zone(2)
+            dt = time.monotonic() - t0
+            assert dt < 0.1, f"_send_zone várt a lockra: {dt:.3f}s"
+            assert ctl._desired_zone == 2
+            await _cancel(h)
+
+        asyncio.run(scenario())
+
+    # ---------- időzített háttér-újracsatlakozás ----------
+
+    def test_background_reconnect_after_disconnect(self):
+        """Váratlan bontás után a háttér-loop magától újracsatlakozik (parancs nélkül)."""
+        ctl, state = self._make_fan()
+
+        async def scenario():
+            q: asyncio.Queue[int] = asyncio.Queue()
+            runner = asyncio.create_task(ctl.run(q))
+            await _wait_until(lambda: ctl.is_connected)  # kezdeti csatlakozás
+            assert state["connect_calls"] == 1
+
+            ctl._handle_disconnect()  # bleak disconnect callback szimulálása
+            assert ctl.is_connected is False
+
+            # Nem küldünk új zónát – a háttér-loopnak magától vissza kell jönnie
+            await _wait_until(lambda: ctl.is_connected)
+            assert state["connect_calls"] >= 2
+
+            await _cancel(runner)
+
+        asyncio.run(scenario())
+
+    def test_desired_zone_flushed_after_reconnect(self):
+        """Bontás alatt érkező zónaváltást a háttér-loop a reconnect után kiküldi."""
+        ctl, state = self._make_fan()
+
+        async def scenario():
+            q: asyncio.Queue[int] = asyncio.Queue()
+            runner = asyncio.create_task(ctl.run(q))
+            await _wait_until(lambda: ctl.is_connected)
+
+            await q.put(2)
+            await _wait_until(lambda: state["writes"][-1:] == [2])
+
+            ctl._handle_disconnect()
+            await q.put(3)  # zónaváltás, amíg áll a kapcsolat
+
+            # A háttér-loop újracsatlakozik és kiküldi a legfrissebb kért zónát (3)
+            await _wait_until(lambda: ctl.is_connected)
+            await _wait_until(lambda: state["writes"][-1] == 3)
+
+            await _cancel(runner)
+
+        asyncio.run(scenario())
+
+    def test_auth_failed_blocks_background_reconnect(self):
+        """AUTH hiba esetén a háttér-loop nem próbál újracsatlakozni."""
+        ctl, state = self._make_fan()
+
+        async def scenario():
+            ctl.is_connected = False
+            ctl._auth_failed = True
+            loop_task = asyncio.create_task(ctl._reconnect_loop())
+            # Több intervallumnyi idő – mégsem szabad csatlakoznia
+            await asyncio.sleep(ctl.reconnect_interval * 4)
+            assert state["connect_calls"] == 0
+            assert ctl.is_connected is False
+            await _cancel(loop_task)
+
+        asyncio.run(scenario())
+
+    # ---------- tiszta leállás ----------
+
+    def test_reconnect_task_cancelled_on_run_exit(self):
+        """A run() leállásakor a háttér-task tisztán megszűnik (cancel + await)."""
+        ctl, _state = self._make_fan()
+
+        async def scenario():
+            q: asyncio.Queue[int] = asyncio.Queue()
+            runner = asyncio.create_task(ctl.run(q))
+            await _wait_until(lambda: ctl._reconnect_task is not None)
+            rtask = ctl._reconnect_task
+
+            await _cancel(runner)
+
+            assert rtask.done()
+            assert ctl._reconnect_task is None
+
+        asyncio.run(scenario())
