@@ -1,0 +1,14 @@
+# Normalize line endings automatically for text files.
+* text=auto
+
+# Windows shell scripts MUST use CRLF line endings.
+# cmd.exe parses batch files by byte offset; LF-only endings (especially
+# combined with `chcp 65001` and non-ASCII characters) corrupt the parser
+# and produce errors like 'cho' / 'ho' is not recognized.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# Unix shell scripts and Python use LF.
+*.sh  text eol=lf
+*.py  text eol=lf
