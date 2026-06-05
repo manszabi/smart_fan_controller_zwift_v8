@@ -21,12 +21,33 @@ import platform as _platform
 import signal
 import sys
 import threading
+import warnings
 from typing import Any
 
 # COM inicializálás threading modellje – APARTMENTTHREADED kell a Qt-nek (OLE/DnD),
 # és ezt a pywinauto/PySide6 importálása ELŐTT kell beállítani, különben COM conflict lesz.
 if not hasattr(sys, "coinit_flags"):
     sys.coinit_flags = 2  # type: ignore[attr-defined]  # COINIT_APARTMENTTHREADED
+
+# A pywinauto importáláskor figyelmeztet, ha a coinit_flags-et kívülről állították be
+# (lásd fent). Ez nálunk szándékos, ezért a (ártalmatlan) UserWarning-ot elnémítjuk.
+# A coinit_flags beállítás MARAD érvényben – csak a warning szöveget rejtjük el.
+warnings.filterwarnings(
+    "ignore",
+    message="Apply externally defined coinit_flags",
+    category=UserWarning,
+    module="pywinauto",
+)
+
+# A Qt multimédia FFmpeg-háttere induláskor egy info sort ír ki
+# ("qt.multimedia.ffmpeg: Using Qt multimedia with FFmpeg ..."). Ezt a Qt logging
+# szabályon keresztül némítjuk. A meglévő QT_LOGGING_RULES-t nem írjuk felül, hozzáfűzünk.
+_qt_rule = "qt.multimedia.ffmpeg=false"
+_existing_rules = os.environ.get("QT_LOGGING_RULES", "")
+if _qt_rule not in _existing_rules:
+    os.environ["QT_LOGGING_RULES"] = (
+        f"{_existing_rules};{_qt_rule}" if _existing_rules else _qt_rule
+    )
 
 from smart_fan_controller.controller import FanController
 from smart_fan_controller.core import (
