@@ -65,6 +65,16 @@ class ANTPlusInputHandler:
     MAX_RETRY_COOLDOWN = 30
     WATCHDOG_TIMEOUT = 30  # Ha ennyi mp-ig nincs adat, a node-ot leállítjuk
 
+    # Induláskor / újracsatlakozáskor a USB ANT+ stick libusb0 meghajtója pár száz
+    # ms-ot igényelhet, amíg elérhetővé válik. Windows-on tipikus átmeneti hibák:
+    # "could not claim interface (resource busy)" és "device not recognize command".
+    # Ennyit várunk az első próbálkozás előtt, hogy a stick készen álljon.
+    INITIAL_GRACE_DELAY = 0.5
+    # Az első ennyi sikertelen kísérletet csak fejlesztői logba (info) írjuk, nem
+    # riasztjuk a felhasználót – ezek tipikusan átmeneti USB-init hibák, amiket a
+    # retry magától helyrehoz. E fölött már user-facing warning megy.
+    QUIET_RETRIES = 3
+
     def __init__(
         self,
         settings: Dict[str, Any],
@@ -318,6 +328,28 @@ class ANTPlusInputHandler:
         except Exception as exc:
             logger.debug(f"ANT+ cleanup hiba: {exc}")
 
+    def _log_retry(self, detail: str, retry_count: int) -> None:
+        """Retry-üzenet logolása a próbálkozások számától függő szinten.
+
+        Az első ``QUIET_RETRIES`` kísérlet csak a fejlesztői logba (info) kerül,
+        mert ezek tipikusan átmeneti USB-init hibák (pl. libusb "resource busy"
+        induláskor), amiket a retry-logika magától helyrehoz. E fölött már
+        user-facing ``warning`` megy, hogy a tartós hiba látható maradjon.
+
+        Args:
+            detail: A hiba szöveges leírása (kivétel vagy állapot).
+            retry_count: Az aktuális próbálkozás sorszáma.
+        """
+        if retry_count <= self.QUIET_RETRIES:
+            logger.info(
+                f"ANT+ átmeneti hiba ({retry_count}/{self._max_retries}), "
+                f"újrapróbálkozás: {detail}"
+            )
+        else:
+            user_logger.warning(
+                f"⚠ ANT+ hiba ({retry_count}/{self._max_retries}): {detail}"
+            )
+
     def _watchdog(self) -> None:
         """Watchdog szál: ha az ANT+ node fut, de sokáig nem jön adat, leállítja.
 
@@ -378,6 +410,13 @@ class ANTPlusInputHandler:
         )
         watchdog.start()
 
+        # Kezdeti grace-delay: esélyt adunk a USB ANT+ stick libusb0 meghajtójának
+        # elérhetővé válni, mielőtt az első claim/open próbát megtennénk. Ez
+        # kiküszöböli a tipikus induláskori "resource busy" / "device not recognize
+        # command" átmeneti hibákat. (Megszakítható, ha közben leállítás jön.)
+        if self.INITIAL_GRACE_DELAY > 0:
+            self._stop_event.wait(timeout=self.INITIAL_GRACE_DELAY)
+
         retry_count = 0
         while self._running.is_set():
             try:
@@ -397,18 +436,13 @@ class ANTPlusInputHandler:
                     user_logger.info("ANT+ kapcsolat megszakadt, újracsatlakozás...")
                 else:
                     retry_count += 1
-                    user_logger.warning(
-                        f"⚠ ANT+ eszköz nem válaszol "
-                        f"({retry_count}/{self._max_retries})"
-                    )
+                    self._log_retry("eszköz nem válaszol", retry_count)
 
             except Exception as exc:
                 if not self._running.is_set():
                     break
                 retry_count += 1
-                user_logger.warning(
-                    f"⚠ ANT+ hiba ({retry_count}/{self._max_retries}): {exc}"
-                )
+                self._log_retry(str(exc), retry_count)
 
             if not self._running.is_set():
                 break
