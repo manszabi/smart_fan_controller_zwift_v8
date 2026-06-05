@@ -193,7 +193,7 @@ AKTIV (idozito fut)
 
 | Fajl | Cel |
 |------|-----|
-| `swift_fan_controller_new_v8_PySide6.py` | Fo alkalmazas (~5300 sor): teljes logika, HUD, vezerles |
+| `swift_fan_controller.py` | Fo belepo (vekony): az `smart_fan_controller` csomag `app.main()`-jet hivja |
 | `zwift_api_polling.py` | Zwift API lekerdezs: OAuth2, protobuf dekodolas, UDP kuldes |
 | `esp32_fan_controller.ino` | ESP32-C3 firmware: BLE szerver, rele vezerles, OTA |
 | `settings.json` | Felhasznaloi konfiguracio (automatikusan letrejon alapertelmezettekkel) |
@@ -204,8 +204,8 @@ AKTIV (idozito fut)
 
 ## Tervezett refaktoralasi struktura
 
-A monolitikus fo fajl (`swift_fan_controller_new_v8_PySide6.py`, ~5300 sor) es a kulon
-alfolyamat (`zwift_api_polling.py`) atdolgozasra kerul:
+A korabbi monolitikus fo fajl es a kulon alfolyamat atdolgozasra kerult; a
+jelenlegi `smart_fan_controller` csomag-struktura:
 
 ```
 smart_fan_controller/

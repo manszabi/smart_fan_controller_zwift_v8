@@ -192,7 +192,7 @@ ACTIVE (timer running)
 
 | File | Purpose |
 |------|---------|
-| `swift_fan_controller_new_v8_PySide6.py` | Main app (~5300 lines): all core logic, HUD, orchestration |
+| `swift_fan_controller.py` | Thin entry point: calls `app.main()` from the `smart_fan_controller` package |
 | `zwift_api_polling.py` | Zwift API polling: OAuth2, protobuf decode, UDP send |
 | `esp32_fan_controller.ino` | ESP32-C3 firmware: BLE server, relay control, OTA |
 | `settings.json` | User configuration (auto-created with defaults) |
@@ -203,8 +203,8 @@ ACTIVE (timer running)
 
 ## Planned Refactoring Structure
 
-The monolithic main file (`swift_fan_controller_new_v8_PySide6.py`, ~5300 lines) and the
-separate subprocess (`zwift_api_polling.py`) will be refactored into:
+The former monolithic main file and the separate subprocess have been
+refactored into the current `smart_fan_controller` package structure:
 
 ```
 smart_fan_controller/

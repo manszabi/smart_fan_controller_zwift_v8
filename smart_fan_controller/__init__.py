@@ -1,9 +1,12 @@
 """Smart Fan Controller – moduláris package.
 
-A monolitikus ``swift_fan_controller_new_v8_PySide6.py`` fokozatos
-refaktorálásának gyökér-package-e. Jelenleg a ``config`` al-package készült el
-(beállítás-modellek és -betöltő); a többi modul (core, input, output, hud,
-zwift) a tervezett struktúra szerint később kerül átemelésre.
+A korábbi monolitikus belépő (``swift_fan_controller.py``) teljes logikája
+ebbe a package-be szerveződött. Al-package-ek: ``config`` (beállítás-modellek
+és -betöltő), ``core`` (tiszta domain-logika), ``handlers`` (ANT+/BLE/Zwift UDP
+adatkezelők), ``processors`` (async feldolgozó task-ok), ``ui`` (PySide6 HUD),
+``zwift_api`` (Zwift HTTPS API polling), valamint a ``controller`` (orchestrátor)
+és az ``app`` (belépőpont) modulok. A ``swift_fan_controller.py`` már csak egy
+vékony belépő, ami az ``app.main()``-t hívja.
 """
 from __future__ import annotations
 
