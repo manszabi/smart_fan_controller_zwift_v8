@@ -651,6 +651,20 @@ class FanController:
             hr_source == DataSource.ZWIFTUDP and hr_enabled
         )
         if needs_zwift:
+            # Proaktív figyelmeztetés a látható (fő app) logba, ha nincs Zwift
+            # bejelentkezési adat: a subprocess credential nélkül nem tud adatot
+            # lekérni, és külön ablakban/háttérben a hibája könnyen elkerüli a
+            # felhasználó figyelmét. A subprocess maga is tisztán kilép ilyenkor.
+            zcfg = s.get("zwift_api")
+            has_cfg_cred = bool(getattr(zcfg, "username", "") and getattr(zcfg, "password", ""))
+            has_env_cred = bool(os.environ.get("ZWIFT_USERNAME") and os.environ.get("ZWIFT_PASSWORD"))
+            if not has_cfg_cred and not has_env_cred:
+                user_logger.warning(
+                    "⚠ Zwift API: nincs megadva username/password a settings.json "
+                    "'zwift_api' szekciójában (és nincs ZWIFT_USERNAME/ZWIFT_PASSWORD "
+                    "környezeti változó sem) – a Zwift adatlekérés nem fog elindulni."
+                )
+
             # Zwift API polling subprocess indítása
             self._start_zwift_subprocess("zwift_api_polling")
 
