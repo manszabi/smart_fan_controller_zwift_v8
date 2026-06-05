@@ -209,6 +209,68 @@ async def _scan_ble_with_autodiscovery(
     return matched, devices_info
 
 
+def _report_gatt_characteristics(
+    client: Any,
+    label: str,
+    log_dir: str,
+    logging_enabled: bool,
+) -> None:
+    """A csatlakozott eszköz GATT characteristic UUID-jait konzolra és fájlba írja.
+
+    A characteristic UUID-k – a service UUID-kkel ellentétben – NEM szerepelnek a
+    BLE hirdetési csomagban, csak csatlakozás + GATT discovery után olvashatók ki.
+    Ezért ezt a függvényt sikeres csatlakozás után kell hívni (a ``client.services``
+    ekkor már fel van töltve).
+
+    Args:
+        client: Csatlakozott BleakClient (``client.services``-szel).
+        label: Eszköz/kontextus címke a kimenethez (pl. "BLE Fan").
+        log_dir: Log könyvtár elérési útja.
+        logging_enabled: True, ha a logging engedélyezett.
+    """
+    if not _BLEAK_AVAILABLE:
+        return
+
+    # (service_uuid, char_uuid, [properties]) hármasok gyűjtése
+    entries: List[Tuple[str, str, List[str]]] = []
+    try:
+        services = getattr(client, "services", None)
+        if services is None:
+            return
+        for service in services:
+            svc_uuid = getattr(service, "uuid", "?")
+            for char in getattr(service, "characteristics", []):
+                char_uuid = getattr(char, "uuid", "?")
+                props = list(getattr(char, "properties", []) or [])
+                entries.append((svc_uuid, char_uuid, props))
+    except Exception as exc:
+        logger.warning(f"{label} GATT characteristic listázási hiba: {exc}")
+        return
+
+    if not entries:
+        return
+
+    # Konzol kimenet
+    user_logger.info(f"🔎 {label} characteristic UUID-k ({len(entries)} db):")
+    for svc_uuid, char_uuid, props in entries:
+        prop_str = ", ".join(props) if props else "–"
+        user_logger.info(f"    {char_uuid}  [{prop_str}]  (service: {svc_uuid})")
+
+    # Fájl kimenet (csak ha a logging engedélyezett)
+    if not logging_enabled:
+        return
+    ble_log = _ble_log_path(log_dir)
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    try:
+        with open(ble_log, "a", encoding="utf-8") as f:
+            f.write(f"\n--- GATT Characteristics ({label}) @ {timestamp} ---\n")
+            for svc_uuid, char_uuid, props in entries:
+                prop_str = ", ".join(props) if props else "–"
+                f.write(f"  {char_uuid} | [{prop_str}] | service: {svc_uuid}\n")
+    except OSError as exc:
+        logger.warning(f"Nem sikerült írni a {ble_log} fájlba: {exc}")
+
+
 async def send_zone(zone: int, zone_queue: asyncio.Queue[int]) -> None:
     """Zóna parancsot küld a BLE fan kimenet queue-ba.
 
@@ -429,6 +491,11 @@ class BLEFanOutputController:
             self._client = client
 
             await client.connect()
+
+            # Csatlakozás után a GATT characteristic UUID-k kiírása (csak így olvashatók)
+            _report_gatt_characteristics(
+                client, "BLE Fan", self._log_dir, self._logging_enabled
+            )
 
             if self.pin_code is not None:
                 ok = await self._authenticate()
@@ -878,6 +945,11 @@ class _BLESensorInputHandler(abc.ABC):
             self.is_connected = True
             self._retry_count = 0
             user_logger.info(f"✓ {label} csatlakozva: {addr}")
+
+            # Csatlakozás után a GATT characteristic UUID-k kiírása (csak így olvashatók)
+            _report_gatt_characteristics(
+                client, label, self._log_dir, self._logging_enabled
+            )
 
             def _handler(sender: Any, data: bytes) -> None:
                 try:
