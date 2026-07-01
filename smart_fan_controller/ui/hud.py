@@ -105,7 +105,7 @@ class LCARSHeaderWidget(QWidget):
         p.setFont(QFont(self._font_family, title_size, QFont.Weight.Bold))
         p.setPen(QColor(HUDWindow.LCARS_CYAN))
         p.drawText(QRectF(sw + R, bar_h, w - 6 - sw - R, ch - bar_h),
-                    Qt.AlignmentFlag.AlignCenter, "SWIFT FAN CTRL")
+                    Qt.AlignmentFlag.AlignCenter, "ZWIFT FAN CTRL")
 
         # Badge (magenta téglalap + verzió)
         badge_w = max(40, int(62 * s))
