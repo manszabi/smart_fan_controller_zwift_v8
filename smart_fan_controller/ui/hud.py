@@ -175,7 +175,7 @@ class LCARSFooterWidget(QWidget):
         # Szegmensek
         seg_x = sw + R + 8
         seg_w = max(1, (w - 6 - int(seg_x)) // 3)
-        p.fillRect(int(seg_x + seg_w + 4), bar_top, seg_w - 4, bar_h,
+        p.fillRect(int(seg_x + seg_w + 8), bar_top, seg_w - 4, bar_h,
                     QColor(HUDWindow.LCARS_PURPLE))
         p.fillRect(int(seg_x + 2 * seg_w + 4), bar_top,
                     w - 6 - int(seg_x + 2 * seg_w + 4), bar_h,
