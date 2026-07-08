@@ -508,7 +508,6 @@ class HUDWindow(QWidget):
         self._prev_zone: Optional[int] = None
         self._prev_ble_status: Optional[str] = None
         self._prev_ant_status: Optional[str] = None
-        self._prev_ble_sens_status: Optional[str] = None
         self._prev_zwift_status: Optional[str] = None
         self._prev_last_sent_time: float = 0.0
 
@@ -520,6 +519,10 @@ class HUDWindow(QWidget):
         self._zwift_check_running = False  # race condition védelem
         self._zwift_grace_start: float = time.time()
         self._ZWIFT_GRACE_PERIOD: float = 300.0  # 5 perc várakozás indulásra
+
+        # BLE/ANT szenzor "élő" adat ablak. Szándékosan bőkezű: kerékpáros
+        # mérők kifutáskor/0 W-nál elnémulhatnak, ne villantsanak folyton FAIL-t.
+        self._SENSOR_STALE_S: float = 10.0
 
         # ───────── ABLAK BEÁLLÍTÁS ─────────
         self.setWindowTitle("LCARS Fan HUD")
@@ -985,7 +988,7 @@ class HUDWindow(QWidget):
         tile.setStyleSheet(new_ss)
 
     @staticmethod
-    def _lighten(color_hex: str, factor: float = 0.5) -> str:
+    def _lighten(color_hex: str, factor: float = 0.35) -> str:
         """Szín világosítása – factor=0 eredeti, factor=1 fehér."""
         r = int(color_hex[1:3], 16)
         g = int(color_hex[3:5], 16)
@@ -1063,8 +1066,11 @@ class HUDWindow(QWidget):
                 )
 
             # BLE fan – villogás OFFLINE/PIN FAIL állapotoknál
-            self._flash_ble_tick = 1 - self._flash_ble_tick
-            flash_white = self._flash_ble_tick == 0
+            # Monoton számláló: a villogó sorok eltolt FÁZISBAN (nem szinkronban)
+            # villognak – period 4 tick (~2 s), 50% kitöltés.
+            self._flash_ble_tick += 1
+            _ft = self._flash_ble_tick
+            flash_white = (_ft + 0) % 2 < 2      # BLE FAN fázis
             ble_status = "DISABLED"
             if ble_fan is not None:
                 if ble_fan.auth_failed:
@@ -1094,6 +1100,7 @@ class HUDWindow(QWidget):
             ds: DatasourceConfig = self._ctrl.settings["datasource"]
             power_ble = ds.power_source == DataSource.BLE
             hr_ble = ds.hr_source == DataSource.BLE
+            flash_white = (_ft + 1) % 2 < 2      # BLE SENS fázis
 
             if not power_ble and not hr_ble:
                 c = self._lighten(self.TEXT_DIM) if flash_white else self.TEXT_DIM
@@ -1105,12 +1112,12 @@ class HUDWindow(QWidget):
                     power_ok = (
                         power_ble
                         and (ble.power_lastdata > 0)
-                        and (now - ble.power_lastdata < 10)
+                        and (now - ble.power_lastdata < self._SENSOR_STALE_S)
                     )
                     hr_ok = (
                         hr_ble
                         and (ble.hr_lastdata > 0)
-                        and (now - ble.hr_lastdata < 10)
+                        and (now - ble.hr_lastdata < self._SENSOR_STALE_S)
                     )
                     p_s = "OK" if power_ok else ("--" if not power_ble else "FAIL")
                     h_s = "OK" if hr_ok else ("--" if not hr_ble else "FAIL")
@@ -1138,6 +1145,7 @@ class HUDWindow(QWidget):
             power_ant = ds.power_source == DataSource.ANTPLUS
             hr_ant = ds.hr_source == DataSource.ANTPLUS
             ant = getattr(self._ctrl, "_antplus_handler", None)
+            flash_white = (_ft + 2) % 2 < 2      # ANT+ fázis
 
             if not power_ant and not hr_ant:
                 c = self._lighten(self.TEXT_DIM) if flash_white else self.TEXT_DIM
@@ -1147,12 +1155,12 @@ class HUDWindow(QWidget):
                 power_ok = (
                     power_ant
                     and (ant.power_lastdata > 0)
-                    and (now - ant.power_lastdata < 10)
+                    and (now - ant.power_lastdata < self._SENSOR_STALE_S)
                 )
                 hr_ok = (
                     hr_ant
                     and (ant.hr_lastdata > 0)
-                    and (now - ant.hr_lastdata < 10)
+                    and (now - ant.hr_lastdata < self._SENSOR_STALE_S)
                 )
                 p_s = "OK" if power_ok else ("--" if not power_ant else "FAIL")
                 h_s = "OK" if hr_ok else ("--" if not hr_ant else "FAIL")
@@ -1187,6 +1195,7 @@ class HUDWindow(QWidget):
             zwift = getattr(self._ctrl, "_zwift_udp", None)
             power_zwift = ds.power_source == DataSource.ZWIFTUDP
             hr_zwift = ds.hr_source == DataSource.ZWIFTUDP
+            flash_white = (_ft + 3) % 2 < 2      # ZWIFT fázis
 
             if zwift is not None and (power_zwift or hr_zwift):
                 now = time.monotonic()
@@ -1215,6 +1224,7 @@ class HUDWindow(QWidget):
                 self._update_label(self._lbl_zwift_udp, "– – –", c)
 
             # Last TX
+            flash_white = (_ft + 1) % 2 < 2      # LAST TX fázis
             if ble_fan is not None and getattr(ble_fan, "last_sent_time", 0) > 0:
                 cur_sent_time = ble_fan.last_sent_time
                 ago = time.monotonic() - cur_sent_time
@@ -1229,6 +1239,7 @@ class HUDWindow(QWidget):
                 self._update_label(self._lbl_last_sent, "– – –", c)
 
             # Cooldown
+            flash_white = (_ft + 2) % 2 < 2      # COOLDOWN fázis
             if cool is not None:
                 active, remaining = cool.snapshot()
                 if active:
@@ -1244,6 +1255,7 @@ class HUDWindow(QWidget):
 
             # ── Állapot csík frissítése (aktív = villogó háttér) ──
             zpi = self._ctrl.settings["power_zones"].zero_power_immediate
+            flash_white = (_ft + 0) % 2 < 2
             if zpi:
                 bg = self._lighten(self.LCARS_CYAN) if flash_white else self.LCARS_CYAN
             else:
@@ -1251,6 +1263,7 @@ class HUDWindow(QWidget):
             self._update_tile_bg(self._tile_zero_imm, bg)
 
             zhi = self._ctrl.settings["heart_rate_zones"].zero_hr_immediate
+            flash_white = (_ft + 1) % 2 < 2
             if zhi:
                 bg = self._lighten(self.LCARS_CYAN) if flash_white else self.LCARS_CYAN
             else:
@@ -1259,24 +1272,28 @@ class HUDWindow(QWidget):
 
             zone_mode_val = self._ctrl.settings["heart_rate_zones"].zone_mode
             hw = zone_mode_val == ZoneMode.HIGHER_WINS
+            flash_white = (_ft + 2) % 2 < 2
             if hw:
                 bg = self._lighten(self.LCARS_ORANGE) if flash_white else self.LCARS_ORANGE
             else:
                 bg = self.TEXT_DIM
             self._update_tile_bg(self._tile_higher_wins, bg)
 
+            flash_white = (_ft + 3) % 2 < 2
             if power_ant or hr_ant:
                 bg = self._lighten(self.LCARS_PURPLE) if flash_white else self.LCARS_PURPLE
             else:
                 bg = self.TEXT_DIM
             self._update_tile_bg(self._tile_ant, bg)
 
+            flash_white = (_ft + 0) % 2 < 2
             if power_ble or hr_ble:
                 bg = self._lighten(self.LCARS_BLUE) if flash_white else self.LCARS_BLUE
             else:
                 bg = self.TEXT_DIM
             self._update_tile_bg(self._tile_ble, bg)
 
+            flash_white = (_ft + 1) % 2 < 2
             if cool is not None:
                 cd_active, _ = cool.snapshot()
                 if cd_active:
