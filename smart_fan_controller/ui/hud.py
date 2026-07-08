@@ -17,6 +17,7 @@ import logging
 import math
 import os
 import platform as _platform
+import re
 import shutil
 import sys
 import tempfile
@@ -26,13 +27,13 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 from PySide6.QtCore import Qt, QTimer, QPoint, QSize, QRectF, QUrl
 from PySide6.QtGui import (
-    QColor, QPainter, QBrush, QFont, QFontDatabase,
+    QColor, QPainter, QBrush, QFont, QFontDatabase, QFontMetrics,
     QPainterPath, QMouseEvent,
 )
 from PySide6.QtMultimedia import QSoundEffect
 from PySide6.QtWidgets import (
     QApplication, QWidget, QLabel, QHBoxLayout, QVBoxLayout,
-    QSlider, QMenu, QFrame,
+    QSlider, QMenu, QFrame, QSizePolicy,
 )
 
 from smart_fan_controller import __version__
@@ -52,7 +53,7 @@ logger = logging.getLogger("swift_fan_controller_new")
 class LCARSHeaderWidget(QWidget):
     """LCARS fejléc widget – QPainter-rel rajzolt felső sáv."""
 
-    def __init__(self, parent: QWidget, font_family: str, scale: float = 1.0) -> None:  # type: ignore[reportInvalidTypeForm]
+    def __init__(self, parent: QWidget, font_family: str, scale: float = 1.0) -> None:
         super().__init__(parent)
         self._font_family = font_family
         self._scale = scale
@@ -72,8 +73,8 @@ class LCARSHeaderWidget(QWidget):
         w = self.width()
         s = self._scale
         ch = self.height()
-        bar_h = max(8, int(14 * s))
-        sw = max(10, int(16 * s))
+        bar_h = max(18, int(25 * s))
+        sw = max(10, int(20 * s))
         R = max(14, int(26 * s))
         corner_r = max(12, int(18 * s))
 
@@ -123,18 +124,68 @@ class LCARSHeaderWidget(QWidget):
 class LCARSFooterWidget(QWidget):
     """LCARS lábléc widget – QPainter-rel rajzolt alsó sáv."""
 
-    def __init__(self, parent: QWidget, font_family: str, scale: float = 1.0) -> None:  # type: ignore[reportInvalidTypeForm]
+    def __init__(self, parent: QWidget, font_family: str, scale: float = 1.0) -> None:
         super().__init__(parent)
         self._font_family = font_family
         self._scale = scale
-        self.setFixedHeight(50)
+        self.setFixedHeight(60)
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setStyleSheet(f"background-color: {HUDWindow.BG};")
+        # Az opacity vezérlők a felső, ívek közötti sávba kerülnek
+        self._overlay = QHBoxLayout(self)
+        self._overlay.setSpacing(4)
+        self._update_overlay_margins()
+
+    def _bar_metrics(self) -> Tuple[int, int, int]:
+        # Ugyanaz a vastagság/szélesség/sugár, mint a fejlécnél (tükörkép)
+        s = self._scale
+        sw = max(10, int(20 * s))
+        R = max(14, int(26 * s))
+        bar_h = max(18, int(25 * s))
+        return sw, R, bar_h
+
+    def _update_overlay_margins(self) -> None:
+        # A csúszka a festett OPACITY doboz után kezdődik és a dobozzal
+        # függőlegesen egy sávban (teteje/alja); jobbra az ívet követi.
+        sw, R, bar_h = self._bar_metrics()
+        box_top, box_bottom, box_right = self._opacity_box()
+        fh = self.height()
+        gap_s = max(6, int(8 * self._scale))
+        self._overlay.setContentsMargins(
+            box_right + gap_s, box_top, sw + R, fh - box_bottom
+        )
+
+    def _opacity_box(self) -> Tuple[int, int, int]:
+        """Az OPACITY doboz (box_top, box_bottom, box_right).
+        Az ív KONCENTRIKUS a kék könyök ívével (azonos középpont, R-6 sugár),
+        így a rés végig egyenletes 6px; a doboz teteje a könyök ív tetejével
+        egy vonalban, bal széle a státuszsorok bal oldalával (sw+6)."""
+        sw, R, bar_h = self._bar_metrics()
+        fh = self.height()
+        bar_top = fh - bar_h
+        box_top = bar_top - R                    # a könyök ív tetejével egy vonalban
+        box_bottom = bar_top - 6                 # egyenletes 6px rés a sáv fölött
+        fs = max(7, int(9 * self._scale))
+        fm = QFontMetrics(QFont(self._font_family, fs, QFont.Weight.Bold))
+        text_w = fm.horizontalAdvance("OPACITY")
+        pad = max(6, int(8 * self._scale))
+        box_right = sw + R + text_w + 2 * pad    # a szöveg az íven túli flat részen
+        return box_top, box_bottom, box_right
+
+    def set_opacity_controls(self, label: QWidget, slider: QWidget,
+                             value: QWidget) -> None:
+        """Az opacity vezérlők beillesztése a footer felső sávjába.
+        Az OPACITY feliratot a paintEvent rajzolja (íves dobozzal), ezért a
+        címke widgetet elrejtjük."""
+        label.hide()
+        self._overlay.addWidget(slider, 1)
+        self._overlay.addWidget(value)
 
     def set_scale(self, s: float) -> None:
         self._scale = s
-        h = max(30, int(50 * s))
+        h = max(36, int(60 * s))
         self.setFixedHeight(h)
+        self._update_overlay_margins()
         self.update()
 
     def paintEvent(self, event: Any) -> None:
@@ -143,8 +194,8 @@ class LCARSFooterWidget(QWidget):
         w = self.width()
         s = self._scale
         fh = self.height()
-        bar_h = max(8, int(14 * s))
-        sw = max(10, int(16 * s))
+        bar_h = max(18, int(25 * s))
+        sw = max(10, int(20 * s))
         R = max(14, int(26 * s))
         bar_top = fh - bar_h
         corner_r = max(12, int(18 * s))
@@ -172,21 +223,74 @@ class LCARSFooterWidget(QWidget):
         bg_path -= path
         p.fillPath(bg_path, QBrush(QColor(HUDWindow.BG)))
 
-        # Szegmensek
-        seg_x = sw + R + 8
-        seg_w = max(1, (w - 6 - int(seg_x)) // 3)
-        p.fillRect(int(seg_x + seg_w + 8), bar_top, seg_w - 4, bar_h,
+        # Szegmensek – középen a lila, tőle balra a kék alapsáv, jobbra a tan.
+        # A tan közvetlenül a lila után kezdődik (nincs kék sliver).
+        re = w - 6                              # a sáv jobb széle
+        flat_left = sw + R                      # a bal ív vége (lapos sáv kezdete)
+        flat_right = re - sw - R                # a jobb ív kezdete (lapos sáv vége)
+        center = (flat_left + flat_right) / 2   # = re / 2
+        purple_w = max(1, int((flat_right - flat_left) / 3))
+        purple_left = int(center - purple_w / 2)
+        tan_left = purple_left + purple_w       # a tan rögtön a lila után
+        p.fillRect(purple_left, bar_top, purple_w, bar_h,
                     QColor(HUDWindow.LCARS_PURPLE))
-        p.fillRect(int(seg_x + 2 * seg_w + 4), bar_top,
-                    w - 6 - int(seg_x + 2 * seg_w + 4), bar_h,
-                    QColor(HUDWindow.LCARS_TAN))
 
-        # Footer szöveg
-        footer_text_size = max(7, int(9 * s))
-        p.setFont(QFont(self._font_family, footer_text_size))
-        p.setPen(QColor(HUDWindow.LCARS_CYAN_DIM))
-        p.drawText(int(sw + R), 0, int(w - 6 - sw - R), bar_top,
-                    Qt.AlignmentFlag.AlignCenter, "STARFLEET CYCLING DIV")
+        # Fő tan (narancs) sáv ívvel + lekerekített jobb alsó sarok
+        # – a bal alsó kék sarok pontos tükörképe (x' = re - x)
+        rpath = QPainterPath()
+        rpath.moveTo(re, 0)
+        rpath.lineTo(re - sw, 0)
+        for i in range(21):
+            angle = math.radians(180 + (270 - 180) * i / 20)
+            px = re - (sw + R + R * math.cos(angle))
+            py = bar_top - R - R * math.sin(angle)
+            rpath.lineTo(px, py)
+        rpath.lineTo(tan_left, bar_top)
+        rpath.lineTo(tan_left, fh)
+        rpath.lineTo(re - corner_r, fh)
+        rpath.arcTo(QRectF(re - 2 * corner_r, fh - 2 * corner_r,
+                            2 * corner_r, 2 * corner_r), 270, 90)
+        rpath.closeSubpath()
+        p.fillPath(rpath, QBrush(QColor(HUDWindow.LCARS_TAN)))
+
+        # Jobb alsó sarok háttér kitöltés (ív mögött) – a bal oldal tükörképe
+        bg_path_r = QPainterPath()
+        bg_path_r.addRect(QRectF(re - corner_r, fh - corner_r, corner_r, corner_r))
+        bg_path_r -= rpath
+        p.fillPath(bg_path_r, QBrush(QColor(HUDWindow.BG)))
+
+        # OPACITY sárga doboz – a bal ív KONCENTRIKUS a kék könyök ívével
+        # (azonos középpont, R-6 sugár), egyenletes 6px réssel; teteje a
+        # könyök tetejével, bal széle a státuszsorok bal oldalával egy vonalban.
+        box_top, box_bottom, box_right = self._opacity_box()
+        gx = sw + 6                                 # bal (ív teteje) = státuszsorok bal széle
+        rr = R - 6                                  # koncentrikus ív sugara
+        fs = max(7, int(9 * s))
+        box_r = max(3, int(4 * s))                  # jobb sarkok lekerekítése
+
+        obox = QPainterPath()
+        obox.moveTo(gx, box_top)                    # bal felső (az ív teteje)
+        obox.lineTo(box_right - box_r, box_top)     # felső él
+        obox.arcTo(QRectF(box_right - 2 * box_r, box_top,
+                          2 * box_r, 2 * box_r), 90, -90)
+        obox.lineTo(box_right, box_bottom - box_r)  # jobb él
+        obox.arcTo(QRectF(box_right - 2 * box_r, box_bottom - 2 * box_r,
+                          2 * box_r, 2 * box_r), 0, -90)
+        obox.lineTo(sw + R, box_bottom)             # alsó él az ív aljáig
+        for i in range(21):                         # koncentrikus ív (270°→180°)
+            angle = math.radians(270 - (270 - 180) * i / 20)
+            px = sw + R + rr * math.cos(angle)
+            py = bar_top - R - rr * math.sin(angle)
+            obox.lineTo(px, py)
+        obox.lineTo(gx, box_top)                    # zár
+        obox.closeSubpath()
+        p.fillPath(obox, QBrush(QColor(HUDWindow.LCARS_GOLD)))
+
+        # OPACITY felirat a doboz flat (íven túli) részén, középre
+        p.setFont(QFont(self._font_family, fs, QFont.Weight.Bold))
+        p.setPen(QColor("#000a14"))
+        p.drawText(QRectF(sw + R, box_top, box_right - (sw + R), box_bottom - box_top),
+                    Qt.AlignmentFlag.AlignCenter, "OPACITY")
 
         p.end()
 
@@ -196,16 +300,16 @@ class LCARSSidebarWidget(QWidget):
 
     COLORS = ["#FF9900", "#FFCC66", "#5599FF", "#CC6699", "#9977CC", "#FFAA66"]
 
-    def __init__(self, parent: QWidget, scale: float = 1.0) -> None:  # type: ignore[reportInvalidTypeForm]
+    def __init__(self, parent: QWidget, scale: float = 1.0) -> None:
         super().__init__(parent)
         self._scale = scale
-        self.setFixedWidth(max(10, int(16 * scale)))
+        self.setFixedWidth(max(10, int(20 * scale)))
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setStyleSheet(f"background-color: {HUDWindow.BG};")
 
     def set_scale(self, s: float) -> None:
         self._scale = s
-        self.setFixedWidth(max(10, int(16 * s)))
+        self.setFixedWidth(max(10, int(20 * s)))
         self.update()
 
     def paintEvent(self, event: Any) -> None:
@@ -217,7 +321,7 @@ class LCARSSidebarWidget(QWidget):
             return
         n = len(self.COLORS)
         seg_h = max(10, h // n)
-        gap = max(1, int(2 * self._scale))
+        gap = max(1, int(1 * self._scale))
         for i, c in enumerate(self.COLORS):
             y = i * seg_h
             bottom = h if i == n - 1 else y + seg_h
@@ -286,9 +390,6 @@ class LCARSSoundManager:
 
     def _generate_all(self) -> None:
         """Összes hangeffekt generálása és QSoundEffect létrehozása."""
-        if QSoundEffect is None:
-            logger.info("QSoundEffect nem elérhető – hangeffektek kikapcsolva")
-            return
         for name, tones in self._SOUND_DEFS.items():
             try:
                 wav_data = generate_tone(tones)
@@ -377,21 +478,20 @@ class HUDWindow(QWidget):
 
     UPDATE_INTERVAL_MS = 500
 
-    def __init__(self, controller: "FanController", app: "QApplication") -> None:  # type: ignore[reportInvalidTypeForm]
+    def __init__(self, controller: "FanController", app: "QApplication") -> None:
         super().__init__()
         self._base_width = 340
         self._base_height = 460
         self._scale = 1.0
         self._ctrl = controller
         self._app = app
-        self._drag_pos: Optional[QPoint] = None  # type: ignore[reportInvalidTypeForm]
+        self._drag_pos: Optional[QPoint] = None
         self._resize_active = False
         self._resize_start_pos = QPoint()
         self._resize_start_size = QSize()
 
-        # Referencia listák a skálázható label-ekhez
-        self._row_key_labels: list[QLabel] = []  # type: ignore[reportInvalidTypeForm]
-        self._status_key_labels: list[QLabel] = []  # type: ignore[reportInvalidTypeForm]
+        # Skálázható szöveges label-ek: (label, alap_pt_méret, fix_szélesség vagy None)
+        self._scalable_texts: list = []
 
         # Flash effekt: előző értékek és flash számlálók
         self._prev_power: Optional[float] = None
@@ -429,7 +529,7 @@ class HUDWindow(QWidget):
             | Qt.WindowType.Tool
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)
-        hud_cfg: HudConfig = controller.settings["hud"]
+        # hud_cfg-t fentebb már lekértük (self._ctrl is controller)
         self._initial_opacity = max(20, min(100, hud_cfg.opacity))
         self.setWindowOpacity(self._initial_opacity / 100.0)
         self.setGeometry(20, 20, self._base_width, self._base_height)
@@ -471,18 +571,24 @@ class HUDWindow(QWidget):
         self._lbl_zone_label = QLabel("FAN ZONE")
         self._lbl_zone_label.setStyleSheet(
             f"background-color: {self.LCARS_CYAN}; color: #000a14; "
-            f"font-family: '{self._font_family}'; font-size: 12pt; font-weight: bold; "
             f"padding: 2px 4px; border-radius: 4px;"
         )
+        self._lbl_zone_label.setSizePolicy(
+            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed
+        )
+        self._register_scalable(self._lbl_zone_label, 12)
         content_layout.addWidget(self._lbl_zone_label)
 
         self._lbl_zone = QLabel("– – –")
         self._lbl_zone.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._lbl_zone.setStyleSheet(
             f"background-color: {self._VAL_BG}; color: {self.LCARS_CYAN}; "
-            f"font-family: '{self._font_family}'; font-size: 19pt; font-weight: bold; "
             f"padding: 3px 6px; border-radius: 4px;"
         )
+        self._lbl_zone.setSizePolicy(
+            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed
+        )
+        self._register_scalable(self._lbl_zone, 19)
         content_layout.addWidget(self._lbl_zone)
 
         # ───────── ÁLLAPOT CSÍK (tiles) ─────────
@@ -534,20 +640,13 @@ class HUDWindow(QWidget):
         self._lbl_cool = self._make_status_row(content_layout, "COOLDOWN",
                                                 "– – –", self.LCARS_TAN)
 
-        # ───────── OPACITY SLIDER ─────────
-        slider_widget = QWidget(content)
-        slider_widget.setStyleSheet(f"background-color: {self.PANEL_BG};")
-        slider_layout = QHBoxLayout(slider_widget)
-        slider_layout.setContentsMargins(0, 6, 0, 4)
-        slider_layout.setSpacing(4)
-
+        # ───────── OPACITY VEZÉRLŐK (a footer felső, ívek közötti sávjába) ─────────
         self._opacity_label = QLabel("OPACITY")
         self._opacity_label.setStyleSheet(
             f"background-color: {self.LCARS_GOLD}; color: #000a14; "
             f"font-family: '{self._font_family}'; font-size: 9pt; font-weight: bold; "
             f"padding: 2px 4px; border-radius: 4px;"
         )
-        slider_layout.addWidget(self._opacity_label)
 
         self._alpha_slider = QSlider(Qt.Orientation.Horizontal)
         self._alpha_slider.setRange(20, 100)
@@ -562,27 +661,38 @@ class HUDWindow(QWidget):
             f"}}"
         )
         self._alpha_slider.valueChanged.connect(self._on_alpha_change)
-        slider_layout.addWidget(self._alpha_slider, 1)
 
         self._alpha_value = QLabel(f"{self._initial_opacity}%")
         self._alpha_value.setStyleSheet(
-            f"color: {self.LCARS_CYAN}; background-color: {self.PANEL_BG}; "
-            f"font-family: '{self._font_family}'; font-size: 11pt; font-weight: bold;"
+            f"color: {self.LCARS_CYAN}; background-color: transparent;"
         )
-        self._alpha_value.setFixedWidth(40)
         self._alpha_value.setAlignment(
             Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
         )
-        slider_layout.addWidget(self._alpha_value)
+        self._register_scalable(self._alpha_value, 11, 40)
 
-        content_layout.addWidget(slider_widget)
+        # A csúszka eredeti (beállítás-panel) helyére a STARFLEET felirat kerül
+        self._footer_brand = QLabel("STARFLEET CYCLING DIV")
+        self._footer_brand.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._footer_brand.setStyleSheet(
+            f"color: {self.LCARS_CYAN_DIM}; background-color: {self.PANEL_BG}; "
+            f"padding: 6px 0 4px 0;"
+        )
+        self._register_scalable(self._footer_brand, 9, bold=False)
+        content_layout.addWidget(self._footer_brand)
         content_layout.addStretch()
 
         main_layout.addWidget(body, 1)
 
-        # Footer
+        # Footer – az opacity csúszka ide, a felső ívek közötti sávba kerül
         self._footer = LCARSFooterWidget(self, self._font_family, self._scale)
+        self._footer.set_opacity_controls(
+            self._opacity_label, self._alpha_slider, self._alpha_value
+        )
         main_layout.addWidget(self._footer)
+
+        # Az ablak minimális mérete a tartalom olvasható méretéhez igazodik
+        self._update_min_size()
 
         # ───────── KONTEXTUS MENÜ ─────────
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -654,24 +764,23 @@ class HUDWindow(QWidget):
 
     # ────────── UI SEGÉDFÜGGVÉNYEK ──────────
 
-    def _make_row(self, layout: "QVBoxLayout", label: str, value: str,  # type: ignore[reportInvalidTypeForm]
-                  color: str, label_bg: str) -> "QLabel":  # type: ignore[reportInvalidTypeForm]
+    def _make_row(self, layout: "QVBoxLayout", label: str, value: str,
+                  color: str, label_bg: str) -> "QLabel":
         """Telemetria sor LCARS színes label háttérrel."""
         row = QWidget()
         row.setStyleSheet(f"background-color: {self.PANEL_BG};")
+        row.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         row_layout = QHBoxLayout(row)
         row_layout.setContentsMargins(0, 2, 0, 2)
         row_layout.setSpacing(2)
 
         key_lbl = QLabel(label)
-        key_lbl.setFixedWidth(100)
         key_lbl.setStyleSheet(
             f"background-color: {label_bg}; color: #000a14; "
-            f"font-family: '{self._font_family}'; font-size: 9pt; font-weight: bold; "
             f"padding: 3px 4px; border-radius: 4px;"
         )
         row_layout.addWidget(key_lbl)
-        self._row_key_labels.append(key_lbl)
+        self._register_scalable(key_lbl, 9, 100)
 
         val_lbl = QLabel(value)
         val_lbl.setAlignment(
@@ -679,44 +788,45 @@ class HUDWindow(QWidget):
         )
         val_lbl.setStyleSheet(
             f"background-color: {self._VAL_BG}; color: {color}; "
-            f"font-family: '{self._font_family}'; font-size: 14pt; font-weight: bold; "
             f"padding: 3px 6px; border-radius: 4px;"
         )
         row_layout.addWidget(val_lbl, 1)
+        self._register_scalable(val_lbl, 14)
 
         layout.addWidget(row)
         return val_lbl
 
-    def _make_tile(self, layout: "QHBoxLayout", text: str) -> "QLabel":  # type: ignore[reportInvalidTypeForm]
+    def _make_tile(self, layout: "QHBoxLayout", text: str) -> "QLabel":
         """Állapot csík tile."""
         lbl = QLabel(text)
         lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         lbl.setStyleSheet(
             f"background-color: {self.TEXT_DIM}; color: #000a14; "
-            f"font-family: '{self._font_family}'; font-size: 9pt; font-weight: bold; "
             f"padding: 2px 5px; border-radius: 4px;"
         )
+        # Ne vágódjon le a felirata (Minimum), és ne nyomódjon össze (Fixed)
+        lbl.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
+        self._register_scalable(lbl, 9)
         layout.addWidget(lbl, 1)
         return lbl
 
-    def _make_status_row(self, layout: "QVBoxLayout", label: str, value: str,  # type: ignore[reportInvalidTypeForm]
-                         label_bg: str) -> "QLabel":  # type: ignore[reportInvalidTypeForm]
+    def _make_status_row(self, layout: "QVBoxLayout", label: str, value: str,
+                         label_bg: str) -> "QLabel":
         """Státusz sor LCARS színes label háttérrel."""
         row = QWidget()
         row.setStyleSheet(f"background-color: {self.PANEL_BG};")
+        row.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         row_layout = QHBoxLayout(row)
         row_layout.setContentsMargins(0, 2, 0, 2)
         row_layout.setSpacing(2)
 
         key_lbl = QLabel(label)
-        key_lbl.setFixedWidth(100)
         key_lbl.setStyleSheet(
             f"background-color: {label_bg}; color: #000a14; "
-            f"font-family: '{self._font_family}'; font-size: 9pt; font-weight: bold; "
             f"padding: 2px 4px; border-radius: 4px;"
         )
         row_layout.addWidget(key_lbl)
-        self._status_key_labels.append(key_lbl)
+        self._register_scalable(key_lbl, 9, 100)
 
         val_lbl = QLabel(value)
         val_lbl.setAlignment(
@@ -724,10 +834,10 @@ class HUDWindow(QWidget):
         )
         val_lbl.setStyleSheet(
             f"background-color: {self._VAL_BG}; color: {self.TEXT_DIM}; "
-            f"font-family: '{self._font_family}'; font-size: 11pt; "
             f"padding: 2px 6px; border-radius: 4px;"
         )
         row_layout.addWidget(val_lbl, 1)
+        self._register_scalable(val_lbl, 11, bold=False)
 
         layout.addWidget(row)
         return val_lbl
@@ -750,8 +860,10 @@ class HUDWindow(QWidget):
     def mouseMoveEvent(self, event: "QMouseEvent") -> None:  # type: ignore[override]
         if self._resize_active:
             delta = event.globalPosition().toPoint() - self._resize_start_pos
-            new_w = max(220, self._resize_start_size.width() + delta.x())
-            new_h = max(350, self._resize_start_size.height() + delta.y())
+            new_w = max(self.minimumWidth(),
+                        self._resize_start_size.width() + delta.x())
+            new_h = max(self.minimumHeight(),
+                        self._resize_start_size.height() + delta.y())
             self.resize(new_w, new_h)
             self._scale = new_w / self._base_width
             self._apply_scale()
@@ -784,7 +896,7 @@ class HUDWindow(QWidget):
 
     # ────────── KONTEXTUS MENÜ ──────────
 
-    def _show_menu(self, pos: "QPoint") -> None:  # type: ignore[reportInvalidTypeForm]
+    def _show_menu(self, pos: "QPoint") -> None:
         menu_ss = (
             f"QMenu {{ background-color: #001828; color: {self.LCARS_CYAN}; "
             f"font-family: '{self._font_family}'; font-size: 10pt; }}"
@@ -853,12 +965,12 @@ class HUDWindow(QWidget):
 
     # ────────── LABEL FRISSÍTÉS SEGÉD ──────────
 
-    import re as _re
-    _RE_COLOR = _re.compile(r"(?<!-)color:\s*[^;]+;")
-    _RE_BG_COLOR = _re.compile(r"background-color:\s*[^;]+;")
+    # Egyszer, a class definíciókor lefordított minták (nem futásidőben)
+    _RE_COLOR = re.compile(r"(?<!-)color:\s*[^;]+;")
+    _RE_BG_COLOR = re.compile(r"background-color:\s*[^;]+;")
 
     @staticmethod
-    def _update_label(lbl: "QLabel", text: str, color: str) -> None:  # type: ignore[reportInvalidTypeForm]
+    def _update_label(lbl: "QLabel", text: str, color: str) -> None:
         """Label szöveg és szín frissítése stylesheet-tel."""
         current = lbl.styleSheet()
         new_ss = HUDWindow._RE_COLOR.sub(f"color: {color};", current, count=1)
@@ -866,7 +978,7 @@ class HUDWindow(QWidget):
         lbl.setText(text)
 
     @staticmethod
-    def _update_tile_bg(tile: "QLabel", bg: str) -> None:  # type: ignore[reportInvalidTypeForm]
+    def _update_tile_bg(tile: "QLabel", bg: str) -> None:
         """Tile háttérszín frissítése."""
         current = tile.styleSheet()
         new_ss = HUDWindow._RE_BG_COLOR.sub(f"background-color: {bg};", current, count=1)
@@ -1233,6 +1345,38 @@ class HUDWindow(QWidget):
         self._header.set_scale(s)
         self._footer.set_scale(s)
         self._sidebar.set_scale(s)
+        # A szöveges label-ek betűmérete és fix szélessége is skálázódik
+        for lbl, base_pt, base_fw, bold in self._scalable_texts:
+            self._apply_label_scale(lbl, base_pt, base_fw, bold)
+        self._update_min_size()
+
+    def _register_scalable(self, lbl: "QLabel", base_pt: int,
+                           base_fw: "Optional[int]" = None, bold: bool = True) -> None:
+        """Label regisztrálása skálázáshoz (alap pt-méret + opcionális fix szélesség),
+        és azonnali beállítás az aktuális skálára."""
+        self._scalable_texts.append((lbl, base_pt, base_fw, bold))
+        self._apply_label_scale(lbl, base_pt, base_fw, bold)
+
+    def _apply_label_scale(self, lbl: "QLabel", base_pt: int,
+                           base_fw: "Optional[int]", bold: bool) -> None:
+        """A teljes fontot (család, méret, vastagság) setFont-tal állítjuk – a
+        stíluslapban nincs font-* tulajdonság, így nem írja felül. A fix
+        szélesség is skálázódik."""
+        s = self._scale
+        f = QFont(self._font_family, max(6, int(base_pt * s)))
+        f.setBold(bold)
+        lbl.setFont(f)
+        if base_fw is not None:
+            lbl.setFixedWidth(max(1, int(base_fw * s)))
+
+    def _update_min_size(self) -> None:
+        """Az ablak minimális méretét a tartalom természetes (olvasható) méretéből
+        számolja, így egérrel átméretezve a sorok/tile-ok nem nyomhatók össze."""
+        lay = self.layout()
+        if lay is not None:
+            lay.activate()
+        hint = self.minimumSizeHint()
+        self.setMinimumSize(max(220, hint.width()), max(300, hint.height()))
 
     def cleanup_sound(self) -> None:
         """Publikus interfész a hangrendszer felszabadításához."""
@@ -1288,6 +1432,9 @@ class HUDWindow(QWidget):
         h = max(self.minimumHeight(), min(rect["h"], sg.height()))
         self.setGeometry(x, y, w, h)
         self._scale = w / self._base_width
+        # A visszaállított skálát rögtön alkalmazzuk (fejléc/lábléc/oldalsáv + label-ek),
+        # nehogy csak az első egeres átméretezéskor frissüljön.
+        self._apply_scale()
 
     def _save_geometry(self) -> None:
         """Elmenti az ablak pozícióját/méretét az aktuális monitorhoz."""
