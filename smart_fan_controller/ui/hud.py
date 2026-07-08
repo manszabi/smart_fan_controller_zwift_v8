@@ -1070,7 +1070,7 @@ class HUDWindow(QWidget):
             # villognak – period 4 tick (~2 s), 50% kitöltés.
             self._flash_ble_tick += 1
             _ft = self._flash_ble_tick
-            flash_white = (_ft + 0) % 2 < 2      # BLE FAN fázis
+            flash_white = (_ft + 0) % 4 < 2      # BLE FAN fázis
             ble_status = "DISABLED"
             if ble_fan is not None:
                 if ble_fan.auth_failed:
@@ -1100,7 +1100,7 @@ class HUDWindow(QWidget):
             ds: DatasourceConfig = self._ctrl.settings["datasource"]
             power_ble = ds.power_source == DataSource.BLE
             hr_ble = ds.hr_source == DataSource.BLE
-            flash_white = (_ft + 1) % 2 < 2      # BLE SENS fázis
+            flash_white = (_ft + 1) % 4 < 2      # BLE SENS fázis
 
             if not power_ble and not hr_ble:
                 c = self._lighten(self.TEXT_DIM) if flash_white else self.TEXT_DIM
@@ -1145,7 +1145,7 @@ class HUDWindow(QWidget):
             power_ant = ds.power_source == DataSource.ANTPLUS
             hr_ant = ds.hr_source == DataSource.ANTPLUS
             ant = getattr(self._ctrl, "_antplus_handler", None)
-            flash_white = (_ft + 2) % 2 < 2      # ANT+ fázis
+            flash_white = (_ft + 2) % 4 < 2      # ANT+ fázis
 
             if not power_ant and not hr_ant:
                 c = self._lighten(self.TEXT_DIM) if flash_white else self.TEXT_DIM
@@ -1195,7 +1195,7 @@ class HUDWindow(QWidget):
             zwift = getattr(self._ctrl, "_zwift_udp", None)
             power_zwift = ds.power_source == DataSource.ZWIFTUDP
             hr_zwift = ds.hr_source == DataSource.ZWIFTUDP
-            flash_white = (_ft + 3) % 2 < 2      # ZWIFT fázis
+            flash_white = (_ft + 3) % 4 < 2      # ZWIFT fázis
 
             if zwift is not None and (power_zwift or hr_zwift):
                 now = time.monotonic()
@@ -1224,7 +1224,7 @@ class HUDWindow(QWidget):
                 self._update_label(self._lbl_zwift_udp, "– – –", c)
 
             # Last TX
-            flash_white = (_ft + 1) % 2 < 2      # LAST TX fázis
+            flash_white = (_ft + 1) % 4 < 2      # LAST TX fázis
             if ble_fan is not None and getattr(ble_fan, "last_sent_time", 0) > 0:
                 cur_sent_time = ble_fan.last_sent_time
                 ago = time.monotonic() - cur_sent_time
@@ -1239,7 +1239,7 @@ class HUDWindow(QWidget):
                 self._update_label(self._lbl_last_sent, "– – –", c)
 
             # Cooldown
-            flash_white = (_ft + 2) % 2 < 2      # COOLDOWN fázis
+            flash_white = (_ft + 2) % 4 < 2      # COOLDOWN fázis
             if cool is not None:
                 active, remaining = cool.snapshot()
                 if active:
@@ -1255,7 +1255,7 @@ class HUDWindow(QWidget):
 
             # ── Állapot csík frissítése (aktív = villogó háttér) ──
             zpi = self._ctrl.settings["power_zones"].zero_power_immediate
-            flash_white = (_ft + 0) % 2 < 2
+            flash_white = (_ft + 0) % 4 < 2
             if zpi:
                 bg = self._lighten(self.LCARS_CYAN) if flash_white else self.LCARS_CYAN
             else:
@@ -1263,7 +1263,7 @@ class HUDWindow(QWidget):
             self._update_tile_bg(self._tile_zero_imm, bg)
 
             zhi = self._ctrl.settings["heart_rate_zones"].zero_hr_immediate
-            flash_white = (_ft + 1) % 2 < 2
+            flash_white = (_ft + 1) % 4 < 2
             if zhi:
                 bg = self._lighten(self.LCARS_CYAN) if flash_white else self.LCARS_CYAN
             else:
@@ -1272,28 +1272,28 @@ class HUDWindow(QWidget):
 
             zone_mode_val = self._ctrl.settings["heart_rate_zones"].zone_mode
             hw = zone_mode_val == ZoneMode.HIGHER_WINS
-            flash_white = (_ft + 2) % 2 < 2
+            flash_white = (_ft + 2) % 4 < 2
             if hw:
                 bg = self._lighten(self.LCARS_ORANGE) if flash_white else self.LCARS_ORANGE
             else:
                 bg = self.TEXT_DIM
             self._update_tile_bg(self._tile_higher_wins, bg)
 
-            flash_white = (_ft + 3) % 2 < 2
+            flash_white = (_ft + 3) % 4 < 2
             if power_ant or hr_ant:
                 bg = self._lighten(self.LCARS_PURPLE) if flash_white else self.LCARS_PURPLE
             else:
                 bg = self.TEXT_DIM
             self._update_tile_bg(self._tile_ant, bg)
 
-            flash_white = (_ft + 0) % 2 < 2
+            flash_white = (_ft + 0) % 4 < 2
             if power_ble or hr_ble:
                 bg = self._lighten(self.LCARS_BLUE) if flash_white else self.LCARS_BLUE
             else:
                 bg = self.TEXT_DIM
             self._update_tile_bg(self._tile_ble, bg)
 
-            flash_white = (_ft + 1) % 2 < 2
+            flash_white = (_ft + 1) % 4 < 2
             if cool is not None:
                 cd_active, _ = cool.snapshot()
                 if cd_active:
