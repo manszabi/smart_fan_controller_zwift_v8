@@ -81,11 +81,6 @@ except ImportError:
 
 
 def main() -> None:
-    # Windows: SelectorEventLoop megbízhatóbb threaded asyncio-hoz
-    # Python 3.16-tól ezek az API-k eltávolításra kerülnek
-    if _platform.system() == "Windows" and sys.version_info < (3, 14):
-        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-
     # Korai logging: a settings betöltése előtti logokat memóriába puffereljük,
     # mert a logging flag még nem ismert. Így logging:false esetén nem jön létre
     # fölösleges log fájl, logging:true esetén a korai warningok sem vesznek el.
@@ -114,7 +109,14 @@ def main() -> None:
 
     controller.print_startup_info()
 
-    loop = asyncio.new_event_loop()
+    # Windows: SelectorEventLoop megbízhatóbb threaded asyncio-hoz. Explicit
+    # loop-példányosítás (nem event loop policy): a policy API deprecated
+    # (Python 3.16-ban megszűnik), és a policy-s megoldás 3.14+ alatt már
+    # nem is érvényesült.
+    if _platform.system() == "Windows":
+        loop: asyncio.AbstractEventLoop = asyncio.SelectorEventLoop()
+    else:
+        loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     cleaned_up = False
     # Shutdown event: az asyncio loop-ot megbízhatóan leállítja
@@ -205,6 +207,23 @@ def main() -> None:
     # Megvárjuk, amíg az asyncio event loop ténylegesen elindul (max 5s)
     loop_ready.wait(timeout=5.0)
 
+    def _finish_shutdown() -> None:
+        """Közös leállítási lépések (HUD-os és headless ág)."""
+        cleanup()
+        # Shutdown event jelzése → asyncio loop megbízhatóan leáll
+        try:
+            loop.call_soon_threadsafe(shutdown_event.set)
+        except Exception as exc:
+            logger.debug(f"shutdown_event.set hiba: {exc}")
+        asyncio_thread.join(timeout=3.0)
+        if asyncio_thread.is_alive():
+            # Futó event loopot TILOS bezárni (RuntimeError-t dobna a
+            # kilépési útvonalon); a daemon szál a processz végén leáll.
+            logger.warning("AsyncioThread nem állt le 3s alatt – loop.close() kihagyva")
+        else:
+            loop.close()
+        user_logger.info("\nProgram leállítva.")
+
     # Fix #20: PySide6 opcionális – headless módban HUD nélkül fut
     if _PYSIDE6_AVAILABLE:
         from PySide6.QtWidgets import QApplication
@@ -245,17 +264,7 @@ def main() -> None:
             hud.cleanup_sound()
             hud.close()
             hud_ref[0] = None
-            cleanup()
-
-            # Shutdown event jelzése → asyncio loop megbízhatóan leáll
-            try:
-                loop.call_soon_threadsafe(shutdown_event.set)
-            except Exception as exc:
-                logger.debug(f"shutdown_event.set hiba: {exc}")
-
-            asyncio_thread.join(timeout=3.0)
-            loop.close()
-            user_logger.info("\nProgram leállítva.")
+            _finish_shutdown()
     else:
         logger.warning("PySide6 nem elérhető, HUD nélkül fut")
         user_logger.warning("⚠ PySide6 nem elérhető – HUD nélkül fut. Ctrl+C a leállításhoz.")
@@ -264,11 +273,4 @@ def main() -> None:
         except KeyboardInterrupt:
             user_logger.info("\nLeállítás (Ctrl+C)...")
         finally:
-            cleanup()
-            try:
-                loop.call_soon_threadsafe(shutdown_event.set)
-            except Exception as exc:
-                logger.debug(f"shutdown_event.set hiba: {exc}")
-            asyncio_thread.join(timeout=3.0)
-            loop.close()
-            user_logger.info("\nProgram leállítva.")
+            _finish_shutdown()

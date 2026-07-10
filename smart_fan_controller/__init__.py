@@ -10,4 +10,4 @@ vékony belépő, ami az ``app.main()``-t hívja.
 """
 from __future__ import annotations
 
-__version__ = "8.0.0"
+__version__ = "8.1.0"

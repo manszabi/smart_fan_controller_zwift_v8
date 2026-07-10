@@ -27,6 +27,19 @@ _log_dir: str = _base_dir
 _early_mem_handler: Any = None
 
 
+def _close_and_clear_handlers() -> None:
+    """A logger handlereit leválasztja ÉS bezárja.
+
+    A sima handlers.clear() nyitva hagyná a fájl-handlereket: Windows-on a
+    nyitva felejtett handle a log-rotációt (átnevezést) is meghiúsítaná."""
+    for h in log.handlers[:]:
+        log.removeHandler(h)
+        try:
+            h.close()
+        except Exception:
+            pass
+
+
 def set_base_dir(path: str) -> None:
     """Beállítja a log fájlok alapértelmezett könyvtárát (fallback)."""
     global _base_dir, _log_dir
@@ -65,7 +78,7 @@ def setup_early_logging() -> None:
     from logging.handlers import MemoryHandler
 
     global _early_mem_handler
-    log.handlers.clear()
+    _close_and_clear_handlers()
     log.setLevel(logging.DEBUG)
     log.propagate = False
     mh = MemoryHandler(capacity=100000, flushLevel=logging.CRITICAL + 10)
@@ -85,7 +98,7 @@ def setup_logging(
     from logging.handlers import RotatingFileHandler
 
     global _log_dir
-    log.handlers.clear()
+    _close_and_clear_handlers()
     log.propagate = False
 
     if not enabled:

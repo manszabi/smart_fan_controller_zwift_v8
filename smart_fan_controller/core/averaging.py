@@ -8,10 +8,13 @@ from __future__ import annotations
 
 import logging
 from collections import deque
-from typing import Optional
+
+# A belső debug logok a projekt nevesített loggerére mennek (nem a root-ra),
+# konzisztensen a többi modullal.
+logger = logging.getLogger("zwift_fan_controller_new")
 
 
-def compute_average(samples: "deque[float]") -> Optional[float]:
+def compute_average(samples: "deque[float]") -> float | None:
     """Kiszámítja a minták számtani átlagát.
 
     Args:
@@ -55,11 +58,11 @@ class _RollingAverager:
         self.effective_minimum = min(self.minimum_samples, max(1, self.buffersize // 2))
         self._label = label
 
-    def add_sample(self, value: float) -> Optional[float]:
+    def add_sample(self, value: float) -> float | None:
         """Új minta hozzáadása és az átlag visszaadása, ha elég minta van."""
         self.buffer.append(value)
         if len(self.buffer) < self.effective_minimum:
-            logging.debug(
+            logger.debug(
                 "%s adatok gyűjtése: %d/%d (effective min)",
                 self._label,
                 len(self.buffer),

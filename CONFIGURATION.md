@@ -37,7 +37,11 @@ A program kétféleképpen reagál a hibákra, attól függően, hogy **érték-
 
 > ⚠️ **Gyakorlati tanács:** ha JSON szintaxis hibát látsz a logban, és váratlanul **minden** alapértelmezett, akkor egyetlen elgépelés (hiányzó vessző, zárójel, lezáratlan idézőjel) az egész fájlt blokkolja. A hibaüzenet megadja a pontos sort és oszlopot (pl. `Expecting ',' delimiter: line 5 column 5`) – érdemes JSON-validátorral vagy a megadott sor/oszlop alapján ellenőrizni.
 
-> 💾 **Automatikus mentés szintaxis-hibánál:** ha a `settings.json` JSON szintaxisa hibás, a program a default-okra váltás **előtt** félreteszi a hibás fájlt `settings.json.incorrect` néven. Így a sok kézi szerkesztésed **nem vész el** akkor sem, ha a program később (pl. HUD ablakpozíció mentésekor) felülírná a `settings.json`-t a default értékekkel. Teendő: nyisd meg a `settings.json.incorrect` fájlt, javítsd ki a hibát (a logban jelzett sor/oszlop alapján), majd nevezd vissza `settings.json`-ra. Megjegyzés: a `.incorrect` mindig a legutóbbi hibás verziót őrzi (felülíródik).
+> 💾 **Automatikus mentés szintaxis-hibánál:** ha a `settings.json` JSON szintaxisa hibás – vagy érvényes JSON ugyan, de nem beállítás-objektum (pl. lista került a fájl tetejére) –, a program a default-okra váltás **előtt** félreteszi a hibás fájlt `settings.json.incorrect` néven. Így a sok kézi szerkesztésed **nem vész el** akkor sem, ha a program később (pl. HUD ablakpozíció mentésekor) felülírná a `settings.json`-t a default értékekkel. Teendő: nyisd meg a `settings.json.incorrect` fájlt, javítsd ki a hibát (a logban jelzett sor/oszlop alapján), majd nevezd vissza `settings.json`-ra. Megjegyzés: a `.incorrect` mindig a legutóbbi hibás verziót őrzi (felülíródik).
+
+> 🔤 **Elgépelt szekciónevek:** ha a fájl felső szintjén ismeretlen szekció szerepel (pl. `"power_zone"` a `"power_zones"` helyett), a program ⚠ figyelmeztetéssel nevesíti a logban – így az elgépelés nem veszik el csendben.
+
+> 🔒 **Atomikus mentés:** amikor a program ír a `settings.json`-ba (HUD beállítások, Zwift belépési adatok), azt temp fájl + átnevezés párossal, atomikusan teszi. Írás közbeni leállás (áramszünet, kill) így nem hagyhat csonka fájlt – vagy a régi, vagy az új teljes tartalom marad meg.
 
 ---
 
@@ -47,7 +51,7 @@ A program kétféleképpen reagál a hibákra, attól függően, hogy **érték-
 2. Állítsd be az FTP értékedet (`power_zones.ftp`), és szükség esetén a cooldown-t (`global_settings.cooldown_seconds`).
 3. Válaszd ki az adatforrást (`datasource.power_source`, `datasource.hr_source`).
 4. Ha BLE ventilátort használsz, állítsd be a `ble_fan.device_name` mezőt (vagy hagyd `null`-on az auto-discovery-hez).
-5. Indítsd el: `python swift_fan_controller.py`
+5. Indítsd el: `python zwift_fan_controller.py`
 
 ---
 
@@ -233,6 +237,8 @@ Minden forrásnak saját buffer paraméterei vannak. Ha nincs megadva, a globál
 
 **Watchdog:** ha 30 másodpercig nem érkezik ANT+ broadcast, a program automatikusan újraindítja az ANT+ node-ot (USB dongle kihúzás/lemerülés detektálása).
 
+**Windows 11 meghajtó:** az ANT+ stickhez **WinUSB** (libusb) meghajtó szükséges. Ha hiányzik, a program egyszeri, célzott figyelmeztetést ír („No backend available" hibánál): telepítsd a meghajtót pl. a [Zadig](https://zadig.akeo.ie/) eszközzel, majd húzd ki és dugd vissza a sticket.
+
 ### BLE szenzor bemeneti beállítások
 
 | Mező | Típus | Tartomány | Alapértelmezett | Leírás |
@@ -247,6 +253,8 @@ Minden forrásnak saját buffer paraméterei vannak. Ha nincs megadva, a globál
 | `ble_hr_max_retries` | int | 1–100 | 10 | Max újrapróba. |
 
 **Auto-discovery:** a BLE Power a Cycling Power Service (UUID: `0x1818`), a BLE HR a Heart Rate Service (UUID: `0x180D`) alapján keres automatikusan.
+
+**Név alapú keresés:** ha `device_name` meg van adva, a keresés **azonnal** csatlakozik, amint az eszköz felbukkant – a `scan_timeout` csak a felső korlát arra az esetre, ha az eszköz nem hirdet.
 
 ### Zwift UDP beállítások
 
@@ -286,8 +294,8 @@ A segédprocessz a fő `settings.json` **`zwift_api`** szekciójából olvas (ni
 1. A program megkeresi a `ZwiftLauncher.exe`-t (Registry → ismert útvonalak → `zwift_launcher_path` felülírás)
 2. Elindítja a launchert
 3. Ha a `pywinauto` telepítve van: automatikusan megvárja a „Let's Go" gombot (frissítés esetén akár 5 percet is), majd rákattint
-4. Ha a `pywinauto` nincs telepítve: a program megvárja hogy a felhasználó manuálisan kattintson a „Let's Go" gombra (max 3 perc)
-5. Megvárja a `ZwiftApp.exe` elindulását
+4. Ha a `pywinauto` nincs telepítve: a program megvárja hogy a felhasználó manuálisan kattintson a „Let's Go" gombra (max 6 perc)
+5. Megvárja a `ZwiftApp.exe` elindulását (max 4 perc; kilépéskor a várakozás azonnal megszakad)
 
 **Telepítés:** `pip install pywinauto` (opcionális – nélküle manuális kattintás szükséges).
 
@@ -325,7 +333,7 @@ A LCARS stílusú HUD ablak viselkedését szabályozó beállítások.
 | `save_hud_settings` | bool | true/false | false | Ha true, az ablak pozíciója, mérete, átlátszósága és hangerő mentésre kerül a fájlba (ez a flag engedélyezi az automatikus mentést). Ha false, a HUD-on végzett módosítások a memóriában maradnak, fájl nem íródik – a kézi szerkesztések nem lesznek felülírva egy ablak-elhúzással. |
 | `sound_enabled` | bool | true/false | true | LCARS hangeffektek be/kikapcsolása. |
 | `sound_volume` | float | 0.0–1.0 | 0.5 | Hangeffektek hangereje. Csak akkor mentésre kerül, ha `save_hud_settings=true`. |
-| `close_at_zwiftapp.exe` | bool | true/false | true | Ha true, a program automatikusan leáll amikor a ZwiftApp.exe kilép. |
+| `close_at_zwiftapp.exe` | bool | true/false | true | Ha true, a program automatikusan leáll amikor a ZwiftApp.exe kilép. (Az aláhúzásos `close_at_zwiftapp_exe` kulcsnevet is elfogadja; ha mindkettő szerepel, az aláhúzásos élvez elsőbbséget.) |
 | `opacity` | int | 20–100 | 92 | HUD ablak átlátszósága %-ban. A slider/menüből is módosítható. Csak akkor mentésre kerül, ha `save_hud_settings=true`. |
 | `window_geometry` | object | – | `{}` | Per-monitor ablak pozíció/méret. Csak akkor kerül mentésre, ha `save_hud_settings=true`. |
 
@@ -336,7 +344,7 @@ Az `opacity`, `sound_volume` és `window_geometry` értékek változása **csak 
 - **Ha `save_hud_settings=true`:** a HUD-on végzett módosítások (ablak elhúzása, átlátszóság állítás, hangerő) automatikusan mentődnek – az elvárt működés.
 - **Ha `save_hud_settings=false` (alapértelmezés):** a HUD-on végzett módosítások NEM írják felül a `settings.json`-t – így a kézi szerkesztéseid (pl. egyéb szekciók: `power_zones.ftp`, `ble_fan.device_name` stb.) nem vesznek el egy ablak-elhúzással vagy átlátszóság állítással.
 
-A `window_geometry` mező automatikusan kezelődik: bezáráskor a program menti az ablak pozícióját és méretét az aktuális monitor nevéhez. Induláskor visszaállítja az utoljára használt monitor geometriáját. Ha a monitor nem létezik (pl. külső kijelző lecsatlakoztatva), az elsődleges monitorra kerül az ablak. Több monitor esetén mindegyikhez külön pozíció/méret tárolódik:
+A `window_geometry` mező automatikusan kezelődik: a program **mozgatás/átméretezés után** (pár másodperces késleltetéssel, csendben) és **bezáráskor** is menti az ablak pozícióját és méretét az aktuális monitor nevéhez – így a pozíció váratlan leállás (crash, áramszünet) után sem vész el. Induláskor visszaállítja az **utoljára használt** monitor geometriáját. Ha a monitor nem létezik (pl. külső kijelző lecsatlakoztatva), az elsődleges monitorra kerül az ablak. Több monitor esetén mindegyikhez külön pozíció/méret tárolódik:
 
 ```json
 "window_geometry": {

@@ -14,21 +14,20 @@ from __future__ import annotations
 
 import atexit
 import logging
-import math
 import os
 import platform as _platform
-import re
 import shutil
 import sys
 import tempfile
 import threading
 import time
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
+from functools import lru_cache
+from typing import TYPE_CHECKING, Any
 
-from PySide6.QtCore import Qt, QTimer, QPoint, QSize, QRectF, QUrl
+from PySide6.QtCore import Qt, QTimer, QPoint, QSize, QRectF, QUrl, QMetaObject
 from PySide6.QtGui import (
     QColor, QPainter, QBrush, QFont, QFontDatabase, QFontMetrics,
-    QPainterPath, QMouseEvent,
+    QPainterPath, QMouseEvent, QPalette,
 )
 from PySide6.QtMultimedia import QSoundEffect
 from PySide6.QtWidgets import (
@@ -38,7 +37,9 @@ from PySide6.QtWidgets import (
 
 from smart_fan_controller import __version__
 from smart_fan_controller.config import DataSource, ZoneMode
-from smart_fan_controller.config.loader import HudConfig, DatasourceConfig
+from smart_fan_controller.config.loader import (
+    HudConfig, DatasourceConfig, save_hud_settings_only,
+)
 from smart_fan_controller.core.helpers import generate_tone
 
 if TYPE_CHECKING:
@@ -47,7 +48,19 @@ if TYPE_CHECKING:
     # lazán kezelt, csak továbbadott objektum.
     FanController = Any
 
-logger = logging.getLogger("swift_fan_controller_new")
+logger = logging.getLogger("zwift_fan_controller_new")
+
+
+@lru_cache(maxsize=64)
+def _qcolor(spec: str) -> QColor:
+    """Cache-elt QColor – a visszaadott példányt tilos mutálni."""
+    return QColor(spec)
+
+
+@lru_cache(maxsize=64)
+def _qbrush(spec: str) -> QBrush:
+    """Cache-elt QBrush – a visszaadott példányt tilos mutálni."""
+    return QBrush(QColor(spec))
 
 
 class LCARSHeaderWidget(QWidget):
@@ -57,6 +70,10 @@ class LCARSHeaderWidget(QWidget):
         super().__init__(parent)
         self._font_family = font_family
         self._scale = scale
+        self._path_cache_key: tuple[int, float, int] | None = None
+        self._path_cache: tuple[QPainterPath, QPainterPath] = (
+            QPainterPath(), QPainterPath()
+        )
         self.setFixedHeight(50)
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setStyleSheet(f"background-color: {HUDWindow.BG};")
@@ -78,43 +95,47 @@ class LCARSHeaderWidget(QWidget):
         R = max(14, int(26 * s))
         corner_r = max(12, int(18 * s))
 
-        # Fő narancssárga sáv ívvel + lekerekített bal felső sarok
-        path = QPainterPath()
-        path.moveTo(corner_r, 0)
-        path.lineTo(w - 6, 0)
-        path.lineTo(w - 6, bar_h)
-        for i in range(21):
-            angle = math.radians(90 + (180 - 90) * i / 20)
-            px = sw + R + R * math.cos(angle)
-            py = bar_h + R - R * math.sin(angle)
-            path.lineTo(px, py)
-        path.lineTo(sw, ch)
-        path.lineTo(0, ch)
-        path.lineTo(0, corner_r)
-        path.arcTo(QRectF(0, 0, 2 * corner_r, 2 * corner_r), 180, -90)
-        path.closeSubpath()
-        p.fillPath(path, QBrush(QColor(HUDWindow.LCARS_ORANGE)))
+        cache_key = (w, s, ch)
+        if self._path_cache_key != cache_key:
+            # Fő narancssárga sáv ívvel + lekerekített bal felső sarok
+            path = QPainterPath()
+            path.moveTo(corner_r, 0)
+            path.lineTo(w - 6, 0)
+            path.lineTo(w - 6, bar_h)
+            # Belső könyök ív – középpont (sw+R, bar_h+R), 90°→180°
+            path.arcTo(QRectF(sw, bar_h, 2 * R, 2 * R), 90, 90)
+            path.lineTo(sw, ch)
+            path.lineTo(0, ch)
+            path.lineTo(0, corner_r)
+            path.arcTo(QRectF(0, 0, 2 * corner_r, 2 * corner_r), 180, -90)
+            path.closeSubpath()
 
-        # Bal felső sarok háttér kitöltés (ív mögött)
-        bg_path = QPainterPath()
-        bg_path.addRect(QRectF(0, 0, corner_r, corner_r))
-        bg_path -= path
-        p.fillPath(bg_path, QBrush(QColor(HUDWindow.BG)))
+            # Bal felső sarok háttér kitöltés (ív mögött)
+            bg_path = QPainterPath()
+            bg_path.addRect(QRectF(0, 0, corner_r, corner_r))
+            bg_path -= path
+
+            self._path_cache = (path, bg_path)
+            self._path_cache_key = cache_key
+
+        path, bg_path = self._path_cache
+        p.fillPath(path, _qbrush(HUDWindow.LCARS_ORANGE))
+        p.fillPath(bg_path, _qbrush(HUDWindow.BG))
 
         # Cím szöveg
         title_size = max(8, int(12 * s))
         p.setFont(QFont(self._font_family, title_size, QFont.Weight.Bold))
-        p.setPen(QColor(HUDWindow.LCARS_CYAN))
+        p.setPen(_qcolor(HUDWindow.LCARS_CYAN))
         p.drawText(QRectF(sw + R, bar_h, w - 6 - sw - R, ch - bar_h),
                     Qt.AlignmentFlag.AlignCenter, "ZWIFT FAN CTRL")
 
         # Badge (magenta téglalap + verzió)
         badge_w = max(40, int(62 * s))
         p.fillRect(int(w - badge_w - 8), 1, badge_w, bar_h - 3,
-                    QColor(HUDWindow.LCARS_MAGENTA))
+                    _qcolor(HUDWindow.LCARS_MAGENTA))
         ver_size = max(6, int(7 * s))
         p.setFont(QFont(self._font_family, ver_size))
-        p.setPen(QColor("#FFFFFF"))
+        p.setPen(_qcolor("#FFFFFF"))
         p.drawText(int(w - badge_w - 8), 1, badge_w, bar_h - 3,
                     Qt.AlignmentFlag.AlignCenter, f"v{__version__}")
 
@@ -128,6 +149,9 @@ class LCARSFooterWidget(QWidget):
         super().__init__(parent)
         self._font_family = font_family
         self._scale = scale
+        self._path_cache_key: tuple[int, float, int] | None = None
+        self._path_cache: tuple[Any, ...] = ()
+        self._opacity_tw_cache: tuple[int, int] | None = None  # (fontméret, szélesség)
         self.setFixedHeight(60)
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setStyleSheet(f"background-color: {HUDWindow.BG};")
@@ -136,7 +160,7 @@ class LCARSFooterWidget(QWidget):
         self._overlay.setSpacing(4)
         self._update_overlay_margins()
 
-    def _bar_metrics(self) -> Tuple[int, int, int]:
+    def _bar_metrics(self) -> tuple[int, int, int]:
         # Ugyanaz a vastagság/szélesség/sugár, mint a fejlécnél (tükörkép)
         s = self._scale
         sw = max(10, int(20 * s))
@@ -155,7 +179,7 @@ class LCARSFooterWidget(QWidget):
             box_right + gap_s, box_top, sw + R, fh - box_bottom
         )
 
-    def _opacity_box(self) -> Tuple[int, int, int]:
+    def _opacity_box(self) -> tuple[int, int, int]:
         """Az OPACITY doboz (box_top, box_bottom, box_right).
         Az ív KONCENTRIKUS a kék könyök ívével (azonos középpont, R-6 sugár),
         így a rés végig egyenletes 6px; a doboz teteje a könyök ív tetejével
@@ -166,8 +190,10 @@ class LCARSFooterWidget(QWidget):
         box_top = bar_top - R                    # a könyök ív tetejével egy vonalban
         box_bottom = bar_top - 6                 # egyenletes 6px rés a sáv fölött
         fs = max(7, int(9 * self._scale))
-        fm = QFontMetrics(QFont(self._font_family, fs, QFont.Weight.Bold))
-        text_w = fm.horizontalAdvance("OPACITY")
+        if self._opacity_tw_cache is None or self._opacity_tw_cache[0] != fs:
+            fm = QFontMetrics(QFont(self._font_family, fs, QFont.Weight.Bold))
+            self._opacity_tw_cache = (fs, fm.horizontalAdvance("OPACITY"))
+        text_w = self._opacity_tw_cache[1]
         pad = max(6, int(8 * self._scale))
         box_right = sw + R + text_w + 2 * pad    # a szöveg az íven túli flat részen
         return box_top, box_bottom, box_right
@@ -199,96 +225,103 @@ class LCARSFooterWidget(QWidget):
         R = max(14, int(26 * s))
         bar_top = fh - bar_h
         corner_r = max(12, int(18 * s))
-
-        # Fő kék sáv ívvel + lekerekített bal alsó sarok
-        path = QPainterPath()
-        path.moveTo(0, 0)
-        path.lineTo(sw, 0)
-        for i in range(21):
-            angle = math.radians(180 + (270 - 180) * i / 20)
-            px = sw + R + R * math.cos(angle)
-            py = bar_top - R - R * math.sin(angle)
-            path.lineTo(px, py)
-        path.lineTo(w - 6, bar_top)
-        path.lineTo(w - 6, fh)
-        path.lineTo(corner_r, fh)
-        path.arcTo(QRectF(0, fh - 2 * corner_r, 2 * corner_r, 2 * corner_r), 270, -90)
-        path.lineTo(0, 0)
-        path.closeSubpath()
-        p.fillPath(path, QBrush(QColor(HUDWindow.LCARS_BLUE)))
-
-        # Bal alsó sarok háttér kitöltés (ív mögött)
-        bg_path = QPainterPath()
-        bg_path.addRect(QRectF(0, fh - corner_r, corner_r, corner_r))
-        bg_path -= path
-        p.fillPath(bg_path, QBrush(QColor(HUDWindow.BG)))
-
-        # Szegmensek – középen a lila, tőle balra a kék alapsáv, jobbra a tan.
-        # A tan közvetlenül a lila után kezdődik (nincs kék sliver).
-        re = w - 6                              # a sáv jobb széle
-        flat_left = sw + R                      # a bal ív vége (lapos sáv kezdete)
-        flat_right = re - sw - R                # a jobb ív kezdete (lapos sáv vége)
-        center = (flat_left + flat_right) / 2   # = re / 2
-        purple_w = max(1, int((flat_right - flat_left) / 3))
-        purple_left = int(center - purple_w / 2)
-        tan_left = purple_left + purple_w       # a tan rögtön a lila után
-        p.fillRect(purple_left, bar_top, purple_w, bar_h,
-                    QColor(HUDWindow.LCARS_PURPLE))
-
-        # Fő tan (narancs) sáv ívvel + lekerekített jobb alsó sarok
-        # – a bal alsó kék sarok pontos tükörképe (x' = re - x)
-        rpath = QPainterPath()
-        rpath.moveTo(re, 0)
-        rpath.lineTo(re - sw, 0)
-        for i in range(21):
-            angle = math.radians(180 + (270 - 180) * i / 20)
-            px = re - (sw + R + R * math.cos(angle))
-            py = bar_top - R - R * math.sin(angle)
-            rpath.lineTo(px, py)
-        rpath.lineTo(tan_left, bar_top)
-        rpath.lineTo(tan_left, fh)
-        rpath.lineTo(re - corner_r, fh)
-        rpath.arcTo(QRectF(re - 2 * corner_r, fh - 2 * corner_r,
-                            2 * corner_r, 2 * corner_r), 270, 90)
-        rpath.closeSubpath()
-        p.fillPath(rpath, QBrush(QColor(HUDWindow.LCARS_TAN)))
-
-        # Jobb alsó sarok háttér kitöltés (ív mögött) – a bal oldal tükörképe
-        bg_path_r = QPainterPath()
-        bg_path_r.addRect(QRectF(re - corner_r, fh - corner_r, corner_r, corner_r))
-        bg_path_r -= rpath
-        p.fillPath(bg_path_r, QBrush(QColor(HUDWindow.BG)))
-
-        # OPACITY sárga doboz – a bal ív KONCENTRIKUS a kék könyök ívével
-        # (azonos középpont, R-6 sugár), egyenletes 6px réssel; teteje a
-        # könyök tetejével, bal széle a státuszsorok bal oldalával egy vonalban.
-        box_top, box_bottom, box_right = self._opacity_box()
-        gx = sw + 6                                 # bal (ív teteje) = státuszsorok bal széle
-        rr = R - 6                                  # koncentrikus ív sugara
         fs = max(7, int(9 * s))
-        box_r = max(3, int(4 * s))                  # jobb sarkok lekerekítése
 
-        obox = QPainterPath()
-        obox.moveTo(gx, box_top)                    # bal felső (az ív teteje)
-        obox.lineTo(box_right - box_r, box_top)     # felső él
-        obox.arcTo(QRectF(box_right - 2 * box_r, box_top,
-                          2 * box_r, 2 * box_r), 90, -90)
-        obox.lineTo(box_right, box_bottom - box_r)  # jobb él
-        obox.arcTo(QRectF(box_right - 2 * box_r, box_bottom - 2 * box_r,
-                          2 * box_r, 2 * box_r), 0, -90)
-        obox.lineTo(sw + R, box_bottom)             # alsó él az ív aljáig
-        for i in range(21):                         # koncentrikus ív (270°→180°)
-            angle = math.radians(270 - (270 - 180) * i / 20)
-            px = sw + R + rr * math.cos(angle)
-            py = bar_top - R - rr * math.sin(angle)
-            obox.lineTo(px, py)
-        obox.lineTo(gx, box_top)                    # zár
-        obox.closeSubpath()
-        p.fillPath(obox, QBrush(QColor(HUDWindow.LCARS_GOLD)))
+        cache_key = (w, s, fh)
+        if self._path_cache_key != cache_key:
+            # Fő kék sáv ívvel + lekerekített bal alsó sarok
+            path = QPainterPath()
+            path.moveTo(0, 0)
+            path.lineTo(sw, 0)
+            # Belső könyök ív – középpont (sw+R, bar_top-R), 180°→270°
+            path.arcTo(QRectF(sw, bar_top - 2 * R, 2 * R, 2 * R), 180, 90)
+            path.lineTo(w - 6, bar_top)
+            path.lineTo(w - 6, fh)
+            path.lineTo(corner_r, fh)
+            path.arcTo(QRectF(0, fh - 2 * corner_r, 2 * corner_r, 2 * corner_r),
+                       270, -90)
+            path.lineTo(0, 0)
+            path.closeSubpath()
+
+            # Bal alsó sarok háttér kitöltés (ív mögött)
+            bg_path = QPainterPath()
+            bg_path.addRect(QRectF(0, fh - corner_r, corner_r, corner_r))
+            bg_path -= path
+
+            # Szegmensek – középen a lila, tőle balra a kék alapsáv, jobbra a tan.
+            # A tan közvetlenül a lila után kezdődik (nincs kék sliver).
+            right_edge = w - 6                       # a sáv jobb széle
+            flat_left = sw + R                       # a bal ív vége (lapos sáv kezdete)
+            flat_right = right_edge - sw - R         # a jobb ív kezdete (lapos sáv vége)
+            center = (flat_left + flat_right) / 2    # = right_edge / 2
+            purple_w = max(1, int((flat_right - flat_left) / 3))
+            purple_left = int(center - purple_w / 2)
+            tan_left = purple_left + purple_w        # a tan rögtön a lila után
+
+            # Fő tan (narancs) sáv ívvel + lekerekített jobb alsó sarok
+            # – a bal alsó kék sarok pontos tükörképe (x' = right_edge - x)
+            rpath = QPainterPath()
+            rpath.moveTo(right_edge, 0)
+            rpath.lineTo(right_edge - sw, 0)
+            # Belső könyök ív – középpont (right_edge-sw-R, bar_top-R), 0°→-90°
+            rpath.arcTo(QRectF(right_edge - sw - 2 * R, bar_top - 2 * R,
+                               2 * R, 2 * R), 0, -90)
+            rpath.lineTo(tan_left, bar_top)
+            rpath.lineTo(tan_left, fh)
+            rpath.lineTo(right_edge - corner_r, fh)
+            rpath.arcTo(QRectF(right_edge - 2 * corner_r, fh - 2 * corner_r,
+                                2 * corner_r, 2 * corner_r), 270, 90)
+            rpath.closeSubpath()
+
+            # Jobb alsó sarok háttér kitöltés (ív mögött) – a bal oldal tükörképe
+            bg_path_r = QPainterPath()
+            bg_path_r.addRect(QRectF(right_edge - corner_r, fh - corner_r,
+                                     corner_r, corner_r))
+            bg_path_r -= rpath
+
+            # OPACITY sárga doboz – a bal ív KONCENTRIKUS a kék könyök ívével
+            # (azonos középpont, R-6 sugár), egyenletes 6px réssel; teteje a
+            # könyök tetejével, bal széle a státuszsorok bal oldalával egy vonalban.
+            box_top, box_bottom, box_right = self._opacity_box()
+            gx = sw + 6                                 # bal (ív teteje) = státuszsorok bal széle
+            rr = R - 6                                  # koncentrikus ív sugara
+            box_r = max(3, int(4 * s))                  # jobb sarkok lekerekítése
+
+            obox = QPainterPath()
+            obox.moveTo(gx, box_top)                    # bal felső (az ív teteje)
+            obox.lineTo(box_right - box_r, box_top)     # felső él
+            obox.arcTo(QRectF(box_right - 2 * box_r, box_top,
+                              2 * box_r, 2 * box_r), 90, -90)
+            obox.lineTo(box_right, box_bottom - box_r)  # jobb él
+            obox.arcTo(QRectF(box_right - 2 * box_r, box_bottom - 2 * box_r,
+                              2 * box_r, 2 * box_r), 0, -90)
+            obox.lineTo(sw + R, box_bottom)             # alsó él az ív aljáig
+            # Koncentrikus ív (270°→180°) – középpont (sw+R, bar_top-R), rr sugár
+            obox.arcTo(QRectF(sw + R - rr, bar_top - R - rr, 2 * rr, 2 * rr),
+                       270, -90)
+            obox.lineTo(gx, box_top)                    # zár
+            obox.closeSubpath()
+
+            self._path_cache = (
+                path, bg_path, rpath, bg_path_r, obox,
+                purple_left, purple_w, box_top, box_bottom, box_right,
+            )
+            self._path_cache_key = cache_key
+
+        (path, bg_path, rpath, bg_path_r, obox,
+         purple_left, purple_w, box_top, box_bottom, box_right) = self._path_cache
+
+        p.fillPath(path, _qbrush(HUDWindow.LCARS_BLUE))
+        p.fillPath(bg_path, _qbrush(HUDWindow.BG))
+        p.fillRect(purple_left, bar_top, purple_w, bar_h,
+                    _qcolor(HUDWindow.LCARS_PURPLE))
+        p.fillPath(rpath, _qbrush(HUDWindow.LCARS_TAN))
+        p.fillPath(bg_path_r, _qbrush(HUDWindow.BG))
+        p.fillPath(obox, _qbrush(HUDWindow.LCARS_GOLD))
 
         # OPACITY felirat a doboz flat (íven túli) részén, középre
         p.setFont(QFont(self._font_family, fs, QFont.Weight.Bold))
-        p.setPen(QColor("#000a14"))
+        p.setPen(_qcolor("#000a14"))
         p.drawText(QRectF(sw + R, box_top, box_right - (sw + R), box_bottom - box_top),
                     Qt.AlignmentFlag.AlignCenter, "OPACITY")
 
@@ -325,7 +358,7 @@ class LCARSSidebarWidget(QWidget):
         for i, c in enumerate(self.COLORS):
             y = i * seg_h
             bottom = h if i == n - 1 else y + seg_h
-            p.fillRect(0, y + gap, sw, bottom - gap - y - gap, QColor(c))
+            p.fillRect(0, y + gap, sw, bottom - gap - y - gap, _qcolor(c))
         p.end()
 
 
@@ -338,7 +371,7 @@ class LCARSSoundManager:
     """Star Trek LCARS hangeffektek kezelője – QSoundEffect alapú lejátszás."""
 
     # Hang definíciók: (frekvencia_hz, időtartam_sec, amplitúdó)
-    _SOUND_DEFS: Dict[str, List[Tuple[float, float, float]]] = {
+    _SOUND_DEFS: dict[str, list[tuple[float, float, float]]] = {
         # Zónaváltás hangok – jellegzetes LCARS csippanások
         "zone_up": [(880, 0.08, 1.0), (1320, 0.12, 0.8)],       # felfelé lépés
         "zone_down": [(1320, 0.08, 0.8), (880, 0.12, 1.0)],     # lefelé lépés
@@ -381,7 +414,7 @@ class LCARSSoundManager:
 
     def __init__(self) -> None:
         self._temp_dir = tempfile.mkdtemp(prefix="lcars_snd_")
-        self._effects: Dict[str, Any] = {}
+        self._effects: dict[str, QSoundEffect] = {}
         self._enabled = True
         self._volume = 0.5
         self._cleaned_up = False
@@ -401,7 +434,7 @@ class LCARSSoundManager:
                 effect.setVolume(self._volume)
                 self._effects[name] = effect
             except Exception as exc:
-                logger.warning(f"LCARS hang generálás sikertelen ({name}): {exc}")
+                logger.warning("LCARS hang generálás sikertelen (%s): %s", name, exc)
 
     def play(self, name: str) -> None:
         """Hangeffekt lejátszása név alapján."""
@@ -447,7 +480,7 @@ class LCARSSoundManager:
         try:
             shutil.rmtree(self._temp_dir, ignore_errors=True)
         except Exception as exc:
-            logger.debug(f"Temp dir törlési hiba: {exc}")
+            logger.debug("Temp dir törlési hiba: %s", exc)
 
 
 class HUDWindow(QWidget):
@@ -474,9 +507,15 @@ class HUDWindow(QWidget):
         2: "#FF9900",
         3: "#FF3333",
     }
+    ZONE_NAMES = {0: "STANDBY", 1: "ZONE 1", 2: "ZONE 2", 3: "ZONE 3"}
     _VAL_BG = "#001828"
 
     UPDATE_INTERVAL_MS = 500
+
+    # Abszolút minimum ablakméret (interaktív átméretezés alatt ez érvényes;
+    # a tartalom-alapú minimum a húzás megállása után áll vissza)
+    MIN_W = 220
+    MIN_H = 300
 
     def __init__(self, controller: "FanController", app: "QApplication") -> None:
         super().__init__()
@@ -485,17 +524,17 @@ class HUDWindow(QWidget):
         self._scale = 1.0
         self._ctrl = controller
         self._app = app
-        self._drag_pos: Optional[QPoint] = None
+        self._drag_pos: QPoint | None = None
         self._resize_active = False
         self._resize_start_pos = QPoint()
         self._resize_start_size = QSize()
 
-        # Skálázható szöveges label-ek: (label, alap_pt_méret, fix_szélesség vagy None)
-        self._scalable_texts: list = []
+        # Skálázható szöveges label-ek: (label, alap_pt_méret, fix_szélesség vagy None, bold)
+        self._scalable_texts: list[tuple[QLabel, int, int | None, bool]] = []
 
         # Flash effekt: előző értékek és flash számlálók
-        self._prev_power: Optional[float] = None
-        self._prev_hr: Optional[float] = None
+        self._prev_power: float | None = None
+        self._prev_hr: float | None = None
         self._flash_power: int = 0  # hátralévő flash ciklusok
         self._flash_hr: int = 0
         self._flash_ble_tick: int = 0  # folyamatos villogás számláló
@@ -505,10 +544,10 @@ class HUDWindow(QWidget):
         hud_cfg: HudConfig = self._ctrl.settings["hud"]
         self._sound.set_enabled(hud_cfg.sound_enabled)
         self._sound.set_volume(hud_cfg.sound_volume)
-        self._prev_zone: Optional[int] = None
-        self._prev_ble_status: Optional[str] = None
-        self._prev_ant_status: Optional[str] = None
-        self._prev_zwift_status: Optional[str] = None
+        self._prev_zone: int | None = None
+        self._prev_ble_status: str | None = None
+        self._prev_ant_status: str | None = None
+        self._prev_zwift_status: str | None = None
         self._prev_last_sent_time: float = 0.0
 
         # ───────── ZWIFT PROCESS MONITOR ─────────
@@ -536,7 +575,7 @@ class HUDWindow(QWidget):
         self._initial_opacity = max(20, min(100, hud_cfg.opacity))
         self.setWindowOpacity(self._initial_opacity / 100.0)
         self.setGeometry(20, 20, self._base_width, self._base_height)
-        self.setMinimumSize(220, 350)
+        self.setMinimumSize(self.MIN_W, self.MIN_H)
         self.setStyleSheet(f"background-color: {self.BG};")
 
         # ───────── FONT ─────────
@@ -584,10 +623,12 @@ class HUDWindow(QWidget):
 
         self._lbl_zone = QLabel("– – –")
         self._lbl_zone.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # A szövegszín QPalette-ből jön (dinamikus), a stylesheet csak a statikus részt adja
         self._lbl_zone.setStyleSheet(
-            f"background-color: {self._VAL_BG}; color: {self.LCARS_CYAN}; "
+            f"background-color: {self._VAL_BG}; "
             f"padding: 3px 6px; border-radius: 4px;"
         )
+        self._set_label_color(self._lbl_zone, self.LCARS_CYAN)
         self._lbl_zone.setSizePolicy(
             QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed
         )
@@ -601,12 +642,12 @@ class HUDWindow(QWidget):
         tile_layout.setContentsMargins(0, 0, 0, 4)
         tile_layout.setSpacing(2)
 
-        self._tile_zero_imm = self._make_tile(tile_layout, "ZRO IMM")
-        self._tile_zero_hr_imm = self._make_tile(tile_layout, "ZHR IMM")
-        self._tile_higher_wins = self._make_tile(tile_layout, "HI WINS")
-        self._tile_ant = self._make_tile(tile_layout, "ANT+")
-        self._tile_ble = self._make_tile(tile_layout, "BLE")
-        self._tile_cooldown = self._make_tile(tile_layout, "COOL")
+        self._tile_zero_imm = self._make_tile(tile_layout, "ZRO IMM", self.LCARS_CYAN)
+        self._tile_zero_hr_imm = self._make_tile(tile_layout, "ZHR IMM", self.LCARS_CYAN)
+        self._tile_higher_wins = self._make_tile(tile_layout, "HI WINS", self.LCARS_ORANGE)
+        self._tile_ant = self._make_tile(tile_layout, "ANT+", self.LCARS_PURPLE)
+        self._tile_ble = self._make_tile(tile_layout, "BLE", self.LCARS_BLUE)
+        self._tile_cooldown = self._make_tile(tile_layout, "COOL", self.LCARS_GOLD)
         content_layout.addWidget(tile_frame)
 
         # ───────── TELEMETRIA SOROK ─────────
@@ -694,6 +735,21 @@ class HUDWindow(QWidget):
         )
         main_layout.addWidget(self._footer)
 
+        # A tartalom-alapú minimum méret újraszámítása debounce-olva történik:
+        # húzás közben nem szabad emelni a minimumot, mert az megakasztja
+        # a kicsinyítést és ugráló ablakot okoz
+        self._min_size_timer = QTimer(self)
+        self._min_size_timer.setSingleShot(True)
+        self._min_size_timer.setInterval(200)
+        self._min_size_timer.timeout.connect(self._update_min_size)
+
+        # Debounce-olt automatikus geometria-mentés: mozgatás/átméretezés
+        # után a pozíció akkor sem vész el, ha a program nem tisztán áll le
+        self._geo_save_timer = QTimer(self)
+        self._geo_save_timer.setSingleShot(True)
+        self._geo_save_timer.setInterval(2500)
+        self._geo_save_timer.timeout.connect(self._auto_save_geometry)
+
         # Az ablak minimális mérete a tartalom olvasható méretéhez igazodik
         self._update_min_size()
 
@@ -705,6 +761,9 @@ class HUDWindow(QWidget):
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._update)
         self._timer.start(self.UPDATE_INTERVAL_MS)
+
+        # Innentől a resizeEvent már alkalmazhatja a skálát (a UI teljes)
+        self._ui_ready = True
 
     @property
     def sound(self) -> "LCARSSoundManager":
@@ -742,18 +801,20 @@ class HUDWindow(QWidget):
 
             if loaded == 0:
                 logger.info(
-                    f"LCARS fontok nem találhatók a {font_dir} mappában – "
-                    f"rendszer font használata. Lásd: fonts/README.txt"
+                    "LCARS fontok nem találhatók a %s mappában – "
+                    "rendszer font használata. Lásd: fonts/README.txt", font_dir
                 )
         except Exception as exc:
-            logger.warning(f"LCARS font betöltés sikertelen (rendszer font használata): {exc}")
+            logger.warning(
+                "LCARS font betöltés sikertelen (rendszer font használata): %s", exc
+            )
 
     def _detect_best_font(self) -> str:
         """Legjobb elérhető LCARS-stílusú font kiválasztása."""
         try:
             available = set(QFontDatabase.families())
         except Exception as exc:
-            logger.debug(f"Font lista lekérés sikertelen: {exc}")
+            logger.debug("Font lista lekérés sikertelen: %s", exc)
             return "Consolas"
 
         preferred = [
@@ -789,23 +850,30 @@ class HUDWindow(QWidget):
         val_lbl.setAlignment(
             Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
         )
+        # A szövegszín QPalette-ből jön (dinamikus), a stylesheet csak a statikus részt adja
         val_lbl.setStyleSheet(
-            f"background-color: {self._VAL_BG}; color: {color}; "
+            f"background-color: {self._VAL_BG}; "
             f"padding: 3px 6px; border-radius: 4px;"
         )
+        self._set_label_color(val_lbl, color)
         row_layout.addWidget(val_lbl, 1)
         self._register_scalable(val_lbl, 14)
 
         layout.addWidget(row)
         return val_lbl
 
-    def _make_tile(self, layout: "QHBoxLayout", text: str) -> "QLabel":
-        """Állapot csík tile."""
+    def _make_tile(self, layout: "QHBoxLayout", text: str, accent: str) -> "QLabel":
+        """Állapot csík tile – a háttérszín állapotát a "hudState" dinamikus
+        property vezérli ("off"/"on"/"flash"), a színek a stylesheet
+        szelektorokban vannak egyszer definiálva."""
         lbl = QLabel(text)
         lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lbl.setProperty("hudState", "off")
         lbl.setStyleSheet(
-            f"background-color: {self.TEXT_DIM}; color: #000a14; "
-            f"padding: 2px 5px; border-radius: 4px;"
+            f'QLabel {{ background-color: {self.TEXT_DIM}; color: #000a14; '
+            f'padding: 2px 5px; border-radius: 4px; }}'
+            f'QLabel[hudState="on"] {{ background-color: {accent}; }}'
+            f'QLabel[hudState="flash"] {{ background-color: {self._lighten(accent)}; }}'
         )
         # Ne vágódjon le a felirata (Minimum), és ne nyomódjon össze (Fixed)
         lbl.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
@@ -835,10 +903,12 @@ class HUDWindow(QWidget):
         val_lbl.setAlignment(
             Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
         )
+        # A szövegszín QPalette-ből jön (dinamikus), a stylesheet csak a statikus részt adja
         val_lbl.setStyleSheet(
-            f"background-color: {self._VAL_BG}; color: {self.TEXT_DIM}; "
+            f"background-color: {self._VAL_BG}; "
             f"padding: 2px 6px; border-radius: 4px;"
         )
+        self._set_label_color(val_lbl, self.TEXT_DIM)
         row_layout.addWidget(val_lbl, 1)
         self._register_scalable(val_lbl, 11, bold=False)
 
@@ -850,14 +920,28 @@ class HUDWindow(QWidget):
     def mousePressEvent(self, event: "QMouseEvent") -> None:  # type: ignore[override]
         if event.button() == Qt.MouseButton.LeftButton:
             pos = event.position()
+            wh = self.windowHandle()
             if (self.width() - pos.x() < 20) and (self.height() - pos.y() < 20):
-                self._resize_active = True
-                self._resize_start_pos = event.globalPosition().toPoint()
-                self._resize_start_size = self.size()
+                # Húzás idejére az abszolút minimumra engedjük az ablakot,
+                # hogy egyetlen mozdulattal is le lehessen kicsinyíteni;
+                # a tartalom-alapú minimum a debounce timerrel áll vissza
+                self.setMinimumSize(self.MIN_W, self.MIN_H)
+                self._min_size_timer.start()
+                # Natív (rendszer szintű) átméretezés; kézi fallback, ha a
+                # platform nem támogatja
+                if wh is None or not wh.startSystemResize(
+                    Qt.Edge.RightEdge | Qt.Edge.BottomEdge
+                ):
+                    self._resize_active = True
+                    self._resize_start_pos = event.globalPosition().toPoint()
+                    self._resize_start_size = self.size()
             else:
-                self._drag_pos = (
-                    event.globalPosition().toPoint() - self.frameGeometry().topLeft()
-                )
+                # Natív ablakmozgatás (Windows snap, élsimítás); kézi fallback
+                if wh is None or not wh.startSystemMove():
+                    self._drag_pos = (
+                        event.globalPosition().toPoint()
+                        - self.frameGeometry().topLeft()
+                    )
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event: "QMouseEvent") -> None:  # type: ignore[override]
@@ -868,8 +952,6 @@ class HUDWindow(QWidget):
             new_h = max(self.minimumHeight(),
                         self._resize_start_size.height() + delta.y())
             self.resize(new_w, new_h)
-            self._scale = new_w / self._base_width
-            self._apply_scale()
         elif self._drag_pos is not None:
             self.move(event.globalPosition().toPoint() - self._drag_pos)
         super().mouseMoveEvent(event)
@@ -878,6 +960,31 @@ class HUDWindow(QWidget):
         self._drag_pos = None
         self._resize_active = False
         super().mouseReleaseEvent(event)
+
+    def resizeEvent(self, event: Any) -> None:
+        """Skála újraszámítása minden átméretezésnél – natív (startSystemResize)
+        átméretezés alatt nem érkezik mouseMoveEvent, ezért itt a helye.
+
+        A skála a szélesség ÉS magasság arányának minimuma, így a betűk
+        akkor is elférnek, ha csak a magasságot csökkenti a felhasználó
+        (nem csúsznak össze a sorok)."""
+        super().resizeEvent(event)
+        if not getattr(self, "_ui_ready", False):
+            return
+        new_scale = min(self.width() / self._base_width,
+                        self.height() / self._base_height)
+        if abs(new_scale - self._scale) >= 0.001:
+            self._scale = new_scale
+            self._apply_scale()
+        # A tartalom-alapú minimumot csak a húzás megállása után frissítjük
+        self._min_size_timer.start()
+        self._geo_save_timer.start()
+
+    def moveEvent(self, event: Any) -> None:
+        """Mozgatás után debounce-olt geometria-mentést ütemez."""
+        super().moveEvent(event)
+        if getattr(self, "_ui_ready", False):
+            self._geo_save_timer.start()
 
     def keyPressEvent(self, event: Any) -> None:
         if event.key() == Qt.Key.Key_Escape:
@@ -923,9 +1030,9 @@ class HUDWindow(QWidget):
 
         vol_menu = menu.addMenu("🔉 Hangerő")
         vol_menu.setStyleSheet(menu_ss)
+        current = round(self._sound.volume * 100)
         for pct in (25, 50, 75, 100):
             v = pct / 100.0
-            current = round(self._sound.volume * 100)
             marker = " ◄" if pct == current else ""
             vol_menu.addAction(
                 f"{pct}%{marker}", lambda _v=v: self._set_sound_volume(_v)
@@ -958,36 +1065,48 @@ class HUDWindow(QWidget):
         if hasattr(hud_cfg, attr):
             setattr(hud_cfg, attr, value)
             # Mentés: csak a "hud" szekciót frissítjük, és csak ha engedélyezett
-            from smart_fan_controller.config.loader import save_hud_settings_only
             if save_hud_settings_only(self._ctrl.settings_file, hud_cfg):
-                logger.info(f"HUD beállítás mentve: hud.{key} = {value}")
+                logger.info("HUD beállítás mentve: hud.%s = %s", key, value)
             elif hud_cfg.save_hud_settings:
                 # save_hud_settings=True volt, de valamilyen hiba történt az íráskor
-                logger.warning(f"HUD beállítás nem sikerült menteni: hud.{key} = {value}")
+                logger.warning("HUD beállítás nem sikerült menteni: hud.%s = %s",
+                               key, value)
             # Ha save_hud_settings=False, nincs log üzenet (szándékos)
 
     # ────────── LABEL FRISSÍTÉS SEGÉD ──────────
 
-    # Egyszer, a class definíciókor lefordított minták (nem futásidőben)
-    _RE_COLOR = re.compile(r"(?<!-)color:\s*[^;]+;")
-    _RE_BG_COLOR = re.compile(r"background-color:\s*[^;]+;")
+    @staticmethod
+    def _set_label_color(lbl: "QLabel", color: str) -> None:
+        """Label szövegszín beállítása QPalette-tel – a stylesheet nem tartalmaz
+        color tulajdonságot, így a paletta érvényesül és nincs repolish."""
+        pal = lbl.palette()
+        pal.setColor(QPalette.ColorRole.WindowText, _qcolor(color))
+        lbl.setPalette(pal)
+        lbl._hud_color = color
 
     @staticmethod
     def _update_label(lbl: "QLabel", text: str, color: str) -> None:
-        """Label szöveg és szín frissítése stylesheet-tel."""
-        current = lbl.styleSheet()
-        new_ss = HUDWindow._RE_COLOR.sub(f"color: {color};", current, count=1)
-        lbl.setStyleSheet(new_ss)
-        lbl.setText(text)
+        """Label szöveg és szín frissítése – csak tényleges változáskor."""
+        if getattr(lbl, "_hud_color", None) != color:
+            HUDWindow._set_label_color(lbl, color)
+        if getattr(lbl, "_hud_text", None) != text:
+            lbl.setText(text)
+            lbl._hud_text = text
 
     @staticmethod
-    def _update_tile_bg(tile: "QLabel", bg: str) -> None:
-        """Tile háttérszín frissítése."""
-        current = tile.styleSheet()
-        new_ss = HUDWindow._RE_BG_COLOR.sub(f"background-color: {bg};", current, count=1)
-        tile.setStyleSheet(new_ss)
+    def _set_tile_state(tile: "QLabel", state: str) -> None:
+        """Tile állapot frissítése ("off"/"on"/"flash") – a háttérszínt a
+        tile stylesheet-jének property-szelektorai adják; property-változáskor
+        unpolish/polish érvényesíti az új szabályt."""
+        if tile.property("hudState") == state:
+            return
+        tile.setProperty("hudState", state)
+        style = tile.style()
+        style.unpolish(tile)
+        style.polish(tile)
 
     @staticmethod
+    @lru_cache(maxsize=32)
     def _lighten(color_hex: str, factor: float = 0.35) -> str:
         """Szín világosítása – factor=0 eredeti, factor=1 fehér."""
         r = int(color_hex[1:3], 16)
@@ -1005,6 +1124,8 @@ class HUDWindow(QWidget):
             state = self._ctrl.state
             ble_fan = self._ctrl.ble_fan
             cool = self._ctrl.cooldown_ctrl
+            settings = self._ctrl.settings
+            now = time.monotonic()
 
             if state is not None:
                 zone, power, hr = state.ui_snapshot.read()
@@ -1013,9 +1134,8 @@ class HUDWindow(QWidget):
                     self.ZONE_COLORS.get(zone, self.LCARS_CYAN)
                     if zone is not None else self.TEXT_DIM
                 )
-                zone_names = {0: "STANDBY", 1: "ZONE 1", 2: "ZONE 2", 3: "ZONE 3"}
                 zone_txt = (
-                    zone_names.get(zone, "– – –")
+                    self.ZONE_NAMES.get(zone, "– – –")
                     if zone is not None else "– – –"
                 )
 
@@ -1097,7 +1217,7 @@ class HUDWindow(QWidget):
             self._prev_ble_status = ble_status
 
             # BLE szenzorok
-            ds: DatasourceConfig = self._ctrl.settings["datasource"]
+            ds: DatasourceConfig = settings["datasource"]
             power_ble = ds.power_source == DataSource.BLE
             hr_ble = ds.hr_source == DataSource.BLE
             flash_white = (_ft + 1) % 4 < 2      # BLE SENS fázis
@@ -1108,7 +1228,6 @@ class HUDWindow(QWidget):
             else:
                 ble = getattr(self._ctrl, "_ble_sensor_handler", None)
                 if ble is not None:
-                    now = time.monotonic()
                     power_ok = (
                         power_ble
                         and (ble.power_lastdata > 0)
@@ -1151,7 +1270,6 @@ class HUDWindow(QWidget):
                 c = self._lighten(self.TEXT_DIM) if flash_white else self.TEXT_DIM
                 self._update_label(self._lbl_ant, "– – –", c)
             elif ant is not None:
-                now = time.monotonic()
                 power_ok = (
                     power_ant
                     and (ant.power_lastdata > 0)
@@ -1198,7 +1316,6 @@ class HUDWindow(QWidget):
             flash_white = (_ft + 3) % 4 < 2      # ZWIFT fázis
 
             if zwift is not None and (power_zwift or hr_zwift):
-                now = time.monotonic()
                 ok = (
                     zwift.last_packet_time > 0
                     and (now - zwift.last_packet_time) < 5.0
@@ -1227,7 +1344,7 @@ class HUDWindow(QWidget):
             flash_white = (_ft + 1) % 4 < 2      # LAST TX fázis
             if ble_fan is not None and getattr(ble_fan, "last_sent_time", 0) > 0:
                 cur_sent_time = ble_fan.last_sent_time
-                ago = time.monotonic() - cur_sent_time
+                ago = now - cur_sent_time
                 self._update_label(self._lbl_last_sent, f"{ago:.0f}s AGO", self.LCARS_TAN)
 
                 # Fan TX hangeffekt – csak ha új parancs ment ki
@@ -1238,11 +1355,12 @@ class HUDWindow(QWidget):
                 c = self._lighten(self.TEXT_DIM) if flash_white else self.TEXT_DIM
                 self._update_label(self._lbl_last_sent, "– – –", c)
 
-            # Cooldown
+            # Cooldown – a snapshot-ot a tile frissítése is újrahasznosítja
             flash_white = (_ft + 2) % 4 < 2      # COOLDOWN fázis
+            cd_active = False
             if cool is not None:
-                active, remaining = cool.snapshot()
-                if active:
+                cd_active, remaining = cool.snapshot()
+                if cd_active:
                     self._update_label(
                         self._lbl_cool, f"{remaining:.0f}s", self.LCARS_GOLD
                     )
@@ -1254,58 +1372,30 @@ class HUDWindow(QWidget):
                 self._update_label(self._lbl_cool, "– – –", c)
 
             # ── Állapot csík frissítése (aktív = villogó háttér) ──
-            zpi = self._ctrl.settings["power_zones"].zero_power_immediate
-            flash_white = (_ft + 0) % 4 < 2
-            if zpi:
-                bg = self._lighten(self.LCARS_CYAN) if flash_white else self.LCARS_CYAN
-            else:
-                bg = self.TEXT_DIM
-            self._update_tile_bg(self._tile_zero_imm, bg)
+            def _tile_state(active: bool, phase: int) -> str:
+                if not active:
+                    return "off"
+                return "flash" if (_ft + phase) % 4 < 2 else "on"
 
-            zhi = self._ctrl.settings["heart_rate_zones"].zero_hr_immediate
-            flash_white = (_ft + 1) % 4 < 2
-            if zhi:
-                bg = self._lighten(self.LCARS_CYAN) if flash_white else self.LCARS_CYAN
-            else:
-                bg = self.TEXT_DIM
-            self._update_tile_bg(self._tile_zero_hr_imm, bg)
+            zpi = settings["power_zones"].zero_power_immediate
+            self._set_tile_state(self._tile_zero_imm, _tile_state(zpi, 0))
 
-            zone_mode_val = self._ctrl.settings["heart_rate_zones"].zone_mode
+            zhi = settings["heart_rate_zones"].zero_hr_immediate
+            self._set_tile_state(self._tile_zero_hr_imm, _tile_state(zhi, 1))
+
+            zone_mode_val = settings["heart_rate_zones"].zone_mode
             hw = zone_mode_val == ZoneMode.HIGHER_WINS
-            flash_white = (_ft + 2) % 4 < 2
-            if hw:
-                bg = self._lighten(self.LCARS_ORANGE) if flash_white else self.LCARS_ORANGE
-            else:
-                bg = self.TEXT_DIM
-            self._update_tile_bg(self._tile_higher_wins, bg)
+            self._set_tile_state(self._tile_higher_wins, _tile_state(hw, 2))
 
-            flash_white = (_ft + 3) % 4 < 2
-            if power_ant or hr_ant:
-                bg = self._lighten(self.LCARS_PURPLE) if flash_white else self.LCARS_PURPLE
-            else:
-                bg = self.TEXT_DIM
-            self._update_tile_bg(self._tile_ant, bg)
-
-            flash_white = (_ft + 0) % 4 < 2
-            if power_ble or hr_ble:
-                bg = self._lighten(self.LCARS_BLUE) if flash_white else self.LCARS_BLUE
-            else:
-                bg = self.TEXT_DIM
-            self._update_tile_bg(self._tile_ble, bg)
-
-            flash_white = (_ft + 1) % 4 < 2
-            if cool is not None:
-                cd_active, _ = cool.snapshot()
-                if cd_active:
-                    bg = self._lighten(self.LCARS_GOLD) if flash_white else self.LCARS_GOLD
-                else:
-                    bg = self.TEXT_DIM
-            else:
-                bg = self.TEXT_DIM
-            self._update_tile_bg(self._tile_cooldown, bg)
+            self._set_tile_state(self._tile_ant,
+                                 _tile_state(power_ant or hr_ant, 3))
+            self._set_tile_state(self._tile_ble,
+                                 _tile_state(power_ble or hr_ble, 0))
+            self._set_tile_state(self._tile_cooldown,
+                                 _tile_state(cool is not None and cd_active, 1))
 
             # ── ZwiftApp.exe process figyelés (~10s-onként) ──
-            if self._ctrl.settings["hud"].close_at_zwiftapp_exe:
+            if settings["hud"].close_at_zwiftapp_exe:
                 self._zwift_check_counter += 1
                 if self._zwift_check_counter >= self._ZWIFT_CHECK_INTERVAL:
                     self._zwift_check_counter = 0
@@ -1318,7 +1408,7 @@ class HUDWindow(QWidget):
                         ).start()
 
         except Exception as exc:
-            logger.warning(f"HUD _update hiba: {exc}")
+            logger.warning("HUD _update hiba: %s", exc)
 
     # ────────── ZWIFT PROCESS MONITOR ──────────
 
@@ -1347,7 +1437,6 @@ class HUDWindow(QWidget):
                 # QTimer.singleShot háttérszálból NEM működik (nincs Qt event
                 # loop). QMetaObject.invokeMethod thread-safe: a fő szál event
                 # loop-jába ütemezi a close() hívást.
-                from PySide6.QtCore import QMetaObject
                 QMetaObject.invokeMethod(
                     self, "close", Qt.ConnectionType.QueuedConnection,
                 )
@@ -1365,17 +1454,19 @@ class HUDWindow(QWidget):
         # A szöveges label-ek betűmérete és fix szélessége is skálázódik
         for lbl, base_pt, base_fw, bold in self._scalable_texts:
             self._apply_label_scale(lbl, base_pt, base_fw, bold)
-        self._update_min_size()
+        # A minimum méret frissítését NEM itt végezzük: élő átméretezés alatt
+        # a növekvő minimum visszalökné az ablakot (ugrálás); a debounce
+        # timer hívja az _update_min_size-t, amikor a húzás megállt
 
     def _register_scalable(self, lbl: "QLabel", base_pt: int,
-                           base_fw: "Optional[int]" = None, bold: bool = True) -> None:
+                           base_fw: int | None = None, bold: bool = True) -> None:
         """Label regisztrálása skálázáshoz (alap pt-méret + opcionális fix szélesség),
         és azonnali beállítás az aktuális skálára."""
         self._scalable_texts.append((lbl, base_pt, base_fw, bold))
         self._apply_label_scale(lbl, base_pt, base_fw, bold)
 
     def _apply_label_scale(self, lbl: "QLabel", base_pt: int,
-                           base_fw: "Optional[int]", bold: bool) -> None:
+                           base_fw: int | None, bold: bool) -> None:
         """A teljes fontot (család, méret, vastagság) setFont-tal állítjuk – a
         stíluslapban nincs font-* tulajdonság, így nem írja felül. A fix
         szélesség is skálázódik."""
@@ -1388,12 +1479,14 @@ class HUDWindow(QWidget):
 
     def _update_min_size(self) -> None:
         """Az ablak minimális méretét a tartalom természetes (olvasható) méretéből
-        számolja, így egérrel átméretezve a sorok/tile-ok nem nyomhatók össze."""
+        számolja, így egérrel átméretezve a sorok/tile-ok nem nyomhatók össze.
+        Csak nyugalmi állapotban fut (debounce), élő húzás alatt soha."""
         lay = self.layout()
         if lay is not None:
             lay.activate()
         hint = self.minimumSizeHint()
-        self.setMinimumSize(max(220, hint.width()), max(300, hint.height()))
+        self.setMinimumSize(max(self.MIN_W, hint.width()),
+                            max(self.MIN_H, hint.height()))
 
     def cleanup_sound(self) -> None:
         """Publikus interfész a hangrendszer felszabadításához."""
@@ -1445,24 +1538,52 @@ class HUDWindow(QWidget):
         sg = target_screen.availableGeometry()
         x = max(sg.x(), min(rect["x"], sg.x() + sg.width() - 100))
         y = max(sg.y(), min(rect["y"], sg.y() + sg.height() - 100))
-        w = max(self.minimumWidth(), min(rect["w"], sg.width()))
-        h = max(self.minimumHeight(), min(rect["h"], sg.height()))
+        # Az abszolút padlóhoz (MIN_W/MIN_H) igazítunk, NEM az aktuális
+        # minimumhoz: induláskor a minimum még az 1.0-s skálájú tartalomhoz
+        # van kiszámolva, ami a mentett kis méretet felfelé kerekítené
+        w = max(self.MIN_W, min(rect["w"], sg.width()))
+        h = max(self.MIN_H, min(rect["h"], sg.height()))
+        # A setGeometry-t a Qt az érvényes minimumra vágná – előtte a padlóra
+        # engedjük; a helyes (mentett skálájú) tartalom-minimumot a resizeEvent
+        # által indított debounce timer számolja újra
+        self.setMinimumSize(self.MIN_W, self.MIN_H)
+        # A skálát a resizeEvent alkalmazza a setGeometry hatására
         self.setGeometry(x, y, w, h)
-        self._scale = w / self._base_width
-        # A visszaállított skálát rögtön alkalmazzuk (fejléc/lábléc/oldalsáv + label-ek),
-        # nehogy csak az első egeres átméretezéskor frissüljön.
-        self._apply_scale()
 
-    def _save_geometry(self) -> None:
-        """Elmenti az ablak pozícióját/méretét az aktuális monitorhoz."""
+    def _store_geometry_in_cfg(self) -> "HudConfig | None":
+        """Az aktuális geometria beírása a hud configba (fájlmentés nélkül).
+
+        A kulcsot újra-beszúrás előtt eltávolítjuk, így a dict VÉGÉRE kerül:
+        a visszaállítás az utolsó kulcsot tekinti az utoljára használt
+        monitornak, de egy meglévő kulcs sima frissítése nem vinné hátra
+        (Python dict a beszúrási sorrendet őrzi, nem a frissítésit)."""
         screen_name = self._current_screen_name()
         if not screen_name:
-            return
+            return None
         geo = self.geometry()
         rect = {"x": geo.x(), "y": geo.y(), "w": geo.width(), "h": geo.height()}
         hud_cfg: HudConfig = self._ctrl.settings["hud"]
+        hud_cfg.window_geometry.pop(screen_name, None)
         hud_cfg.window_geometry[screen_name] = rect
-        self._save_hud_setting("window_geometry", hud_cfg.window_geometry)
+        return hud_cfg
+
+    def _save_geometry(self) -> None:
+        """Elmenti az ablak pozícióját/méretét az aktuális monitorhoz."""
+        hud_cfg = self._store_geometry_in_cfg()
+        if hud_cfg is not None:
+            self._save_hud_setting("window_geometry", hud_cfg.window_geometry)
+
+    def _auto_save_geometry(self) -> None:
+        """Debounce-olt automatikus geometria-mentés mozgatás/átméretezés után.
+
+        Csendes (nem ír log-sort minden mozgatásnál); a save_hud_settings
+        flaget a save_hud_settings_only maga ellenőrzi. Így a pozíció
+        váratlan leállás (crash/áramszünet) után sem vész el."""
+        if getattr(self, "_closing", False):
+            return
+        hud_cfg = self._store_geometry_in_cfg()
+        if hud_cfg is not None:
+            save_hud_settings_only(self._ctrl.settings_file, hud_cfg)
 
     # ────────── RUN / CLOSE ──────────
 

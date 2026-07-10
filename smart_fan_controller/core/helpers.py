@@ -11,13 +11,12 @@ import math
 import os
 import struct
 import wave
-from typing import List, Optional, Tuple
 
 user_logger = logging.getLogger("user")
 
 
 def resolve_log_dir(
-    log_directory: Optional[str], default_dir: Optional[str] = None
+    log_directory: str | None, default_dir: str | None = None
 ) -> str:
     """Log könyvtár meghatározása és validálása.
 
@@ -63,7 +62,7 @@ def resolve_log_dir(
 
 
 def generate_tone(
-    frequencies: List[Tuple[float, float, float]],
+    frequencies: list[tuple[float, float, float]],
     sample_rate: int = 22050,
     volume: float = 0.4,
 ) -> bytes:

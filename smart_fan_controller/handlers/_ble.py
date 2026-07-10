@@ -18,9 +18,9 @@ import logging
 import os
 import time
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple, cast
+from typing import Any
 
-logger = logging.getLogger("swift_fan_controller_new")
+logger = logging.getLogger("zwift_fan_controller_new")
 user_logger = logging.getLogger("user")
 
 # Bleak könyvtár ellenőrzése
@@ -45,7 +45,7 @@ def _ble_log_path(log_dir: str) -> str:
 
 
 def _log_ble_devices_to_file(
-    devices_info: List[Tuple[Optional[str], str, List[str]]],
+    devices_info: list[tuple[str | None, str, list[str]]],
     scan_context: str,
     log_dir: str,
     logging_enabled: bool,
@@ -104,9 +104,9 @@ def _log_ble_devices_to_file(
 
 
 def _print_ble_devices(
-    devices_info: List[Tuple[Optional[str], str, List[str]]],
+    devices_info: list[tuple[str | None, str, list[str]]],
     scan_context: str,
-    matched_addr: Optional[str] = None,
+    matched_addr: str | None = None,
 ) -> None:
     """Talált BLE eszközöket ír a konzolra.
 
@@ -127,11 +127,11 @@ def _print_ble_devices(
 
 async def _scan_ble_with_autodiscovery(
     scan_timeout: int,
-    target_service_uuid: Optional[str],
+    target_service_uuid: str | None,
     scan_context: str,
     log_dir: str,
     logging_enabled: bool,
-) -> Tuple[Optional[Any], List[Tuple[Optional[str], str, List[str]]]]:
+) -> tuple[Any, list[tuple[str | None, str, list[str]]]]:
     """BLE eszközöket keres, logolja, és opcionálisan keres egy megadott service UUID-val.
 
     Ha target_service_uuid megadva, az első olyan eszközt választja ki,
@@ -151,58 +151,28 @@ async def _scan_ble_with_autodiscovery(
     if not _BLEAK_AVAILABLE:
         return None, []
 
-    devices_info: List[Tuple[Optional[str], str, List[str]]] = []
-    matched: Optional[Any] = None
+    devices_info: list[tuple[str | None, str, list[str]]] = []
+    matched: Any = None
+    target_lower = target_service_uuid.lower() if target_service_uuid else None
 
     try:
         # return_adv=True: dict[str, tuple[BLEDevice, AdvertisementData]]
-        discovered: Any = await BleakScanner.discover(
+        # (bleak >= 0.21 garantálja; a régi list-alapú API-t már nem támogatjuk)
+        discovered = await BleakScanner.discover(
             timeout=scan_timeout, return_adv=True
         )
-
-        items: list[Any] = (
-            list(cast(Any, discovered).values())
-            if isinstance(discovered, dict)
-            else list(discovered)
-        )
-
-        for item in items:
-            device: Any = None
-            uuids: List[str] = []
-            t = cast(tuple[Any, ...], item)
-            if isinstance(item, tuple) and len(t) == 2:
-                device = t[0]
-                adv_data: Any = t[1]
-                uuids = (
-                    list(adv_data.service_uuids)
-                    if hasattr(adv_data, "service_uuids") and adv_data.service_uuids
-                    else []
-                )
-            else:
-                device = cast(Any, item)
-
-            dev_name: Optional[str] = getattr(device, "name", None)
-            dev_addr: str = getattr(device, "address", str(device))
-            devices_info.append((dev_name, dev_addr, uuids))
-
-            if target_service_uuid and matched is None:
-                if any(u.lower() == target_service_uuid.lower() for u in uuids):
+        for device, adv_data in discovered.values():
+            uuids = list(adv_data.service_uuids or [])
+            devices_info.append((device.name, device.address, uuids))
+            if target_lower and matched is None:
+                if any(u.lower() == target_lower for u in uuids):
                     matched = device
-
-    except TypeError:
-        # Fallback régebbi Bleak verziókhoz (return_adv nem támogatott)
-        devices: Any = await BleakScanner.discover(timeout=scan_timeout)
-        devices_info = [
-            (getattr(d, "name", None), getattr(d, "address", ""), [])
-            for d in devices
-        ]
-        matched = None
 
     except Exception as exc:
         logger.error(f"BLE scan hiba ({scan_context}): {exc}")
         return None, []
 
-    matched_addr: Optional[str] = getattr(matched, "address", None) if matched else None
+    matched_addr: str | None = matched.address if matched else None
     _print_ble_devices(devices_info, scan_context, matched_addr)
     _log_ble_devices_to_file(devices_info, scan_context, log_dir, logging_enabled)
 
@@ -232,7 +202,7 @@ def _report_gatt_characteristics(
         return
 
     # (service_uuid, char_uuid, [properties]) hármasok gyűjtése
-    entries: List[Tuple[str, str, List[str]]] = []
+    entries: list[tuple[str, str, list[str]]] = []
     try:
         services = getattr(client, "services", None)
         if services is None:
@@ -320,9 +290,9 @@ class BLEFanOutputController:
     RETRY_RESET_SECONDS = 30
     DISCONNECT_TIMEOUT = 5.0
 
-    def __init__(self, settings: Dict[str, Any]) -> None:
+    def __init__(self, settings: dict[str, Any]) -> None:
         ble: BleConfig = settings["ble_fan"]
-        self.device_name: Optional[str] = ble.device_name
+        self.device_name: str | None = ble.device_name
         self.scan_timeout: int = ble.scan_timeout
         self.connection_timeout: int = ble.connection_timeout
         self.reconnect_interval: int = ble.reconnect_interval
@@ -330,26 +300,26 @@ class BLEFanOutputController:
         self.command_timeout: int = ble.command_timeout
         self.service_uuid: str = ble.service_uuid
         self.characteristic_uuid: str = ble.characteristic_uuid
-        self.pin_code: Optional[str] = ble.pin_code
+        self.pin_code: str | None = ble.pin_code
 
         self.is_connected: bool = False
-        self.last_sent: Optional[int] = None
-        self._client: Optional[Any] = None
-        self._device_address: Optional[str] = None
+        self.last_sent: int | None = None
+        self._client: Any | None = None
+        self._device_address: str | None = None
         self._retry_count: int = 0
-        self._retry_reset_time: Optional[float] = None
+        self._retry_reset_time: float | None = None
         self._auth_failed: bool = False
         self.last_sent_time: float = 0.0
         # Legutóbb kért zóna – az időzített háttér-újracsatlakozás ezt küldi ki
         # sikeres reconnect után (akkor is, ha közben nem jött új parancs).
-        self._desired_zone: Optional[int] = None
+        self._desired_zone: int | None = None
         # A BLE kliens műveleteit (connect / write) sorosító lock, hogy a
         # háttér-reconnect és a zóna-küldés ne fusson egyszerre ugyanazon a
         # kliensen. (Python ≥3.10: futó loop nélkül is létrehozható.)
         self._conn_lock: asyncio.Lock = asyncio.Lock()
         # Az időzített háttér-újracsatlakozó task (a run() indítja/állítja le).
-        self._reconnect_task: Optional[asyncio.Task[None]] = None
-        self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._reconnect_task: asyncio.Task[None] | None = None
+        self._loop: asyncio.AbstractEventLoop | None = None
         gs = settings["global_settings"]
         self._log_dir: str = resolve_log_dir(gs.log_directory)
         self._logging_enabled: bool = gs.logging
@@ -450,15 +420,18 @@ class BLEFanOutputController:
                 return False
 
         # --- Név alapú keresés (device_name beállítva) ---
+        # find_device_by_name: azonnal visszatér, amint az eszköz felbukkant
+        # (a discover() mindig kivárná a teljes scan_timeout-ot)
         try:
-            devices = await BleakScanner.discover(timeout=self.scan_timeout)
-            for d in devices:
-                if d.name == self.device_name:
-                    self._device_address = d.address
-                    user_logger.info(f"✓ BLE Fan eszköz megtalálva: {d.name} ({d.address})")
-                    return await self._connect()
-                if d.name is None:
-                    logger.debug(f"BLE eszköz név nélkül: {d.address}")
+            device = await BleakScanner.find_device_by_name(
+                self.device_name, timeout=self.scan_timeout
+            )
+            if device is not None:
+                self._device_address = device.address
+                user_logger.info(
+                    f"✓ BLE Fan eszköz megtalálva: {device.name} ({device.address})"
+                )
+                return await self._connect()
 
             user_logger.warning(f"⚠ BLE Fan eszköz nem található: '{self.device_name}'")
             return False
@@ -481,6 +454,10 @@ class BLEFanOutputController:
         try:
             client = self._client
             if client and client.is_connected:
+                # A kliens már kapcsolódva van (pl. egy korábbi, félbeszakadt
+                # próbálkozásból) – az állapot-flaget is szinkronba hozzuk,
+                # különben a zónaküldés örökre kihagyna.
+                self.is_connected = True
                 return True
 
             client = BleakClient(
@@ -500,6 +477,17 @@ class BLEFanOutputController:
             if self.pin_code is not None:
                 ok = await self._authenticate()
                 if not ok:
+                    # A felépült kapcsolatot nem hagyhatjuk nyitva: bontás és
+                    # kliens elengedése, különben a kapcsolat "beragad"
+                    # (fizikailag él, de a vezérlő OFFLINE-nak látja).
+                    try:
+                        await asyncio.wait_for(
+                            client.disconnect(), timeout=self.DISCONNECT_TIMEOUT
+                        )
+                    except Exception as exc:
+                        logger.debug(f"BLE disconnect hiba AUTH-bukás után: {exc}")
+                    self._client = None
+                    self.is_connected = False
                     return False
 
             self.is_connected = True
@@ -549,7 +537,7 @@ class BLEFanOutputController:
                         ),
                         timeout=self.command_timeout,
                     )
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     logger.error("BLE AUTH write timeout")
                     return False
 
@@ -558,7 +546,7 @@ class BLEFanOutputController:
                         auth_event.wait(),
                         timeout=self.command_timeout,
                     )
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     logger.warning(
                         "BLE AUTH válasz timeout - folytatás autentikáció nélkül"
                     )
@@ -609,8 +597,13 @@ class BLEFanOutputController:
             self._handle_disconnect()
 
     def _handle_disconnect(self) -> None:
-        """Disconnect állapotmódosítás – az asyncio event loop-on hívandó."""
-        user_logger.warning("⚠ BLE Fan kapcsolat megszakadt")
+        """Disconnect állapotmódosítás – az asyncio event loop-on hívandó.
+
+        Csak valódi (csatlakozott → megszakadt) átmenetnél riasztunk: a
+        szándékos bontások (leállítás, PIN-hiba, write-timeout utáni cleanup)
+        előbb lenullázzák az is_connected flaget, így azok nem riasztanak."""
+        if self.is_connected:
+            user_logger.warning("⚠ BLE Fan kapcsolat megszakadt")
         self.is_connected = False
         self.last_sent = None
 
@@ -742,7 +735,7 @@ class BLEFanOutputController:
             self.last_sent_time = time.monotonic()
             logger.info(f"BLE Fan parancs elküldve: {msg}")
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             user_logger.warning(f"⚠ BLE Fan parancs küldés timeout ({self.command_timeout}s)")
             self.is_connected = False
             try:
@@ -781,6 +774,9 @@ class BLEFanOutputController:
         """Bontja a BLE kapcsolatot és felszabadítja a klienst."""
         client = self._client
         if client is not None:
+            # A flaget MÉG a bontás előtt nullázzuk: a disconnected_callback
+            # így szándékos bontásnak látja, és nem riaszt feleslegesen.
+            self.is_connected = False
             try:
                 await asyncio.wait_for(
                     client.disconnect(),
@@ -789,7 +785,6 @@ class BLEFanOutputController:
             except Exception as exc:
                 logger.debug(f"BLE disconnect hiba: {exc}")
             finally:
-                self.is_connected = False
                 self._client = None
 
 
@@ -825,11 +820,11 @@ class _BLESensorInputHandler(abc.ABC):
     RETRY_RESET_SECONDS = 30
 
     def __init__(
-        self, settings: Dict[str, Any], queue: asyncio.Queue[float]
+        self, settings: dict[str, Any], queue: asyncio.Queue[float]
     ) -> None:
         ds: DatasourceConfig = settings["datasource"]
         pfx = self._settings_prefix
-        self.device_name: Optional[str] = getattr(ds, f"{pfx}_device_name")
+        self.device_name: str | None = getattr(ds, f"{pfx}_device_name")
         self.scan_timeout: int = getattr(ds, f"{pfx}_scan_timeout", 10)
         self.reconnect_interval: int = getattr(ds, f"{pfx}_reconnect_interval", 5)
         self.max_retries: int = getattr(ds, f"{pfx}_max_retries", 10)
@@ -842,7 +837,7 @@ class _BLESensorInputHandler(abc.ABC):
         self._logging_enabled: bool = gs.logging
 
     @abc.abstractmethod
-    def _parse_notification(self, data: bytes) -> Optional[float]:
+    def _parse_notification(self, data: bytes) -> float | None:
         """Nyers BLE notification bájtokból kinyeri a mért értéket.
 
         Returns:
@@ -877,7 +872,10 @@ class _BLESensorInputHandler(abc.ABC):
                 )
                 await asyncio.sleep(self.reconnect_interval)
             except asyncio.CancelledError:
-                break
+                # A cancellation-t tovább kell engedni (modern asyncio minta);
+                # a leállítási útvonal (gather) kezeli.
+                self.is_connected = False
+                raise
             except Exception as exc:
                 self._retry_count += 1
                 self.is_connected = False
@@ -910,17 +908,18 @@ class _BLESensorInputHandler(abc.ABC):
 
         if self.device_name:
             # --- Név alapú keresés ---
+            # find_device_by_name: azonnal visszatér, amint az eszköz
+            # felbukkant (a discover() a teljes scan_timeout-ot kivárná)
             logger.debug(f"{label} keresés: {self.device_name}...")
-            devices = await BleakScanner.discover(timeout=self.scan_timeout)
-            for d in devices:
-                if d.name == self.device_name:
-                    addr = d.address
-                    user_logger.info(f"✓ {label} eszköz megtalálva: {d.name} ({d.address})")
-                    break
-                if d.name is None:
-                    logger.debug(f"BLE eszköz név nélkül: {d.address}")
-            if not addr:
-                raise Exception(f"{label} eszköz nem található: '{self.device_name}'")
+            device = await BleakScanner.find_device_by_name(
+                self.device_name, timeout=self.scan_timeout
+            )
+            if device is None:
+                raise RuntimeError(f"{label} eszköz nem található: '{self.device_name}'")
+            addr = device.address
+            user_logger.info(
+                f"✓ {label} eszköz megtalálva: {device.name} ({device.address})"
+            )
         else:
             # --- Automatikus felderítés service UUID alapján ---
             matched, _ = await _scan_ble_with_autodiscovery(
@@ -931,7 +930,7 @@ class _BLESensorInputHandler(abc.ABC):
                 self._logging_enabled,
             )
             if matched is None:
-                raise Exception(
+                raise RuntimeError(
                     f"{label}: nem található szolgáltatás eszköz – "
                     "újrapróbálkozás..."
                 )
@@ -996,7 +995,7 @@ class BLEPowerInputHandler(_BLESensorInputHandler):
     def power_lastdata(self, value: float) -> None:
         self.lastdata = value
 
-    def _parse_notification(self, data: bytes) -> Optional[float]:
+    def _parse_notification(self, data: bytes) -> float | None:
         if len(data) < 4:
             return None
         return float(int.from_bytes(data[2:4], byteorder="little", signed=True))
@@ -1027,7 +1026,7 @@ class BLEHRInputHandler(_BLESensorInputHandler):
     def hr_lastdata(self, value: float) -> None:
         self.lastdata = value
 
-    def _parse_notification(self, data: bytes) -> Optional[float]:
+    def _parse_notification(self, data: bytes) -> float | None:
         if len(data) < 2:
             return None
         flags = data[0]
@@ -1049,8 +1048,8 @@ class BLECombinedSensor:
 
     def __init__(
         self,
-        power_handler: Optional[Any] = None,
-        hr_handler: Optional[Any] = None,
+        power_handler: Any | None = None,
+        hr_handler: Any | None = None,
     ) -> None:
         self.power_handler = power_handler
         self.hr_handler = hr_handler

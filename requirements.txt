@@ -1,6 +1,6 @@
 # Smart Fan Controller - Python függőségek
 #
-# Python >= 3.10 szükséges
+# Python >= 3.11 szükséges
 # Telepítés:   pip install -r requirements.txt
 # Alternatíva: pip install -e ".[all]"   (a pyproject.toml extras-ai)
 #

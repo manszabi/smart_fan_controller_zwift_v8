@@ -44,7 +44,6 @@ from smart_fan_controller.core import (
 from smart_fan_controller.core import logging_setup as _logmod
 import logging as _logging
 import json as _json
-import zwift_fan_controller as _mainmod
 from smart_fan_controller.zwift_api import logsetup as _zaplog
 
 
@@ -1432,9 +1431,18 @@ class TestResolveLogDir:
             shutil.rmtree(tmp, ignore_errors=True)
 
     def test_non_writable_fallback(self):
-        """/proc alá nem tud írni → fallback."""
-        result = _resolve_log_dir("/proc/1/fake_log_test")
-        assert result == self._default_dir
+        """Nem létrehozható útvonal (fájl alatti aldir) → fallback.
+
+        Platformfüggetlen: Windowson a /proc/... létrehozható lenne
+        (C:\\proc), ezért egy valódi fájl ALÁ próbálunk könyvtárat tenni,
+        ami minden OS-en OSError."""
+        fd, fpath = tempfile.mkstemp()
+        os.close(fd)
+        try:
+            result = _resolve_log_dir(os.path.join(fpath, "sub"))
+            assert result == self._default_dir
+        finally:
+            os.remove(fpath)
 
     def test_tilde_expansion(self):
         home = os.path.expanduser("~")
@@ -1471,7 +1479,7 @@ class TestLoggingToggle:
         propagáláson keresztül kapják el a 'user' logger üzeneteit) ne
         sérüljenek a futási sorrendtől függetlenül.
         """
-        for name in ("user", "swift_fan_controller_new"):
+        for name in ("user", "zwift_fan_controller_new"):
             lg = _logging.getLogger(name)
             lg.handlers.clear()
             lg.propagate = True
@@ -1486,7 +1494,7 @@ class TestLoggingToggle:
         try:
             _setup_logging(tmp, logging_enabled=False)
             assert _logmod._logging_enabled is False
-            for name in ("user", "swift_fan_controller_new"):
+            for name in ("user", "zwift_fan_controller_new"):
                 handlers = _logging.getLogger(name).handlers
                 assert len(handlers) == 1
                 assert isinstance(handlers[0], _logging.NullHandler)
@@ -1811,7 +1819,7 @@ class TestHeadlessImport:
             "                raise ModuleNotFoundError(name)\n"
             "            return None\n"
             "    sys.meta_path.insert(0, _Blocker())\n"
-            "import swift_fan_controller as m\n"
+            "import zwift_fan_controller as m\n"
             "assert m._PYSIDE6_AVAILABLE is (not {block})\n"
             "print('OK')\n"
         ).format(block=block_pyside6)
@@ -2270,7 +2278,7 @@ class TestBleFanReconnect:
 
         prev_avail = _ble._BLEAK_AVAILABLE
         _ble._BLEAK_AVAILABLE = True
-        loggers = [_logging.getLogger("user"), _logging.getLogger("swift_fan_controller_new")]
+        loggers = [_logging.getLogger("user"), _logging.getLogger("zwift_fan_controller_new")]
         prev_levels = [lg.level for lg in loggers]
         for lg in loggers:
             lg.setLevel(_logging.CRITICAL)

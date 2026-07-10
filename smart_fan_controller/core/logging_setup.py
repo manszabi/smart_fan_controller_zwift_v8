@@ -11,7 +11,6 @@ import logging
 import os
 import sys
 from logging.handlers import MemoryHandler, RotatingFileHandler
-from typing import Optional
 
 from smart_fan_controller.core.helpers import resolve_log_dir
 
@@ -25,12 +24,12 @@ __all__ = [
     "is_logging_enabled",
 ]
 
-logger = logging.getLogger("swift_fan_controller_new")
+logger = logging.getLogger("zwift_fan_controller_new")
 user_logger = logging.getLogger("user")
 
 
 def _default_log_dir() -> str:
-    """Az alapértelmezett log könyvtár: a ``swift_fan_controller.py`` belépő
+    """Az alapértelmezett log könyvtár: a ``zwift_fan_controller.py`` belépő
     script könyvtára (frozen exe esetén az exe melletti mappa).
 
     Ez a modul a ``smart_fan_controller/core/`` alatt él, ezért a belépő
@@ -49,10 +48,26 @@ def _default_log_dir() -> str:
 # Modul-szintű state
 _log_dir: str = _default_log_dir()
 _logging_enabled: bool = True
-_early_mem_handlers: list = []
+_early_mem_handlers: list[tuple[logging.Logger, MemoryHandler]] = []
 
 
-def setup_logging(log_directory: Optional[str] = None, logging_enabled: bool = True) -> None:
+def _close_and_clear_handlers(lg: logging.Logger) -> None:
+    """A logger handlereit leválasztja ÉS bezárja.
+
+    A sima handlers.clear() nyitva hagyná a fájl-handlereket: a leírók
+    szivárognának, és Windows-on a nyitva felejtett handle miatt a
+    log-rotáció (fájl-átnevezés) WinError 32-vel meghiúsulna.
+    A MemoryHandler pufferét a close nem üríti (nincs target), így a korai
+    logok visszajátszása ettől nem sérül."""
+    for h in lg.handlers[:]:
+        lg.removeHandler(h)
+        try:
+            h.close()
+        except Exception:
+            pass
+
+
+def setup_logging(log_directory: str | None = None, logging_enabled: bool = True) -> None:
     """Logging konfiguráció: konzol + rotált fájl (500 KB max).
 
     Két logger:
@@ -61,7 +76,7 @@ def setup_logging(log_directory: Optional[str] = None, logging_enabled: bool = T
       - ``logger``: Belső debug/info logok (fájlba mindig, konzolra WARNING+ felett).
 
     A log fájlok a ``log_directory``-ba kerülnek (ha érvényes), különben
-    a ``swift_fan_controller.py`` belépő script könyvtárába (frozen exe
+    a ``zwift_fan_controller.py`` belépő script könyvtárába (frozen exe
     esetén az exe melletti mappába).
 
     Ha ``logging_enabled`` False, mindkét logger NullHandler-t kap (teljes
@@ -79,9 +94,9 @@ def setup_logging(log_directory: Optional[str] = None, logging_enabled: bool = T
 
     # Loggolás kikapcsolva → mindkét logger elnémítása NullHandler-rel
     if not logging_enabled:
-        for name in ("user", "swift_fan_controller_new"):
+        for name in ("user", "zwift_fan_controller_new"):
             lg = logging.getLogger(name)
-            lg.handlers.clear()
+            _close_and_clear_handlers(lg)
             lg.addHandler(logging.NullHandler())
             lg.propagate = False
         logging.getLogger("bleak").setLevel(logging.CRITICAL)
@@ -103,7 +118,7 @@ def setup_logging(log_directory: Optional[str] = None, logging_enabled: bool = T
 
     # ── user_logger: felhasználói üzenetek ──
     ul = logging.getLogger("user")
-    ul.handlers.clear()  # Korábbi handler-ek törlése (újrahívás esetén)
+    _close_and_clear_handlers(ul)  # Korábbi handlerek bezárása (újrahívás esetén)
     ul.setLevel(logging.DEBUG)
     ul.propagate = False
 
@@ -114,8 +129,8 @@ def setup_logging(log_directory: Optional[str] = None, logging_enabled: bool = T
     ul.addHandler(file_handler)
 
     # ── logger: belső logok ──
-    il = logging.getLogger("swift_fan_controller_new")
-    il.handlers.clear()
+    il = logging.getLogger("zwift_fan_controller_new")
+    _close_and_clear_handlers(il)
     il.setLevel(logging.DEBUG)
     il.propagate = False
 
@@ -145,9 +160,9 @@ def setup_early_logging() -> None:
     """
     global _early_mem_handlers
     _early_mem_handlers = []
-    for name in ("user", "swift_fan_controller_new"):
+    for name in ("user", "zwift_fan_controller_new"):
         lg = logging.getLogger(name)
-        lg.handlers.clear()
+        _close_and_clear_handlers(lg)
         lg.setLevel(logging.DEBUG)
         lg.propagate = False
         # Nagy kapacitás + magas flushLevel → nem ürül ki automatikusan

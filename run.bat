@@ -12,5 +12,5 @@ if not exist ".venv\Scripts\activate.bat" (
 
 :: Activate venv and run
 call .venv\Scripts\activate.bat
-python swift_fan_controller.py %*
+python zwift_fan_controller.py %*
 if %errorlevel% neq 0 pause

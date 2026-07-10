@@ -184,8 +184,10 @@ AKTIV (idozito fut)
 **Szinkronizacio:**
 - `asyncio.Queue` - adatfolyam bemeneti kezelok es feldolgozok kozott
 - `asyncio.Lock` - megosztott vezerlo allapot vedelem
-- `threading.Lock` - UISnapshot vedelem (HUD ↔ async szal)
-- `threading.Event` - leallas koordinacio
+- `threading.Lock` - UISnapshot vedelem (HUD ↔ async szal), ANT+ node bontas
+- `threading.Event` - leallas koordinacio (megszakithato varakozasok: ANT+ retry, Zwift-varas)
+- `loop.call_soon_threadsafe` - task cancel es queue-iras masik szalbol (a `Task.cancel()`
+  onmagaban nem szalbiztos)
 
 ---
 
@@ -193,9 +195,9 @@ AKTIV (idozito fut)
 
 | Fajl | Cel |
 |------|-----|
-| `swift_fan_controller.py` | Fo belepo (vekony): az `smart_fan_controller` csomag `app.main()`-jet hivja |
+| `zwift_fan_controller.py` | Fo belepo (vekony): az `smart_fan_controller` csomag `app.main()`-jet hivja |
 | `zwift_api_polling.py` | Vekony belepo a Zwift API polling segedprocesszhez (logika: `smart_fan_controller/zwift_api/`) |
-| `esp32_fan_controller.ino` | ESP32-C3 firmware: BLE szerver, rele vezerles, OTA |
+| `tests/` | Tesztkeszlet (343 teszt): `test_core.py` (domain/config/logging/BLE), `test_pipeline.py` (async adatsik, UDP fogado, protobuf dekoder) |
 | `settings.json` | Felhasznaloi konfiguracio (automatikusan letrejon alapertelmezettekkel) |
 | `settings.example.json` / `.jsonc` | Konfiguracios sablonok |
 | `CONFIGURATION.md` | Beallitasok dokumentacioja |
@@ -205,7 +207,7 @@ AKTIV (idozito fut)
 ## smart_fan_controller csomag-struktura
 
 A korabbi monolitikus fo fajl es a kulon alfolyamat teljes logikaja a
-`smart_fan_controller` csomagba szervezodott; a `swift_fan_controller.py` mar
+`smart_fan_controller` csomagba szervezodott; a `zwift_fan_controller.py` mar
 csak vekony belepo, ami az `app.main()`-t hivja.
 
 ```
@@ -249,7 +251,7 @@ smart_fan_controller/
 ```
 
 ### Fo tervezesi dontesek
-- **Vekony belepo**: a `swift_fan_controller.py` (~76 sor) csak az `app.main()`-t
+- **Vekony belepo**: a `zwift_fan_controller.py` (~76 sor) csak az `app.main()`-t
   hivja, es nehany szimbolumot re-exportal a tesztek/visszafelekompatibilitas miatt.
 - **Tiszta mag**: a `core/` csomag PySide6- es BLE-fuggetlen, igy a domain-logika
   (zonazas, atlagolas, cooldown) izolaltan, fuggosegek nelkul unit-tesztelheto.
@@ -264,6 +266,11 @@ smart_fan_controller/
   a `raw_power_queue` / `raw_hr_queue`-ba ir; a feldolgozok forrasfuggetlenek.
 - **Feldolgozo task-ok egy helyen**: a `processors/processors.py` tartalmazza a 4
   async task-ot (teljesitmeny/pulzus feldolgozo, zona vezerlo, dropout figyelo).
+- **Atomikus settings-mentes**: a `settings.json` frissitese temp fajl + `os.replace`
+  parossal tortenik – iras kozbeni leallas (aramszunet) nem hagyhat csonka fajlt.
+- **Modern alap**: Python 3.11+ (`StrEnum`, beepitett `TimeoutError`), bleak 3.x,
+  PySide6 6.5+ (nativ ablakmozgatas/atmeretezes: `startSystemMove`/`startSystemResize`);
+  a config dataclass-ok `slots=True`-val futnak.
 
 ### Elonyok
 - **Tesztelhetoseg**: a tiszta fuggvenyek (zonazas, cooldown, atlagolas) a `core/`

@@ -11,8 +11,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import time
-from typing import Any, Dict, Optional, Tuple
+from collections.abc import Callable, Coroutine
+from typing import Any
 
 from smart_fan_controller.config import ZoneMode, get_effective_zone_mode
 from smart_fan_controller.config.loader import _resolve_buffer_settings
@@ -30,7 +32,7 @@ from smart_fan_controller.core import (
 )
 from smart_fan_controller.handlers import send_zone
 
-logger = logging.getLogger("swift_fan_controller_new")
+logger = logging.getLogger("zwift_fan_controller_new")
 user_logger = logging.getLogger("user")
 
 
@@ -40,8 +42,8 @@ async def power_processor_task(
     zone_event: asyncio.Event,
     power_averager: PowerAverager,
     printer: ConsolePrinter,
-    settings: Dict[str, Any],
-    power_zones: Dict[int, Tuple[int, int]],
+    settings: dict[str, Any],
+    power_zones: dict[int, tuple[int, int]],
 ) -> None:
     """Teljesítmény adatok feldolgozása – validálás, átlagolás, állapot frissítés.
 
@@ -119,8 +121,8 @@ async def hr_processor_task(
     zone_event: asyncio.Event,
     hr_averager: HRAverager,
     printer: ConsolePrinter,
-    settings: Dict[str, Any],
-    hr_zones: Dict[str, int],
+    settings: dict[str, Any],
+    hr_zones: dict[str, int],
 ) -> None:
     """HR adatok feldolgozása – validálás, átlagolás, állapot frissítés.
 
@@ -209,7 +211,7 @@ async def zone_controller_task(
     state: ControllerState,
     zone_queue: asyncio.Queue[int],
     cooldown_ctrl: CooldownController,
-    settings: Dict[str, Any],
+    settings: dict[str, Any],
     zone_event: asyncio.Event,
 ) -> None:
     """Zóna vezérlő – kombinálja a power és HR zónákat, alkalmazza a cooldownt.
@@ -299,7 +301,7 @@ async def zone_controller_task(
 async def dropout_checker_task(
     state: ControllerState,
     zonequeue: asyncio.Queue[int],
-    settings: Dict[str, Any],
+    settings: dict[str, Any],
     poweraverager: PowerAverager,
     hraverager: HRAverager,
     power_dropout_timeout: float,
@@ -342,55 +344,33 @@ async def dropout_checker_task(
                 and (now - state.last_hr_time) < hr_dropout_timeout
             )
 
-            label = "unknown"
-            elapsed = 0.0
-            stale = False
+            # Eltelt idő az utolsó adat óta (inf, ha még sosem érkezett)
+            power_elapsed = (
+                now - state.last_power_time
+                if state.last_power_time is not None else math.inf
+            )
+            hr_elapsed = (
+                now - state.last_hr_time
+                if state.last_hr_time is not None else math.inf
+            )
 
             if zone_mode == ZoneMode.POWER_ONLY:
                 stale = not power_fresh
-                elapsed = (
-                    now - state.last_power_time
-                    if state.last_power_time is not None
-                    else float("inf")
-                )
+                elapsed = power_elapsed
                 label = "power"
             elif zone_mode == ZoneMode.HR_ONLY:
-                elapsed = (
-                    now - state.last_hr_time
-                    if state.last_hr_time is not None
-                    else float("inf")
-                )
                 # Fix #4: hr_only dropout akkor is triggerel, ha soha nem érkezett HR
                 stale = not hr_fresh
+                elapsed = hr_elapsed
                 label = "HR"
             else:  # higher_wins
                 stale = not power_fresh and not hr_fresh
-
                 if stale:
-                    elapsed = max(
-                        (
-                            now - state.last_power_time
-                            if state.last_power_time is not None
-                            else float("inf")
-                        ),
-                        (
-                            now - state.last_hr_time
-                            if state.last_hr_time is not None
-                            else float("inf")
-                        ),
-                    )
+                    elapsed = max(power_elapsed, hr_elapsed)
                 elif not power_fresh:
-                    elapsed = (
-                        now - state.last_power_time
-                        if state.last_power_time is not None
-                        else float("inf")
-                    )
+                    elapsed = power_elapsed
                 elif not hr_fresh:
-                    elapsed = (
-                        now - state.last_hr_time
-                        if state.last_hr_time is not None
-                        else float("inf")
-                    )
+                    elapsed = hr_elapsed
                 else:
                     elapsed = 0.0
                 label = "power+HR"
@@ -417,12 +397,12 @@ async def dropout_checker_task(
 
 
 async def _guarded_task(
-    coro: Any,
+    coro: Coroutine[Any, Any, None],
     name: str,
     *,
     max_retries: int = 0,
     retry_delay: float = 5.0,
-    coro_factory: Any = None,
+    coro_factory: Callable[[], Coroutine[Any, Any, None]] | None = None,
 ) -> None:
     """Task wrapper: elkapja és logolja a váratlan kivételeket.
 

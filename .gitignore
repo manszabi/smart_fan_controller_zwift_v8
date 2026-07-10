@@ -223,5 +223,8 @@ zwift_api_polling.log
 ble_devices.log
 ant_devices.log
 
+# Helyi biztonsagi masolat(ok) – nem reszei a projektnek
+smart_fan_controller/ui/hud másolata.py
+
 # A verziokovetett PyInstaller spec NE essen a fenti '*.spec' minta ala.
 !smart_fan_controller.spec

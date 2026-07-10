@@ -1,12 +1,14 @@
 [build-system]
 requires = ["setuptools>=68.0"]
-build-backend = "setuptools.backends._legacy:_Backend"
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "smart-fan-controller-zwift"
-version = "8.0.0"
+# A verzió egyetlen forrása: smart_fan_controller/__init__.py __version__
+dynamic = ["version"]
 description = "Zwift-integrált okos ventilátor vezérlő – BLE, ANT+, Zwift UDP adatforrásokkal"
-requires-python = ">=3.10"
+# 3.11+: enum.StrEnum, beépített TimeoutError-alias, modern asyncio
+requires-python = ">=3.11"
 license = {text = "MIT"}
 
 dependencies = [
@@ -27,7 +29,18 @@ all = [
 ]
 
 [project.scripts]
-smart-fan-controller = "swift_fan_controller:main"
+smart-fan-controller = "zwift_fan_controller:main"
+
+[tool.setuptools.dynamic]
+version = {attr = "smart_fan_controller.__version__"}
+
+[tool.setuptools]
+# Explicit felsorolás: a flat layout (csomag + két top-level belépőmodul)
+# auto-discovery-vel nem egyértelmű.
+py-modules = ["zwift_fan_controller", "zwift_api_polling"]
+
+[tool.setuptools.packages.find]
+include = ["smart_fan_controller*"]
 
 [tool.setuptools.package-data]
 # A config package versiókövetett default sablonja a pip-install csomagba is kerüljön.

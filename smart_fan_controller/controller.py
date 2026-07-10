@@ -14,8 +14,7 @@ import platform as _platform
 import subprocess
 import sys
 import threading
-import time
-from typing import Any, Dict, Optional
+from typing import Any
 
 from smart_fan_controller.config import (
     BleConfig,
@@ -56,7 +55,8 @@ from smart_fan_controller.processors import (
     zone_controller_task,
 )
 
-__version__ = "8.0.0"
+from smart_fan_controller import __version__  # egyetlen verzió-forrás
+
 __all__ = ["FanController"]
 
 
@@ -84,32 +84,40 @@ class FanController:
     def __init__(self, settings_file: str = "settings.json") -> None:
         self.settings_file = settings_file
         self.settings = load_settings(settings_file)
-        self._antplus_handler: Optional[ANTPlusInputHandler] = None
-        self._antplus_thread: Optional[threading.Thread] = None
+        self._antplus_handler: ANTPlusInputHandler | None = None
+        self._antplus_thread: threading.Thread | None = None
         self._tasks: list[asyncio.Task[Any]] = []
         self._running = True
-        self._zwift_proc: Optional[subprocess.Popen[Any]] = None
+        self._zwift_proc: subprocess.Popen[Any] | None = None
         # Handler ref-ek (HUD és leállítás számára)
-        self._ble_fan: Optional[BLEFanOutputController] = None
-        self._ble_power: Optional[BLEPowerInputHandler] = None
-        self._ble_hr: Optional[BLEHRInputHandler] = None
-        self._zwift_udp: Optional[ZwiftUDPInputHandler] = None
-        self._state: Optional[ControllerState] = None
-        self._cooldown_ctrl: Optional[CooldownController] = None
-        self._ble_sensor_handler: Optional[BLECombinedSensor] = None
+        self._ble_fan: BLEFanOutputController | None = None
+        self._ble_power: BLEPowerInputHandler | None = None
+        self._ble_hr: BLEHRInputHandler | None = None
+        self._zwift_udp: ZwiftUDPInputHandler | None = None
+        self._state: ControllerState | None = None
+        self._cooldown_ctrl: CooldownController | None = None
+        self._ble_sensor_handler: BLECombinedSensor | None = None
+        # A run() alatt futó event loop – a stop() másik szálból (Qt fő szál /
+        # signal handler) hívódik, és a Task.cancel() nem thread-safe, ezért
+        # a cancel-eket ezen a loopon kell ütemezni.
+        self._loop: asyncio.AbstractEventLoop | None = None
+        # Leállítási jelzés a blokkoló (to_thread-ben futó) várakozásokhoz:
+        # az executor-szálak NEM daemon szálak, a kilépés megvárná őket –
+        # a wait(...)-ek erre az eseményre azonnal megszakadnak.
+        self._shutdown_evt = threading.Event()
 
     @property
-    def state(self) -> "Optional[ControllerState]":
+    def state(self) -> ControllerState | None:
         """Aktuális vezérlő állapot (None ha még nem indult el a run())."""
         return self._state
 
     @property
-    def ble_fan(self) -> "Optional[BLEFanOutputController]":
+    def ble_fan(self) -> BLEFanOutputController | None:
         """BLE ventilátor kimeneti vezérlő (None ha nincs)."""
         return self._ble_fan
 
     @property
-    def cooldown_ctrl(self) -> "Optional[CooldownController]":
+    def cooldown_ctrl(self) -> CooldownController | None:
         """Hűtési időkorlát vezérlő (None ha még nem indult el a run())."""
         return self._cooldown_ctrl
 
@@ -136,13 +144,15 @@ class FanController:
                 capture_output=True,
                 text=True,
                 timeout=10,
+                # Ablakos (pythonw/noconsole) futtatásnál se villanjon konzol
+                creationflags=subprocess.CREATE_NO_WINDOW,
             )
             return process_name.lower() in result.stdout.lower()
         except (subprocess.TimeoutExpired, OSError):
             return False
 
     @staticmethod
-    def _find_zwift_launcher() -> Optional[str]:
+    def _find_zwift_launcher() -> str | None:
         """Megkeresi a ZwiftLauncher.exe útvonalát.
 
         Keresési sorrend:
@@ -246,7 +256,7 @@ class FanController:
             return
 
         # Launcher útvonal meghatározása
-        launcher_path: Optional[str] = ds.zwift_launcher_path
+        launcher_path: str | None = ds.zwift_launcher_path
         if not launcher_path:
             launcher_path = self._find_zwift_launcher()
         if not launcher_path:
@@ -284,7 +294,8 @@ class FanController:
             # Fallback: egyszerűen várunk a ZwiftApp.exe megjelenésére
             user_logger.info("⏳ Várakozás a ZwiftApp.exe indulására (kattints a 'Let's Go' gombra)...")
             for _ in range(180):  # max 6 perc
-                time.sleep(2)
+                if self._shutdown_evt.wait(2):
+                    return  # leállítás kérve – nem várunk tovább
                 if self.is_process_running("ZwiftApp.exe"):
                     logger.info("ZwiftApp.exe elindult.")
                     user_logger.info("✅ ZwiftApp.exe elindult!")
@@ -313,7 +324,8 @@ class FanController:
                     f"Lehet hogy újraindul frissítés után..."
                 )
                 if attempt < max_attempts:
-                    time.sleep(attempt_interval)
+                    if self._shutdown_evt.wait(attempt_interval):
+                        return  # leállítás kérve
                     continue
                 else:
                     logger.warning("ZwiftLauncher.exe nem indult újra.")
@@ -376,7 +388,8 @@ class FanController:
                         f"⏳ Újrapróbálkozás {attempt_interval}s múlva "
                         f"({attempt}/{max_attempts})..."
                     )
-                    time.sleep(attempt_interval)
+                    if self._shutdown_evt.wait(attempt_interval):
+                        return  # leállítás kérve
                 else:
                     logger.warning(
                         f"Zwift Launcher UI automatizáció sikertelen {max_attempts} "
@@ -389,7 +402,8 @@ class FanController:
         if not self.is_process_running("ZwiftApp.exe"):
             user_logger.info("⏳ Várakozás a ZwiftApp.exe indulására...")
             for _ in range(120):  # max 4 perc
-                time.sleep(2)
+                if self._shutdown_evt.wait(2):
+                    return  # leállítás kérve
                 if self.is_process_running("ZwiftApp.exe"):
                     logger.info("ZwiftApp.exe sikeresen elindult.")
                     user_logger.info("✅ ZwiftApp.exe elindult!")
@@ -442,7 +456,7 @@ class FanController:
                 startupinfo = None
                 creation_flags = 0
 
-            popen_kwargs: Dict[str, Any] = dict(
+            popen_kwargs: dict[str, Any] = dict(
                 stdin=subprocess.DEVNULL,
             )
             if startupinfo is not None:
@@ -539,6 +553,7 @@ class FanController:
 
     async def run(self) -> None:
         """A vezérlő fő asyncio korrutinja – elindít mindent és vár."""
+        self._loop = asyncio.get_running_loop()
         self._tasks = []
         s = self.settings
         ds: DatasourceConfig = s["datasource"]
@@ -814,12 +829,23 @@ class FanController:
         elegendő időt biztosít a tiszta leálláshoz.
         """
         self._running = False
+        # A to_thread-ben futó blokkoló várakozások (Zwift indulás-figyelés)
+        # azonnali megszakítása – különben a kilépés megvárná őket
+        self._shutdown_evt.set()
+        loop = self._loop
         for task in self._tasks:
-            if not task.done():
-                try:
+            if task.done():
+                continue
+            try:
+                if loop is not None and loop.is_running():
+                    # A stop() tipikusan a Qt fő szálából hívódik, a taskok
+                    # viszont az asyncio szál loopján élnek – a Task.cancel()
+                    # nem thread-safe, a loopon kell ütemezni.
+                    loop.call_soon_threadsafe(task.cancel)
+                else:
                     task.cancel()
-                except Exception as exc:
-                    logger.debug(f"Task cancel hiba: {exc}")
+            except Exception as exc:
+                logger.debug(f"Task cancel hiba: {exc}")
         if self._antplus_handler:
             self._antplus_handler.stop()
         if self._antplus_thread and self._antplus_thread.is_alive():

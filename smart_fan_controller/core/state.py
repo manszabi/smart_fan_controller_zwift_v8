@@ -9,7 +9,6 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import threading
-from typing import Optional, Tuple
 
 
 class ControllerState:
@@ -35,13 +34,13 @@ class ControllerState:
     """
 
     def __init__(self) -> None:
-        self.current_zone: Optional[int] = None
-        self.current_power_zone: Optional[int] = None
-        self.current_hr_zone: Optional[int] = None
-        self.current_avg_power: Optional[float] = None
-        self.current_avg_hr: Optional[float] = None
-        self.last_power_time: Optional[float] = None
-        self.last_hr_time: Optional[float] = None
+        self.current_zone: int | None = None
+        self.current_power_zone: int | None = None
+        self.current_hr_zone: int | None = None
+        self.current_avg_power: float | None = None
+        self.current_avg_hr: float | None = None
+        self.last_power_time: float | None = None
+        self.last_hr_time: float | None = None
         self.lock = asyncio.Lock()
         self.ui_snapshot = UISnapshot()
 
@@ -53,7 +52,7 @@ class ControllerState:
         )
 
 
-@dataclasses.dataclass
+@dataclasses.dataclass(slots=True)
 class UISnapshot:
     """Szálbiztos snapshot az asyncio loop és a PySide6 UI között.
 
@@ -62,16 +61,16 @@ class UISnapshot:
     A threading.Lock garantálja a race condition-mentességet.
     """
 
-    zone: Optional[int] = None
-    avg_power: Optional[float] = None
-    avg_hr: Optional[float] = None
+    zone: int | None = None
+    avg_power: float | None = None
+    avg_hr: float | None = None
     _lock: threading.Lock = dataclasses.field(default_factory=threading.Lock, repr=False)
 
     def update(
         self,
-        zone: Optional[int],
-        avg_power: Optional[float],
-        avg_hr: Optional[float],
+        zone: int | None,
+        avg_power: float | None,
+        avg_hr: float | None,
     ) -> None:
         """Frissíti a snapshot értékeit (asyncio szálból hívandó)."""
         with self._lock:
@@ -79,7 +78,7 @@ class UISnapshot:
             self.avg_power = avg_power
             self.avg_hr = avg_hr
 
-    def read(self) -> Tuple[Optional[int], Optional[float], Optional[float]]:
+    def read(self) -> tuple[int | None, float | None, float | None]:
         """Visszaadja a snapshot értékeit (PySide6 szálból hívandó)."""
         with self._lock:
             return self.zone, self.avg_power, self.avg_hr

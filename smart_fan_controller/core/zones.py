@@ -7,7 +7,7 @@ támaszkodik, ezért önmagában is könnyen tesztelhető.
 from __future__ import annotations
 
 import math
-from typing import Any, Dict, Optional, Tuple
+from typing import Any
 
 from ..config.schemas import ZoneMode
 
@@ -23,7 +23,7 @@ def calculate_power_zones(
     max_watt: int,
     z1_pct: int,
     z2_pct: int,
-) -> Dict[int, Tuple[int, int]]:
+) -> dict[int, tuple[int, int]]:
     """Kiszámítja a teljesítmény zóna határokat.
 
     Args:
@@ -53,7 +53,7 @@ def calculate_hr_zones(
     resting_hr: int,
     z1_pct: int,
     z2_pct: int,
-) -> Dict[str, int]:
+) -> dict[str, int]:
     """Kiszámítja a HR zóna határokat bpm-ben.
 
     Args:
@@ -72,7 +72,7 @@ def calculate_hr_zones(
     }
 
 
-def zone_for_power(power: float, zones: Dict[int, Tuple[int, int]]) -> int:
+def zone_for_power(power: float, zones: dict[int, tuple[int, int]]) -> int:
     """Meghatározza a teljesítmény zónát (0–3) az adott watt értékhez.
 
     Args:
@@ -98,7 +98,7 @@ def zone_for_power(power: float, zones: Dict[int, Tuple[int, int]]) -> int:
     return 3  # csak max_watt felett érthető el
 
 
-def zone_for_hr(hr: int, hr_zones: Dict[str, int]) -> int:
+def zone_for_hr(hr: int, hr_zones: dict[str, int]) -> int:
     """Meghatározza a HR zónát (0–3) az adott bpm értékhez.
 
     Args:
@@ -187,10 +187,10 @@ def higher_wins(zone_a: int, zone_b: int) -> int:
 
 
 def apply_zone_mode(
-    power_zone: Optional[int],
-    hr_zone: Optional[int],
+    power_zone: int | None,
+    hr_zone: int | None,
     zone_mode: ZoneMode,
-) -> Optional[int]:
+) -> int | None:
     """A zone_mode alapján kombinálja a power és HR zónákat.
 
     Zóna módok:

@@ -8,7 +8,7 @@ block_cipher = None
 
 # --- Main controller exe (v8 – PySide6 HUD) ---
 main_a = Analysis(
-    ['swift_fan_controller.py'],
+    ['zwift_fan_controller.py'],
     pathex=[],
     binaries=[],
     datas=[

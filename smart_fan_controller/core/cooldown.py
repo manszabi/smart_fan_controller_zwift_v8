@@ -16,7 +16,6 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from typing import Optional, Tuple
 
 user_logger = logging.getLogger("user")
 
@@ -47,17 +46,17 @@ class CooldownController:
         self.cooldown_seconds = cooldown_seconds
         self.active = False
         self.start_time = 0.0
-        self.pending_zone: Optional[int] = None
+        self.pending_zone: int | None = None
         self.can_halve = True
         self.can_double = False
         self._last_print = 0.0
 
     def process(
         self,
-        current_zone: Optional[int],
+        current_zone: int | None,
         new_zone: int,
         zero_immediate: bool,
-    ) -> Optional[int]:
+    ) -> int | None:
         """Feldolgozza az új zóna javaslatot és alkalmazza a cooldown logikát.
 
         Args:
@@ -73,10 +72,10 @@ class CooldownController:
 
     def _process_locked(
         self,
-        current_zone: Optional[int],
+        current_zone: int | None,
         new_zone: int,
         zero_immediate: bool,
-    ) -> Optional[int]:
+    ) -> int | None:
         """Belső process logika – lock alatt hívandó."""
         now = time.monotonic()
 
@@ -108,7 +107,7 @@ class CooldownController:
         # Zóna csökkentés → cooldown indul
         return self._start(current_zone, new_zone, now)
 
-    def _start(self, current_zone: int, new_zone: int, now: float) -> Optional[int]:
+    def _start(self, current_zone: int, new_zone: int, now: float) -> int | None:
         """Cooldown indítása zóna csökkentésnél."""
         self.active = True
         self.start_time = now
@@ -125,7 +124,7 @@ class CooldownController:
 
     def _handle_active(
         self, current_zone: int, new_zone: int, now: float
-    ) -> Optional[int]:
+    ) -> int | None:
         """Aktív cooldown feldolgozása – lock alatt hívandó."""
         if new_zone >= current_zone:
             self._reset_locked()
@@ -205,7 +204,7 @@ class CooldownController:
         self.can_halve = True
         self.can_double = False
 
-    def snapshot(self) -> Tuple[bool, float]:
+    def snapshot(self) -> tuple[bool, float]:
         """Szálbiztos pillanatfelvétel a HUD számára.
 
         Returns:

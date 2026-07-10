@@ -10,7 +10,6 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from typing import Dict
 
 user_logger = logging.getLogger("user")
 
@@ -30,7 +29,7 @@ class ConsolePrinter:
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
-        self._last_times: Dict[str, float] = {}
+        self._last_times: dict[str, float] = {}
 
     def emit(self, key: str, message: str, interval: float = 1.0) -> bool:
         """Kiírja az üzenetet, ha az interval eltelt.

@@ -44,8 +44,7 @@ from smart_fan_controller.core import (
     zone_for_power,
 )
 from smart_fan_controller.app import main, _PYSIDE6_AVAILABLE
-
-__version__ = "8.0.0"
+from smart_fan_controller import __version__  # egyetlen verzió-forrás
 
 __all__ = [
     "main",

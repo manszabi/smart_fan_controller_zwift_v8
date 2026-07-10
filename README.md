@@ -9,7 +9,7 @@ A program valós időben fogadja a teljesítmény (watt) és szívfrekvencia (bp
 ```
 ┌─────────────┐     ┌──────────────────────┐     ┌─────────────┐
 │  ANT+ Power ├────►│                      ├────►│             │
-│  ANT+ HR    │     │   Swift Fan          │     │  ESP32 BLE  │
+│  ANT+ HR    │     │   Smart Fan          │     │  ESP32 BLE  │
 ├─────────────┤     │   Controller         │     │  Ventilátor │
 │  BLE Power  ├────►│                      ├────►│  Vezérlő    │
 │  BLE HR     │     │  ┌────────────────┐  │     │             │
@@ -38,7 +38,7 @@ A program valós időben fogadja a teljesítmény (watt) és szívfrekvencia (bp
 
 ### Követelmények
 
-- Python 3.10+
+- Python 3.11+
 - ANT+ USB dongle (pl. Garmin ANT+ Stick) – ha ANT+ forrást használsz
 - Bluetooth adapter – ha BLE forrást/kimenetet használsz
 
@@ -62,12 +62,12 @@ A program a rendelkezésre álló könyvtárak alapján automatikusan engedélye
 
 ```bash
 # Alapértelmezett settings.json-nal
-python swift_fan_controller.py
+python zwift_fan_controller.py
 
 # Vagy a példa beállítások másolása után
 cp settings.example.json settings.json
 # ... settings.json szerkesztése ...
-python swift_fan_controller.py
+python zwift_fan_controller.py
 ```
 
 ## Konfiguráció
@@ -206,10 +206,11 @@ main()
 
 | Fájl | Leírás |
 |------|--------|
-| `swift_fan_controller.py` | Fő program belépő (vékony – a logika a `smart_fan_controller/` csomagban) |
+| `zwift_fan_controller.py` | Fő program belépő (vékony – a logika a `smart_fan_controller/` csomagban) |
 | `zwift_api_polling.py` | Vékony belépő a Zwift API polling segédprocesszhez (a logika a `smart_fan_controller/zwift_api/` csomagban) |
 | `smart_fan_controller/zwift_api/` | Zwift HTTPS API polling csomag (automatikusan indul, ha power/hr forrás `"zwiftudp"`) |
-| `esp32_fan_controller.ino` | ESP32 firmware (Arduino – Xiao ESP32-C3) |
+| `tests/` | Tesztkészlet (343 teszt): domain-logika, config, logging, BLE reconnect, async adatsík – `pytest tests/` |
+| `run.bat` / `setup_windows.bat` / `build_exe.bat` | Indítás / venv-telepítés / PyInstaller exe build (Windows) |
 | `settings.json` | Aktív beállítások (a Zwift fiók is itt, a `zwift_api` szekcióban) |
 | `settings.example.json` | Példa beállítások (alapértelmezett értékek) |
 | `settings.example.jsonc` | Kommentezett beállítás referencia |
@@ -221,7 +222,7 @@ main()
 
 ## ESP32 firmware
 
-Az `esp32_fan_controller.ino` a BLE ventilátor vezérlő firmware-je, **Seeed Studio Xiao ESP32-C3** mikrovezérlőre. A Python program ezzel kommunikál BLE-n keresztül.
+A BLE ventilátor vezérlő firmware-je (`esp32_fan_controller.ino`, **Seeed Studio Xiao ESP32-C3**) külön projekt – **nem része ennek a repónak**. A Python program ezzel kommunikál BLE-n keresztül; az alábbi paraméterek a kompatibilitáshoz szükségesek.
 
 **Firmware v5.2.0** – főbb jellemzők:
 
@@ -249,3 +250,22 @@ Az `esp32_fan_controller.ino` a BLE ventilátor vezérlő firmware-je, **Seeed S
 ## Leállítás
 
 `Ctrl+C` vagy ablak bezárás. A program gondoskodik a tiszta leállításról: BLE disconnect, ANT+ node stop, subprocess terminate. Mindhárom esetben (HUD bezárás, Ctrl+C, ZwiftApp.exe kilépés) tricorder becsukás hang szól a leállás előtt.
+
+## Hibaelhárítás
+
+| Tünet | Ok / megoldás |
+|-------|---------------|
+| ANT+: „No backend available" vagy libusb hiba (a program célzott figyelmeztetést is ír) | Az ANT+ stick meghajtója hiányzik. Windows 11: telepíts **WinUSB** meghajtót a stickre (pl. a [Zadig](https://zadig.akeo.ie/) eszközzel), majd húzd ki és dugd vissza. |
+| Minden beállítás váratlanul alapértelmezett | A `settings.json` szintaxis- vagy típushibás. A program a hibás fájlt `settings.json.incorrect` néven félreteszi – javítsd ki (a log megadja a sort/oszlopot), és nevezd vissza. |
+| Egy beállításod „nem érvényesül" | Elgépelt szekció- vagy mezőnév. A program a logban ⚠-tel jelzi az ismeretlen szekciókat és az érvénytelen értékeket. |
+| Zwift login hiba a polling ablakban | A hibaüzenet megadja az okot (pl. „Invalid user credentials" = rossz jelszó). A hitelesítés a `settings.json` `zwift_api` szekciójából vagy a `ZWIFT_USERNAME`/`ZWIFT_PASSWORD` környezeti változókból jön. |
+| BLE eszköz lassan csatlakozik | Név alapú keresésnél a program azonnal csatlakozik, amint az eszköz hirdet – ha mégis lassú, az eszköz nincs hatótávon belül vagy nem hirdet. |
+
+## Tesztek
+
+```bash
+pip install pytest
+pytest tests/
+```
+
+A készlet 343 tesztet tartalmaz: tiszta domain-logika (zónák, cooldown, átlagolás), config-validáció, logging, BLE reconnect forgatókönyvek, valamint a teljes async adatsík (power minta → zóna parancs → dropout) és a Zwift protobuf dekóder.

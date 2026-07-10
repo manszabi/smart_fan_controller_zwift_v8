@@ -75,6 +75,12 @@ _ensure_fake_module("PySide6.QtCore", {
     "QRectF": _Stub,
     "QEvent": _Stub,
     "QPropertyAnimation": _Stub,
+    # A hud.py / app.py aktuális importjaihoz (PySide6 nélküli gépeken)
+    "QMetaObject": _Stub,
+    "QtMsgType": _Stub,
+    "QElapsedTimer": _Stub,
+    "QEventLoop": _Stub,
+    "qInstallMessageHandler": lambda *a: None,
 })
 _ensure_fake_module("PySide6.QtWidgets", {
     "QApplication": _Stub,
@@ -107,6 +113,8 @@ _ensure_fake_module("PySide6.QtGui", {
     "QRadialGradient": _Stub,
     "QFontMetrics": _Stub,
     "QCursor": _Stub,
+    # A hud.py aktuális importjaihoz (PySide6 nélküli gépeken)
+    "QPalette": _Stub,
 })
 _ensure_fake_module("PySide6.QtMultimedia", {
     "QSoundEffect": _Stub,

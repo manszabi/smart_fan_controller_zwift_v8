@@ -5,6 +5,7 @@ import json
 import logging
 import platform as _platform
 import socket
+import struct
 import subprocess
 import threading
 import time
@@ -83,6 +84,16 @@ class UDPBroadcaster:
         self._host = host
         self._port = port
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        if _platform.system() == "Windows":
+            # Windows-egyediség: ha a cél-port nem figyel (a fő app még nem
+            # indult el), az ICMP "port unreachable" a KÜLDŐ socketen
+            # ConnectionResetError-t okoz a következő műveletnél. A
+            # SIO_UDP_CONNRESET ioctl ezt a jelentést kapcsolja ki.
+            try:
+                SIO_UDP_CONNRESET = -1744830452  # 0x9800000C
+                self._sock.ioctl(SIO_UDP_CONNRESET, struct.pack("I", 0))
+            except (OSError, AttributeError, ValueError) as exc:
+                log.debug(f"SIO_UDP_CONNRESET beállítás sikertelen: {exc}")
 
     def send(self, data: dict[str, Any]) -> None:
         """JSON-encode *data* and send it via UDP."""
@@ -116,6 +127,8 @@ def _is_zwift_running() -> bool:
             capture_output=True,
             text=True,
             timeout=10,
+            # Ablakos (pythonw/noconsole) futtatásnál se villanjon konzol
+            creationflags=subprocess.CREATE_NO_WINDOW,
         )
         return "zwiftapp.exe" in result.stdout.lower()
     except (subprocess.TimeoutExpired, OSError):
@@ -139,7 +152,6 @@ def run_polling_loop(
     _ZWIFT_CHECK_INTERVAL = 10.0  # seconds between process checks
     _ZWIFT_GRACE_PERIOD = 300.0   # 5 perc várakozás a Zwift indulására
     _last_zwift_check: float = 0.0
-    _loop_start_time: float = time.time()
     _zwift_seen: bool = False      # True ha egyszer már láttuk futni
 
     # Wait for ZwiftApp.exe to start (grace period)
@@ -204,9 +216,11 @@ def run_polling_loop(
             data = store.get_data()
             try:
                 broadcaster.send(data)
-                broadcaster.log_console(data)
-            except OSError:
-                pass
+            except OSError as exc:
+                # A konzol-összefoglalót akkor is kiírjuk, ha az UDP küldés
+                # átmenetileg nem megy (pl. a fő app még nem figyel)
+                log.debug(f"UDP küldés sikertelen: {exc}")
+            broadcaster.log_console(data)
             consecutive_errors = 0
 
         except RateLimitError:
@@ -223,20 +237,20 @@ def run_polling_loop(
                 f"⚠️  Hálózati hiba (#{consecutive_errors}) / "
                 f"Network error (#{consecutive_errors}): {exc}"
             )
-            stop_event.wait(min(30.0, 2.0 ** consecutive_errors))
+            stop_event.wait(_backoff_seconds(consecutive_errors))
             continue
 
         except requests.exceptions.HTTPError as exc:
             consecutive_errors += 1
             log.warning(f"⚠️  HTTP hiba / HTTP error: {exc}")
-            stop_event.wait(min(30.0, 2.0 ** consecutive_errors))
+            stop_event.wait(_backoff_seconds(consecutive_errors))
             continue
 
         except Exception as exc:  # noqa: BLE001
             consecutive_errors += 1
             log.warning(f"⚠️  Váratlan hiba / Unexpected error: {exc}")
             log.debug("Traceback:", exc_info=True)
-            stop_event.wait(min(30.0, 2.0 ** consecutive_errors))
+            stop_event.wait(_backoff_seconds(consecutive_errors))
             continue
 
         _sleep_remainder(loop_start, poll_interval, stop_event)
@@ -248,3 +262,13 @@ def _sleep_remainder(loop_start: float, interval: float, stop_event: threading.E
     remaining = interval - elapsed
     if remaining > 0:
         stop_event.wait(remaining)
+
+
+def _backoff_seconds(consecutive_errors: int, cap: float = 30.0) -> float:
+    """Exponenciális backoff sapkázott kitevővel.
+
+    A kitevőt is sapkázni kell, nem csak az eredményt: a 2.0**N float hatvány
+    nagy N-nél (~1024, azaz több órányi folyamatos hiba után) OverflowError-t
+    dobna – éppen a hibakezelő ágban.
+    """
+    return min(cap, 2.0 ** min(consecutive_errors, 10))

@@ -10,9 +10,9 @@ echo.
 :: Check Python
 where python >nul 2>&1
 if errorlevel 1 (
-    echo [HIBA] Python nem talalhato! Telepitsd a Python 3.10+-t:
+    echo [HIBA] Python nem talalhato! Telepitsd a Python 3.11+-t:
     echo        https://www.python.org/downloads/
-    echo        FONTOS: Jelold be az "Add Python to PATH" opci√≥t!
+    echo        FONTOS: Jelold be az "Add Python to PATH" opciÛt!
     pause
     exit /b 1
 )
@@ -90,7 +90,7 @@ if not exist "settings.json" (
         echo      A zwift_api_polling.py automatikusan indul (bejelentkezes szukseges).
         echo      Zwift auto-launch: a program automatikusan elinditja a Zwift-et ha nem fut.
     ) else (
-        echo [FIGYELEM] Nem sikerult masolni. Hozd letre manu√°lisan a settings.json-t!
+        echo [FIGYELEM] Nem sikerult masolni. Hozd letre manu·lisan a settings.json-t!
     )
 ) else (
     echo [OK] settings.json mar letezik

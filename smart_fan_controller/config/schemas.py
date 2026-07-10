@@ -10,9 +10,9 @@ from __future__ import annotations
 
 import dataclasses
 import enum
-from typing import Any, Dict, Optional
-
 import logging
+import math
+from typing import Any
 
 # A felhasználói üzeneteket a "user" nevű logger kezeli; a logging konfigurációt
 # a fő alkalmazás állítja be (_setup_logging). Itt csak a már létező loggerre
@@ -25,14 +25,15 @@ user_logger = logging.getLogger("user")
 # ============================================================
 
 # --- Enum-ok a magic string-ek kiváltásához ---
-# str öröklés: JSON-ból jövő string értékekkel is kompatibilis (==)
-class DataSource(str, enum.Enum):
+# StrEnum (3.11+): JSON-ból jövő string értékekkel is kompatibilis (==),
+# és str()/f-string alatt az értéket adja ("ble"), nem a member nevét.
+class DataSource(enum.StrEnum):
     ANTPLUS = "antplus"
     BLE = "ble"
     ZWIFTUDP = "zwiftudp"
 
 
-class ZoneMode(str, enum.Enum):
+class ZoneMode(enum.StrEnum):
     POWER_ONLY = "power_only"
     HR_ONLY = "hr_only"
     HIGHER_WINS = "higher_wins"
@@ -47,7 +48,7 @@ VALID_ZONE_MODES: tuple[ZoneMode, ...] = tuple(ZoneMode)
 # ============================================================
 
 
-@dataclasses.dataclass
+@dataclasses.dataclass(slots=True)
 class PowerZonesConfig:
     """Teljesítmény zóna beállítások – típusbiztos, validált.
 
@@ -136,65 +137,21 @@ class PowerZonesConfig:
         Args:
             raw: A JSON-ból betöltött dict.
         """
-        d = cls()
-        ftp = d.ftp
-        min_watt = d.min_watt
-        max_watt = d.max_watt
-        z1 = d.z1_max_percent
-        z2 = d.z2_max_percent
-        zpi = d.zero_power_immediate
+        kwargs: dict[str, Any] = dataclasses.asdict(cls())
+        _from_dict_int(raw, kwargs, "ftp", 0, 1000)
+        _from_dict_int(raw, kwargs, "min_watt", 0, 1000)
+        _from_dict_int(raw, kwargs, "max_watt", 0, 1000)
+        _from_dict_int(raw, kwargs, "z1_max_percent", 1, 100)
+        _from_dict_int(raw, kwargs, "z2_max_percent", 1, 100)
+        _from_dict_bool(raw, kwargs, "zero_power_immediate")
+        return cls(**kwargs)
 
-        if "ftp" in raw:
-            v = raw["ftp"]
-            if isinstance(v, int) and not isinstance(v, bool) and 0 <= v <= 1000:
-                ftp = v
-            else:
-                user_logger.warning(f"⚠ Érvénytelen 'ftp' érték: {v!r} (0–1000 közötti egész kell, default: {d.ftp})")
-
-        if "min_watt" in raw:
-            v = raw["min_watt"]
-            if isinstance(v, int) and not isinstance(v, bool) and 0 <= v <= 1000:
-                min_watt = v
-            else:
-                user_logger.warning(f"⚠ Érvénytelen 'min_watt' érték: {v!r} (0–1000 közötti egész kell, default: {d.min_watt})")
-
-        if "max_watt" in raw:
-            v = raw["max_watt"]
-            if isinstance(v, int) and not isinstance(v, bool) and 0 <= v <= 1000:
-                max_watt = v
-            else:
-                user_logger.warning(f"⚠ Érvénytelen 'max_watt' érték: {v!r} (0–1000 közötti egész kell, default: {d.max_watt})")
-
-        if "z1_max_percent" in raw:
-            v = raw["z1_max_percent"]
-            if isinstance(v, int) and not isinstance(v, bool) and 1 <= v <= 100:
-                z1 = v
-            else:
-                user_logger.warning(f"⚠ Érvénytelen 'z1_max_percent' érték: {v!r} (1–100 közötti egész kell)")
-
-        if "z2_max_percent" in raw:
-            v = raw["z2_max_percent"]
-            if isinstance(v, int) and not isinstance(v, bool) and 1 <= v <= 100:
-                z2 = v
-            else:
-                user_logger.warning(f"⚠ Érvénytelen 'z2_max_percent' érték: {v!r} (1–100 közötti egész kell)")
-
-        if "zero_power_immediate" in raw:
-            v = raw["zero_power_immediate"]
-            if isinstance(v, bool):
-                zpi = v
-            else:
-                user_logger.warning(f"⚠ Érvénytelen 'zero_power_immediate' érték: {v!r} (true/false kell)")
-
-        return cls(ftp=ftp, min_watt=min_watt, max_watt=max_watt,
-                   z1_max_percent=z1, z2_max_percent=z2, zero_power_immediate=zpi)
-
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Visszaadja dict formában (JSON serializáláshoz)."""
         return dataclasses.asdict(self)
 
 
-@dataclasses.dataclass
+@dataclasses.dataclass(slots=True)
 class GlobalSettingsConfig:
     """Globális beállítások – típusbiztos, validált.
 
@@ -208,7 +165,7 @@ class GlobalSettingsConfig:
     buffer_rate_hz: int = 4
     dropout_timeout: int = 5
     logging: bool = True
-    log_directory: Optional[str] = None
+    log_directory: str | None = None
 
     def __post_init__(self) -> None:
         # minimum_samples <= buffer_seconds * buffer_rate_hz cross-validation
@@ -268,7 +225,7 @@ class GlobalSettingsConfig:
         return cls(**kwargs)
 
 
-@dataclasses.dataclass
+@dataclasses.dataclass(slots=True)
 class HeartRateZonesConfig:
     """Szívfrekvencia zóna beállítások – típusbiztos, validált.
 
@@ -281,7 +238,7 @@ class HeartRateZonesConfig:
     enabled: bool = True
     max_hr: int = 185
     resting_hr: int = 60
-    zone_mode: str = ZoneMode.HIGHER_WINS
+    zone_mode: ZoneMode = ZoneMode.HIGHER_WINS
     z1_max_percent: int = 70
     z2_max_percent: int = 80
     valid_min_hr: int = 30
@@ -341,7 +298,7 @@ class HeartRateZonesConfig:
         if "zone_mode" in raw:
             v = raw["zone_mode"]
             if v in VALID_ZONE_MODES:
-                kwargs["zone_mode"] = v
+                kwargs["zone_mode"] = ZoneMode(v)
             else:
                 valid = ", ".join(m.value for m in VALID_ZONE_MODES)
                 user_logger.warning(
@@ -351,7 +308,7 @@ class HeartRateZonesConfig:
         return cls(**kwargs)
 
 
-@dataclasses.dataclass
+@dataclasses.dataclass(slots=True)
 class BleConfig:
     """BLE kimeneti (ventilátor) beállítások – típusbiztos.
 
@@ -360,7 +317,7 @@ class BleConfig:
     A loader visszafelé kompatibilisen a régi ``"ble"`` kulcsot is elfogadja.
     """
 
-    device_name: Optional[str] = None
+    device_name: str | None = None
     scan_timeout: int = 10
     connection_timeout: int = 15
     reconnect_interval: int = 5
@@ -368,7 +325,7 @@ class BleConfig:
     command_timeout: int = 3
     service_uuid: str = "0000ffe0-0000-1000-8000-00805f9b34fb"
     characteristic_uuid: str = "0000ffe1-0000-1000-8000-00805f9b34fb"
-    pin_code: Optional[str] = "123456"
+    pin_code: str | None = "123456"
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> "BleConfig":
@@ -416,12 +373,12 @@ class BleConfig:
         return cls(**kwargs)
 
 
-@dataclasses.dataclass
+@dataclasses.dataclass(slots=True)
 class DatasourceConfig:
     """Adatforrás beállítások – típusbiztos."""
 
-    power_source: Optional[str] = DataSource.ZWIFTUDP
-    hr_source: Optional[str] = DataSource.ZWIFTUDP
+    power_source: DataSource | None = DataSource.ZWIFTUDP
+    hr_source: DataSource | None = DataSource.ZWIFTUDP
     BLE_buffer_seconds: int = 3
     BLE_minimum_samples: int = 6
     BLE_buffer_rate_hz: int = 4
@@ -440,18 +397,18 @@ class DatasourceConfig:
     ant_power_max_retries: int = 10
     ant_hr_reconnect_interval: int = 5
     ant_hr_max_retries: int = 10
-    ble_power_device_name: Optional[str] = None
+    ble_power_device_name: str | None = None
     ble_power_scan_timeout: int = 10
     ble_power_reconnect_interval: int = 5
     ble_power_max_retries: int = 10
-    ble_hr_device_name: Optional[str] = None
+    ble_hr_device_name: str | None = None
     ble_hr_scan_timeout: int = 10
     ble_hr_reconnect_interval: int = 5
     ble_hr_max_retries: int = 10
     zwift_udp_port: int = 7878
     zwift_udp_host: str = "127.0.0.1"
     zwift_auto_launch: bool = True
-    zwift_launcher_path: Optional[str] = None
+    zwift_launcher_path: str | None = None
 
     def __post_init__(self) -> None:
         # minimum_samples <= buffer_seconds * buffer_rate_hz cross-validation
@@ -484,7 +441,7 @@ class DatasourceConfig:
             if v is None:
                 kwargs[key] = None
             elif v in VALID_DATA_SOURCES:
-                kwargs[key] = v
+                kwargs[key] = DataSource(v)
             else:
                 valid = ", ".join(src.value for src in VALID_DATA_SOURCES)
                 user_logger.warning(
@@ -539,7 +496,7 @@ class DatasourceConfig:
         return cls(**kwargs)
 
 
-@dataclasses.dataclass
+@dataclasses.dataclass(slots=True)
 class HudConfig:
     """HUD beállítások – típusbiztos."""
 
@@ -549,7 +506,7 @@ class HudConfig:
     close_at_zwiftapp_exe: bool = True
     opacity: int = 92
     # Per-monitor ablak geometria: {"<screen_name>": {"x": .., "y": .., "w": .., "h": ..}}
-    window_geometry: Dict[str, Dict[str, int]] = dataclasses.field(default_factory=dict)
+    window_geometry: dict[str, dict[str, int]] = dataclasses.field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> "HudConfig":
@@ -569,20 +526,31 @@ class HudConfig:
                 user_logger.warning(f"⚠ Érvénytelen 'close_at_zwiftapp.exe' érték: {v!r} (true/false kell)")
         _from_dict_int(raw, kwargs, "opacity", 20, 100)
         if "window_geometry" in raw and isinstance(raw["window_geometry"], dict):
-            geo: Dict[str, Dict[str, int]] = {}
+            geo: dict[str, dict[str, int]] = {}
             for screen_name, rect in raw["window_geometry"].items():
+                # bool kizárva (a bool az int alosztálya!), és csak véges szám
+                # fogadható el – a json.loads a NaN-t is beengedi, amire az
+                # int() ValueError-ral az egész betöltést bedöntené.
                 if isinstance(rect, dict) and all(
-                    k in rect and isinstance(rect[k], (int, float))
+                    k in rect
+                    and isinstance(rect[k], (int, float))
+                    and not isinstance(rect[k], bool)
+                    and math.isfinite(rect[k])
                     for k in ("x", "y", "w", "h")
                 ):
                     geo[str(screen_name)] = {
                         "x": int(rect["x"]), "y": int(rect["y"]),
                         "w": int(rect["w"]), "h": int(rect["h"]),
                     }
+                else:
+                    user_logger.warning(
+                        f"⚠ Érvénytelen 'window_geometry' bejegyzés "
+                        f"({screen_name!r}) – kihagyva."
+                    )
             kwargs["window_geometry"] = geo
         return cls(**kwargs)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """JSON-kompatibilis dict (régi kulcsnévvel a kompatibilitásért)."""
         return {
             "save_hud_settings": self.save_hud_settings,
@@ -653,7 +621,7 @@ def _from_dict_nullable_str(src: dict[str, Any], dst: dict[str, Any], key: str) 
         user_logger.warning(f"⚠ Érvénytelen '{key}' érték: {v!r} (string vagy null kell)")
 
 
-@dataclasses.dataclass
+@dataclasses.dataclass(slots=True)
 class ZwiftApiConfig:
     """Zwift API polling beállítások – típusbiztos.
 
@@ -691,7 +659,7 @@ class ZwiftApiConfig:
         _from_dict_bool(raw, kwargs, "separate_window")
         return cls(**kwargs)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """JSON-kompatibilis dict."""
         return {
             "username": self.username,
@@ -705,7 +673,7 @@ class ZwiftApiConfig:
 # ALAPÉRTELMEZETT BEÁLLÍTÁSOK
 # ============================================================
 
-DEFAULT_SETTINGS: Dict[str, Any] = {
+DEFAULT_SETTINGS: dict[str, Any] = {
     "global_settings": GlobalSettingsConfig(),
     "power_zones": PowerZonesConfig(),
     "heart_rate_zones": HeartRateZonesConfig(),

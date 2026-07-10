@@ -10,12 +10,12 @@ import asyncio
 import json
 import logging
 import time
-from typing import Any, Dict, Optional, cast
+from typing import Any, cast
 
 from smart_fan_controller.config.schemas import DataSource, HeartRateZonesConfig
 from smart_fan_controller.core import is_valid_hr, is_valid_power
 
-logger = logging.getLogger("swift_fan_controller_new")
+logger = logging.getLogger("zwift_fan_controller_new")
 
 
 class ZwiftUDPInputHandler:
@@ -36,7 +36,7 @@ class ZwiftUDPInputHandler:
 
     def __init__(
         self,
-        settings: Dict[str, Any],
+        settings: dict[str, Any],
         power_queue: asyncio.Queue[float],
         hr_queue: asyncio.Queue[float],
     ) -> None:
@@ -52,6 +52,14 @@ class ZwiftUDPInputHandler:
         self.process_power: bool = ds.power_source == DataSource.ZWIFTUDP
         hr_enabled: bool = settings["heart_rate_zones"].enabled
         self.process_hr: bool = ds.hr_source == DataSource.ZWIFTUDP and hr_enabled
+
+        # Validációs határok cache-elve (a settings futás közben nem változik;
+        # konzisztens a processzorokkal, amik szintén induláskor olvassák)
+        self._min_watt: int = settings["power_zones"].min_watt
+        self._max_watt: int = settings["power_zones"].max_watt
+        hrz: HeartRateZonesConfig = settings["heart_rate_zones"]
+        self._valid_min_hr: int = hrz.valid_min_hr
+        self._valid_max_hr: int = hrz.valid_max_hr
 
         self._transport: Any = None
 
@@ -76,7 +84,7 @@ class ZwiftUDPInputHandler:
             def error_received(self, exc: Exception) -> None:
                 logger.warning(f"Zwift UDP hiba: {exc}")
 
-            def connection_lost(self, exc: Optional[Exception]) -> None:
+            def connection_lost(self, exc: Exception | None) -> None:
                 logger.info("Zwift UDP kapcsolat lezárva")
 
         try:
@@ -85,8 +93,9 @@ class ZwiftUDPInputHandler:
                 local_addr=(self.host, self.port),
             )
             try:
-                while True:
-                    await asyncio.sleep(3600)
+                # Soha be nem következő esemény: a task cancellation-ig alszik
+                # (nincs óránkénti felesleges ébredés, mint a sleep-ciklusnál)
+                await asyncio.Event().wait()
             finally:
                 transport.close()
         except asyncio.CancelledError:
@@ -108,37 +117,31 @@ class ZwiftUDPInputHandler:
         if not isinstance(data, dict):
             return
         # Pylance szűkíti dict[str, Unknown]-ra; cast → dict[str, Any]
-        pkt = cast(Dict[str, Any], data)
+        pkt = cast(dict[str, Any], data)
 
         valid_any = False
 
         if self.process_power and "power" in pkt:
             p: int | float = pkt["power"]
-            min_watt = self.settings["power_zones"].min_watt
-            max_watt = self.settings["power_zones"].max_watt
-            if is_valid_power(p, min_watt, max_watt):
+            if is_valid_power(p, self._min_watt, self._max_watt):
                 try:
                     self.power_queue.put_nowait(round(p))
                     valid_any = True
                 except asyncio.QueueFull:
                     logger.debug("Zwift UDP: power queue teli, adat elvetve")
             else:
-                logger.debug(f"Zwift UDP: érvénytelen power: {p}")
+                logger.debug("Zwift UDP: érvénytelen power: %s", p)
 
         if self.process_hr and "heartrate" in pkt:
-            hrz: HeartRateZonesConfig = self.settings["heart_rate_zones"]
-            valid_min_hr: int = hrz.valid_min_hr
-            valid_max_hr: int = hrz.valid_max_hr
-
             h: int | float = pkt["heartrate"]
-            if is_valid_hr(h, valid_min_hr, valid_max_hr):
+            if is_valid_hr(h, self._valid_min_hr, self._valid_max_hr):
                 try:
                     self.hr_queue.put_nowait(round(h))
                     valid_any = True
                 except asyncio.QueueFull:
                     logger.debug("Zwift UDP: hr queue teli, adat elvetve")
             else:
-                logger.debug(f"Zwift UDP: érvénytelen heartrate: {h}")
+                logger.debug("Zwift UDP: érvénytelen heartrate: %s", h)
 
         # Ha bármilyen érvényes adatot elfogadtunk, frissítjük az időbélyeget
         if valid_any:

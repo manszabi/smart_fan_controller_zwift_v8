@@ -36,6 +36,9 @@ class ZwiftAuth:
         self._access_token: str = ""
         self._refresh_token: str = ""
         self._expires_at: float = 0.0  # Unix timestamp when access_token expires
+        # Session: TLS-kapcsolat újrahasznosítás login + token-refresh között
+        # (konzisztensen a ZwiftAPIClient-tel)
+        self._session = requests.Session()
 
     def login(self) -> None:
         """Perform initial username/password authentication."""
@@ -45,10 +48,13 @@ class ZwiftAuth:
             "username": self._username,
             "password": self._password,
         }
-        resp = requests.post(ZWIFT_AUTH_URL, data=data, timeout=15)
+        resp = self._session.post(ZWIFT_AUTH_URL, data=data, timeout=15)
         resp.raise_for_status()
         self._store_tokens(resp.json())
         log.debug("Bejelentkezés sikeres / Login successful")
+
+    def close(self) -> None:
+        self._session.close()
 
     def ensure_valid_token(self) -> None:
         """Refresh the access token proactively if it is close to expiry."""
@@ -68,11 +74,13 @@ class ZwiftAuth:
                 "grant_type": "refresh_token",
                 "refresh_token": self._refresh_token,
             }
-            resp = requests.post(ZWIFT_AUTH_URL, data=data, timeout=15)
+            resp = self._session.post(ZWIFT_AUTH_URL, data=data, timeout=15)
             resp.raise_for_status()
             self._store_tokens(resp.json())
             log.debug("Token frissítve / Token refreshed")
-        except requests.RequestException as exc:  # broad but not BaseException
+        except (requests.RequestException, ValueError) as exc:
+            # ValueError: token nélküli refresh-válasz (_store_tokens) – erre
+            # is újra-bejelentkezés a helyes út, nem végtelen refresh-próba
             log.warning(
                 f"⚠️  Token frissítés sikertelen, újra bejelentkezés / "
                 f"Token refresh failed, re-logging in: {exc}"
@@ -80,7 +88,13 @@ class ZwiftAuth:
             self.login()
 
     def _store_tokens(self, payload: dict[str, Any]) -> None:
-        self._access_token = payload["access_token"]
+        token = payload.get("access_token")
+        if not token:
+            # Pl. Keycloak hibaválasz ({"error": "invalid_grant"}) – tiszta,
+            # értelmezhető hibát adunk a nyers KeyError helyett
+            detail = payload.get("error_description") or payload.get("error") or "?"
+            raise ValueError(f"Zwift auth válaszból hiányzik az access_token ({detail})")
+        self._access_token = token
         self._refresh_token = payload.get("refresh_token", "")
         expires_in = int(payload.get("expires_in", 3600))
         self._expires_at = time.time() + expires_in

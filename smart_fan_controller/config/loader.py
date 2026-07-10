@@ -20,7 +20,7 @@ import json
 import logging
 import os
 import shutil
-from typing import Any, Dict
+from typing import Any
 
 from .schemas import (
     DEFAULT_SETTINGS,
@@ -38,13 +38,19 @@ from .schemas import (
 # A felhasználói üzeneteket a "user" nevű logger kezeli; lásd schemas.py.
 user_logger = logging.getLogger("user")
 
+# A settings.json érvényes felső szintű szekciói ("ble": elavult alias)
+_KNOWN_SECTIONS = frozenset((
+    "global_settings", "power_zones", "heart_rate_zones",
+    "ble_fan", "ble", "datasource", "hud", "zwift_api",
+))
+
 
 # ============================================================
 # BEÁLLÍTÁSOK BETÖLTÉSE
 # ============================================================
 
 
-def load_settings(settings_file: str = "settings.json") -> Dict[str, Any]:
+def load_settings(settings_file: str = "settings.json") -> dict[str, Any]:
     """Betölti és validálja a JSON beállítási fájlt.
 
     Logika:
@@ -92,6 +98,28 @@ def load_settings(settings_file: str = "settings.json") -> Dict[str, Any]:
     except OSError as exc:
         user_logger.warning(f"⚠ '{settings_file}' beolvasási hiba: {exc}. Alapértelmezés használata.")
         return settings
+
+    # Érvényes JSON, de nem objektum (pl. lista vagy string a fájl tetején) →
+    # ugyanúgy kezeljük, mint a szintaxis-hibát: backup + teljes default.
+    if not isinstance(loaded, dict):
+        backup = _backup_incorrect_settings(settings_file)
+        msg = (
+            f"⚠ '{settings_file}' tartalma nem beállítás-objektum "
+            f"(hanem {type(loaded).__name__}). Alapértelmezés használata."
+        )
+        if backup:
+            msg += f" A fájl elmentve ide: '{backup}'."
+        user_logger.warning(msg)
+        return settings
+
+    # Elgépelt / ismeretlen szekciónevek jelzése (pl. "power_zone" a
+    # "power_zones" helyett csendben elveszne)
+    unknown_sections = set(loaded) - _KNOWN_SECTIONS
+    if unknown_sections:
+        user_logger.warning(
+            f"⚠ Ismeretlen szekció(k) a '{settings_file}' fájlban: "
+            f"{', '.join(sorted(unknown_sections))} – figyelmen kívül hagyva."
+        )
 
     # --- Szekciók betöltése dataclass from_dict()-tel ---
     if isinstance(loaded.get("global_settings"), dict):
@@ -159,7 +187,7 @@ def load_settings(settings_file: str = "settings.json") -> Dict[str, Any]:
     return settings
 
 
-def _settings_to_serializable(settings: Dict[str, Any]) -> Dict[str, Any]:
+def _settings_to_serializable(settings: dict[str, Any]) -> dict[str, Any]:
     """Settings dict-et JSON-serializálható formára alakít (dataclass → dict)."""
     out = {}
     for k, v in settings.items():
@@ -239,6 +267,26 @@ def _backup_incorrect_settings(settings_path: str) -> str | None:
         return None
 
 
+def _write_json_atomic(path: str, data: dict[str, Any]) -> None:
+    """JSON kiírása atomikusan: temp fájl + os.replace (Windows-on is atomikus).
+
+    Közvetlen felülírásnál egy írás közbeni leállás (áramszünet, kill)
+    csonka settings.json-t hagyna hátra – az összes felhasználói beállítás
+    elveszne. Így vagy a régi, vagy az új teljes tartalom marad meg."""
+    tmp_path = path + ".tmp"
+    try:
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+        os.replace(tmp_path, path)
+    finally:
+        # Hibás írás után ne maradjon szemét temp fájl
+        if os.path.exists(tmp_path):
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
+
+
 def save_zwift_api_credentials(settings_file: str, username: str, password: str) -> bool:
     """Csak a "zwift_api" szekció username/password mezőit frissíti a settings.json-ban.
 
@@ -271,8 +319,7 @@ def save_zwift_api_credentials(settings_file: str, username: str, password: str)
     data["zwift_api"] = section
 
     try:
-        with open(settings_file, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
+        _write_json_atomic(settings_file, data)
         return True
     except OSError as exc:
         user_logger.warning(f"⚠ Zwift API adatok mentési hiba (írás): {exc}")
@@ -309,8 +356,7 @@ def save_hud_settings_only(settings_file: str, hud_config: HudConfig) -> bool:
     data["hud"] = hud_config.to_dict()
 
     try:
-        with open(settings_file, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
+        _write_json_atomic(settings_file, data)
         return True
     except OSError as exc:
         user_logger.warning(f"⚠ HUD beállítások mentési hiba (írás): {exc}")
@@ -322,7 +368,7 @@ def save_hud_settings_only(settings_file: str, hud_config: HudConfig) -> bool:
 # ============================================================
 
 
-def get_effective_zone_mode(settings: Dict[str, Any]) -> ZoneMode:
+def get_effective_zone_mode(settings: dict[str, Any]) -> ZoneMode:
     """Meghatározza az effektív zóna módot a beállítások alapján.
 
     Ha a HR nincs engedélyezve (enabled=False), mindig POWER_ONLY-t ad vissza,
@@ -340,7 +386,7 @@ def get_effective_zone_mode(settings: Dict[str, Any]) -> ZoneMode:
     return hrz.zone_mode
 
 
-def _resolve_buffer_settings(settings: Dict[str, Any], role: str) -> Dict[str, Any]:
+def _resolve_buffer_settings(settings: dict[str, Any], role: str) -> dict[str, Any]:
     """
     Visszaadja a megfelelő buffer/dropout paramétereket a megadott szerephez.
 

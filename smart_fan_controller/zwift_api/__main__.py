@@ -38,7 +38,7 @@ from .runtime import (
     run_polling_loop,
 )
 
-__version__ = "1.1.0"
+__version__ = "1.2.0"
 
 
 def _default_settings_path() -> str:
@@ -201,8 +201,11 @@ def main(argv: list[str] | None = None) -> int:
     except requests.exceptions.HTTPError as exc:
         log.error(f"❌ Bejelentkezés sikertelen / Login failed: {exc}")
         return 1
-    except requests.exceptions.ConnectionError as exc:
-        log.error(f"❌ Hálózati hiba / Network error: {exc}")
+    except (requests.RequestException, ValueError) as exc:
+        # RequestException lefedi a ConnectionError/Timeout/JSONDecodeError
+        # eseteket is (pl. captive portal HTML-t ad 200-zal); a ValueError a
+        # token nélküli auth-válasz. Tiszta hibaüzenet traceback helyett.
+        log.error(f"❌ Bejelentkezési hiba / Login error: {exc}")
         return 1
 
     client = ZwiftAPIClient(auth, debug=args.debug)
@@ -247,6 +250,7 @@ def main(argv: list[str] | None = None) -> int:
         stop_event.set()
         broadcaster.close()
         client.close()
+        auth.close()
 
     return 0
 
