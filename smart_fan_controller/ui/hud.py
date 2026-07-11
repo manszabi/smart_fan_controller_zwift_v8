@@ -6,6 +6,8 @@ This module contains the visual components for the LCARS-style HUD:
   - LCARSHeaderWidget: Top header with title and version badge
   - LCARSFooterWidget: Bottom footer with LCARS styling
   - LCARSSidebarWidget: Colored sidebar segments
+  - LCARSZoneBarWidget: Segmented zone indicator bar (STANDBY..ZONE 3)
+  - LCARSMeterWidget: Thin rounded meter bar (power / heart-rate fill)
   - LCARSSoundManager: Sound effect playback (LCARS beeps/tones)
   - HUDWindow: Main floating HUD window with telemetry display
 """
@@ -71,12 +73,12 @@ class LCARSHeaderWidget(QWidget):
         self._font_family = font_family
         self._scale = scale
         self._path_cache_key: tuple[int, float, int] | None = None
-        self._path_cache: tuple[QPainterPath, QPainterPath] = (
-            QPainterPath(), QPainterPath()
-        )
+        self._path_cache: QPainterPath = QPainterPath()
         self.setFixedHeight(50)
+        # Átlátszó háttér: a lekerekített alap-panelt a HUDWindow festi,
+        # így az ablak sarkai valóban átlátszóak (lebegő kártya hatás)
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self.setStyleSheet(f"background-color: {HUDWindow.BG};")
+        self.setStyleSheet("background-color: transparent;")
 
     def set_scale(self, s: float) -> None:
         self._scale = s
@@ -97,10 +99,14 @@ class LCARSHeaderWidget(QWidget):
 
         cache_key = (w, s, ch)
         if self._path_cache_key != cache_key:
-            # Fő narancssárga sáv ívvel + lekerekített bal felső sarok
+            # Fő narancssárga sáv ívvel + lekerekített bal ÉS jobb felső sarok
+            # (a jobb felső ív az ablak lekerekítését követi, hogy a sáv ne
+            # lógjon ki az átlátszó sarokba)
+            rr = min(corner_r, bar_h)
             path = QPainterPath()
             path.moveTo(corner_r, 0)
-            path.lineTo(w - 6, 0)
+            path.lineTo(w - 6 - rr, 0)
+            path.arcTo(QRectF(w - 6 - 2 * rr, 0, 2 * rr, 2 * rr), 90, -90)
             path.lineTo(w - 6, bar_h)
             # Belső könyök ív – középpont (sw+R, bar_h+R), 90°→180°
             path.arcTo(QRectF(sw, bar_h, 2 * R, 2 * R), 90, 90)
@@ -110,17 +116,10 @@ class LCARSHeaderWidget(QWidget):
             path.arcTo(QRectF(0, 0, 2 * corner_r, 2 * corner_r), 180, -90)
             path.closeSubpath()
 
-            # Bal felső sarok háttér kitöltés (ív mögött)
-            bg_path = QPainterPath()
-            bg_path.addRect(QRectF(0, 0, corner_r, corner_r))
-            bg_path -= path
-
-            self._path_cache = (path, bg_path)
+            self._path_cache = path
             self._path_cache_key = cache_key
 
-        path, bg_path = self._path_cache
-        p.fillPath(path, _qbrush(HUDWindow.LCARS_ORANGE))
-        p.fillPath(bg_path, _qbrush(HUDWindow.BG))
+        p.fillPath(self._path_cache, _qbrush(HUDWindow.LCARS_ORANGE))
 
         # Cím szöveg
         title_size = max(8, int(12 * s))
@@ -129,15 +128,16 @@ class LCARSHeaderWidget(QWidget):
         p.drawText(QRectF(sw + R, bar_h, w - 6 - sw - R, ch - bar_h),
                     Qt.AlignmentFlag.AlignCenter, "ZWIFT FAN CTRL")
 
-        # Badge (magenta téglalap + verzió)
+        # Badge (lekerekített magenta pill + verzió)
         badge_w = max(40, int(62 * s))
-        p.fillRect(int(w - badge_w - 8), 1, badge_w, bar_h - 3,
-                    _qcolor(HUDWindow.LCARS_MAGENTA))
+        badge_rect = QRectF(w - badge_w - 8, 1, badge_w, bar_h - 3)
+        badge_path = QPainterPath()
+        badge_path.addRoundedRect(badge_rect, (bar_h - 3) / 2, (bar_h - 3) / 2)
+        p.fillPath(badge_path, _qbrush(HUDWindow.LCARS_MAGENTA))
         ver_size = max(6, int(7 * s))
         p.setFont(QFont(self._font_family, ver_size))
         p.setPen(_qcolor("#FFFFFF"))
-        p.drawText(int(w - badge_w - 8), 1, badge_w, bar_h - 3,
-                    Qt.AlignmentFlag.AlignCenter, f"v{__version__}")
+        p.drawText(badge_rect, Qt.AlignmentFlag.AlignCenter, f"v{__version__}")
 
         p.end()
 
@@ -153,8 +153,9 @@ class LCARSFooterWidget(QWidget):
         self._path_cache: tuple[Any, ...] = ()
         self._opacity_tw_cache: tuple[int, int] | None = None  # (fontméret, szélesség)
         self.setFixedHeight(60)
+        # Átlátszó háttér – a lekerekített alap-panelt a HUDWindow festi
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self.setStyleSheet(f"background-color: {HUDWindow.BG};")
+        self.setStyleSheet("background-color: transparent;")
         # Az opacity vezérlők a felső, ívek közötti sávba kerülnek
         self._overlay = QHBoxLayout(self)
         self._overlay.setSpacing(4)
@@ -243,11 +244,6 @@ class LCARSFooterWidget(QWidget):
             path.lineTo(0, 0)
             path.closeSubpath()
 
-            # Bal alsó sarok háttér kitöltés (ív mögött)
-            bg_path = QPainterPath()
-            bg_path.addRect(QRectF(0, fh - corner_r, corner_r, corner_r))
-            bg_path -= path
-
             # Szegmensek – középen a lila, tőle balra a kék alapsáv, jobbra a tan.
             # A tan közvetlenül a lila után kezdődik (nincs kék sliver).
             right_edge = w - 6                       # a sáv jobb széle
@@ -273,12 +269,6 @@ class LCARSFooterWidget(QWidget):
                                 2 * corner_r, 2 * corner_r), 270, 90)
             rpath.closeSubpath()
 
-            # Jobb alsó sarok háttér kitöltés (ív mögött) – a bal oldal tükörképe
-            bg_path_r = QPainterPath()
-            bg_path_r.addRect(QRectF(right_edge - corner_r, fh - corner_r,
-                                     corner_r, corner_r))
-            bg_path_r -= rpath
-
             # OPACITY sárga doboz – a bal ív KONCENTRIKUS a kék könyök ívével
             # (azonos középpont, R-6 sugár), egyenletes 6px réssel; teteje a
             # könyök tetejével, bal széle a státuszsorok bal oldalával egy vonalban.
@@ -303,20 +293,18 @@ class LCARSFooterWidget(QWidget):
             obox.closeSubpath()
 
             self._path_cache = (
-                path, bg_path, rpath, bg_path_r, obox,
+                path, rpath, obox,
                 purple_left, purple_w, box_top, box_bottom, box_right,
             )
             self._path_cache_key = cache_key
 
-        (path, bg_path, rpath, bg_path_r, obox,
+        (path, rpath, obox,
          purple_left, purple_w, box_top, box_bottom, box_right) = self._path_cache
 
         p.fillPath(path, _qbrush(HUDWindow.LCARS_BLUE))
-        p.fillPath(bg_path, _qbrush(HUDWindow.BG))
         p.fillRect(purple_left, bar_top, purple_w, bar_h,
                     _qcolor(HUDWindow.LCARS_PURPLE))
         p.fillPath(rpath, _qbrush(HUDWindow.LCARS_TAN))
-        p.fillPath(bg_path_r, _qbrush(HUDWindow.BG))
         p.fillPath(obox, _qbrush(HUDWindow.LCARS_GOLD))
 
         # OPACITY felirat a doboz flat (íven túli) részén, középre
@@ -338,7 +326,7 @@ class LCARSSidebarWidget(QWidget):
         self._scale = scale
         self.setFixedWidth(max(10, int(20 * scale)))
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self.setStyleSheet(f"background-color: {HUDWindow.BG};")
+        self.setStyleSheet("background-color: transparent;")
 
     def set_scale(self, s: float) -> None:
         self._scale = s
@@ -359,6 +347,100 @@ class LCARSSidebarWidget(QWidget):
             y = i * seg_h
             bottom = h if i == n - 1 else y + seg_h
             p.fillRect(0, y + gap, sw, bottom - gap - y - gap, _qcolor(c))
+        p.end()
+
+
+class LCARSZoneBarWidget(QWidget):
+    """Szegmentált zóna sáv – a 4 zóna (STANDBY..ZONE 3) modern kijelzése.
+
+    A szegmensek az aktuális zónáig világítanak a zóna színével
+    (jelerősség-jelző stílus); zóna nélkül csak a halvány track látszik.
+    """
+
+    SEGMENTS = 4
+
+    def __init__(self, parent: QWidget, scale: float = 1.0) -> None:
+        super().__init__(parent)
+        self._scale = scale
+        self._zone: int | None = None
+        self.setFixedHeight(max(6, int(8 * scale)))
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setStyleSheet("background-color: transparent;")
+
+    def set_scale(self, s: float) -> None:
+        self._scale = s
+        self.setFixedHeight(max(6, int(8 * s)))
+        self.update()
+
+    def set_zone(self, zone: int | None) -> None:
+        if zone != self._zone:
+            self._zone = zone
+            self.update()
+
+    def paintEvent(self, event: Any) -> None:
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        w, h = self.width(), self.height()
+        n = self.SEGMENTS
+        gap = max(2, int(3 * self._scale))
+        seg_w = (w - gap * (n - 1)) / n
+        if seg_w < 2:
+            p.end()
+            return
+        r = h / 2
+        for i in range(n):
+            x = i * (seg_w + gap)
+            if self._zone is not None and i <= self._zone:
+                color = HUDWindow.ZONE_COLORS.get(
+                    self._zone, HUDWindow.LCARS_CYAN
+                )
+            else:
+                color = HUDWindow._VAL_BG
+            seg = QPainterPath()
+            seg.addRoundedRect(QRectF(x, 0, seg_w, h), r, r)
+            p.fillPath(seg, _qbrush(color))
+        p.end()
+
+
+class LCARSMeterWidget(QWidget):
+    """Vékony, lekerekített kitöltés-sáv (power / pulzus vizualizáció)."""
+
+    def __init__(self, parent: QWidget, scale: float = 1.0) -> None:
+        super().__init__(parent)
+        self._scale = scale
+        self._fraction: float | None = None
+        self._color: str = HUDWindow.TEXT_DIM
+        self.setFixedHeight(max(4, int(5 * scale)))
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setStyleSheet("background-color: transparent;")
+
+    def set_scale(self, s: float) -> None:
+        self._scale = s
+        self.setFixedHeight(max(4, int(5 * s)))
+        self.update()
+
+    def set_value(self, fraction: float | None, color: str) -> None:
+        """Kitöltés frissítése – fraction: 0.0–1.0 vagy None (üres track)."""
+        if fraction is not None:
+            fraction = max(0.0, min(1.0, fraction))
+        if fraction != self._fraction or color != self._color:
+            self._fraction = fraction
+            self._color = color
+            self.update()
+
+    def paintEvent(self, event: Any) -> None:
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        w, h = self.width(), self.height()
+        r = h / 2
+        track = QPainterPath()
+        track.addRoundedRect(QRectF(0, 0, w, h), r, r)
+        p.fillPath(track, _qbrush(HUDWindow._VAL_BG))
+        if self._fraction is not None and self._fraction > 0:
+            fill_w = max(float(h), w * self._fraction)
+            fill = QPainterPath()
+            fill.addRoundedRect(QRectF(0, 0, fill_w, h), r, r)
+            p.fillPath(fill, _qbrush(self._color))
         p.end()
 
 
@@ -570,13 +652,15 @@ class HUDWindow(QWidget):
             | Qt.WindowType.WindowStaysOnTopHint
             | Qt.WindowType.Tool
         )
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)
+        # Átlátszó ablakháttér: a lekerekített alap-panelt a paintEvent festi,
+        # így a sarkok valóban átlátszóak (modern, lebegő kártya megjelenés)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         # hud_cfg-t fentebb már lekértük (self._ctrl is controller)
         self._initial_opacity = max(20, min(100, hud_cfg.opacity))
         self.setWindowOpacity(self._initial_opacity / 100.0)
         self.setGeometry(20, 20, self._base_width, self._base_height)
         self.setMinimumSize(self.MIN_W, self.MIN_H)
-        self.setStyleSheet(f"background-color: {self.BG};")
+        self.setStyleSheet("background-color: transparent;")
 
         # ───────── FONT ─────────
         self._try_load_lcars_font()
@@ -593,7 +677,7 @@ class HUDWindow(QWidget):
 
         # Body (sidebar + content)
         body = QWidget(self)
-        body.setStyleSheet(f"background-color: {self.BG};")
+        body.setStyleSheet("background-color: transparent;")
         body_layout = QHBoxLayout(body)
         body_layout.setContentsMargins(0, 0, 0, 0)
         body_layout.setSpacing(0)
@@ -635,6 +719,12 @@ class HUDWindow(QWidget):
         self._register_scalable(self._lbl_zone, 19)
         content_layout.addWidget(self._lbl_zone)
 
+        # Zóna szegmens-sáv a zóna kijelző alatt
+        content_layout.addSpacing(3)
+        self._zone_bar = LCARSZoneBarWidget(content, self._scale)
+        content_layout.addWidget(self._zone_bar)
+        content_layout.addSpacing(3)
+
         # ───────── ÁLLAPOT CSÍK (tiles) ─────────
         tile_frame = QWidget(content)
         tile_frame.setStyleSheet(f"background-color: {self.PANEL_BG};")
@@ -653,8 +743,12 @@ class HUDWindow(QWidget):
         # ───────── TELEMETRIA SOROK ─────────
         self._lbl_power = self._make_row(content_layout, "POWER", "– – –",
                                           self.LCARS_GOLD, self.LCARS_TAN)
+        self._power_meter = LCARSMeterWidget(content, self._scale)
+        content_layout.addWidget(self._power_meter)
         self._lbl_hr = self._make_row(content_layout, "HEART RATE", "– – –",
                                        self.LCARS_RED, self.LCARS_ORANGE)
+        self._hr_meter = LCARSMeterWidget(content, self._scale)
+        content_layout.addWidget(self._hr_meter)
 
         # ───────── SZEPARÁTOR ─────────
         sep = QFrame(content)
@@ -697,11 +791,14 @@ class HUDWindow(QWidget):
         self._alpha_slider.setValue(self._initial_opacity)
         self._alpha_slider.setStyleSheet(
             f"QSlider::groove:horizontal {{"
-            f"  background: #002244; height: 14px; border-radius: 2px;"
+            f"  background: #002244; height: 8px; border-radius: 4px;"
+            f"}}"
+            f"QSlider::sub-page:horizontal {{"
+            f"  background: {self.LCARS_CYAN}; border-radius: 4px;"
             f"}}"
             f"QSlider::handle:horizontal {{"
-            f"  background: {self.LCARS_CYAN}; width: 16px; margin: -2px 0;"
-            f"  border-radius: 3px;"
+            f"  background: #EAF6FF; width: 14px; margin: -3px 0;"
+            f"  border-radius: 7px;"
             f"}}"
         )
         self._alpha_slider.valueChanged.connect(self._on_alpha_change)
@@ -869,11 +966,16 @@ class HUDWindow(QWidget):
         lbl = QLabel(text)
         lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         lbl.setProperty("hudState", "off")
+        # Kikapcsolva: halvány körvonalas pill; bekapcsolva: accent kitöltés
         lbl.setStyleSheet(
-            f'QLabel {{ background-color: {self.TEXT_DIM}; color: #000a14; '
-            f'padding: 2px 5px; border-radius: 4px; }}'
-            f'QLabel[hudState="on"] {{ background-color: {accent}; }}'
-            f'QLabel[hudState="flash"] {{ background-color: {self._lighten(accent)}; }}'
+            f'QLabel {{ background-color: transparent; color: {self.TEXT_DIM}; '
+            f'border: 1px solid {self.BORDER_GLOW}; '
+            f'padding: 1px 4px; border-radius: 4px; }}'
+            f'QLabel[hudState="on"] {{ background-color: {accent}; '
+            f'color: #000a14; border-color: {accent}; }}'
+            f'QLabel[hudState="flash"] {{ '
+            f'background-color: {self._lighten(accent)}; '
+            f'color: #000a14; border-color: {self._lighten(accent)}; }}'
         )
         # Ne vágódjon le a felirata (Minimum), és ne nyomódjon össze (Fixed)
         lbl.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
@@ -914,6 +1016,20 @@ class HUDWindow(QWidget):
 
         layout.addWidget(row)
         return val_lbl
+
+    # ────────── ALAP PANEL (lekerekített kártya) ──────────
+
+    def paintEvent(self, event: Any) -> None:
+        """A lekerekített alap-panel festése – a sugár a fejléc/lábléc
+        corner_r értékével azonos, így az LCARS ívek pontosan a kártya
+        kontúrját követik; a sarkokon kívüli terület átlátszó."""
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        radius = max(12, int(18 * self._scale))
+        card = QPainterPath()
+        card.addRoundedRect(QRectF(self.rect()), radius, radius)
+        p.fillPath(card, _qbrush(self.BG))
+        p.end()
 
     # ────────── DRAG / RESIZE ──────────
 
@@ -1140,6 +1256,7 @@ class HUDWindow(QWidget):
                 )
 
                 self._update_label(self._lbl_zone, zone_txt, zone_color)
+                self._zone_bar.set_zone(zone)
 
                 # Zónaváltás hang
                 if zone is not None and zone != self._prev_zone and self._prev_zone is not None:
@@ -1168,6 +1285,22 @@ class HUDWindow(QWidget):
                     power_color,
                 )
 
+                # Power meter – kitöltés az FTP-hez képest, szín a power-zóna
+                # küszöbök szerint (a kombinált zónától függetlenül)
+                pz = settings["power_zones"]
+                if power is not None and pz.ftp > 0:
+                    z1_thr = pz.ftp * pz.z1_max_percent / 100.0
+                    z2_thr = pz.ftp * pz.z2_max_percent / 100.0
+                    if power <= z1_thr:
+                        m_color = self.ZONE_COLORS[1]
+                    elif power <= z2_thr:
+                        m_color = self.ZONE_COLORS[2]
+                    else:
+                        m_color = self.ZONE_COLORS[3]
+                    self._power_meter.set_value(power / (pz.ftp * 1.25), m_color)
+                else:
+                    self._power_meter.set_value(None, self.TEXT_DIM)
+
                 # HR – flash ha változott
                 if hr is not None and hr != self._prev_hr:
                     self._flash_hr = 2
@@ -1184,6 +1317,21 @@ class HUDWindow(QWidget):
                     "– – –" if hr is None else f"{hr:.0f} BPM",
                     hr_color,
                 )
+
+                # HR meter – kitöltés a nyugalmi és max pulzus között,
+                # szín a HR-zóna küszöbök (max_hr százalék) szerint
+                hz = settings["heart_rate_zones"]
+                if hr is not None and hz.max_hr > hz.resting_hr:
+                    hr_frac = (hr - hz.resting_hr) / (hz.max_hr - hz.resting_hr)
+                    if hr <= hz.max_hr * hz.z1_max_percent / 100.0:
+                        m_color = self.ZONE_COLORS[1]
+                    elif hr <= hz.max_hr * hz.z2_max_percent / 100.0:
+                        m_color = self.ZONE_COLORS[2]
+                    else:
+                        m_color = self.ZONE_COLORS[3]
+                    self._hr_meter.set_value(hr_frac, m_color)
+                else:
+                    self._hr_meter.set_value(None, self.TEXT_DIM)
 
             # BLE fan – villogás OFFLINE/PIN FAIL állapotoknál
             # Monoton számláló: a villogó sorok eltolt FÁZISBAN (nem szinkronban)
@@ -1205,8 +1353,8 @@ class HUDWindow(QWidget):
                     self._update_label(self._lbl_ble, "OFFLINE", c)
                     ble_status = "OFFLINE"
             else:
-                c = self._lighten(self.TEXT_DIM) if flash_white else self.TEXT_DIM
-                self._update_label(self._lbl_ble, "DISABLED", c)
+                # Nem hibaállapot – nyugodt, statikus halvány kijelzés
+                self._update_label(self._lbl_ble, "DISABLED", self.TEXT_DIM)
 
             # BLE fan hangeffekt
             if self._prev_ble_status is not None and ble_status != self._prev_ble_status:
@@ -1223,8 +1371,7 @@ class HUDWindow(QWidget):
             flash_white = (_ft + 1) % 4 < 2      # BLE SENS fázis
 
             if not power_ble and not hr_ble:
-                c = self._lighten(self.TEXT_DIM) if flash_white else self.TEXT_DIM
-                self._update_label(self._lbl_ble_sens, "– – –", c)
+                self._update_label(self._lbl_ble_sens, "– – –", self.TEXT_DIM)
             else:
                 ble = getattr(self._ctrl, "_ble_sensor_handler", None)
                 if ble is not None:
@@ -1267,8 +1414,7 @@ class HUDWindow(QWidget):
             flash_white = (_ft + 2) % 4 < 2      # ANT+ fázis
 
             if not power_ant and not hr_ant:
-                c = self._lighten(self.TEXT_DIM) if flash_white else self.TEXT_DIM
-                self._update_label(self._lbl_ant, "– – –", c)
+                self._update_label(self._lbl_ant, "– – –", self.TEXT_DIM)
             elif ant is not None:
                 power_ok = (
                     power_ant
@@ -1306,8 +1452,7 @@ class HUDWindow(QWidget):
                         self._sound.play("sensor_dropout")
                 self._prev_ant_status = ant_status
             else:
-                c = self._lighten(self.TEXT_DIM) if flash_white else self.TEXT_DIM
-                self._update_label(self._lbl_ant, "– – –", c)
+                self._update_label(self._lbl_ant, "– – –", self.TEXT_DIM)
 
             # Zwift
             zwift = getattr(self._ctrl, "_zwift_udp", None)
@@ -1337,11 +1482,9 @@ class HUDWindow(QWidget):
                         self._sound.play("zwift_disconnect")
                 self._prev_zwift_status = zwift_status
             else:
-                c = self._lighten(self.TEXT_DIM) if flash_white else self.TEXT_DIM
-                self._update_label(self._lbl_zwift_udp, "– – –", c)
+                self._update_label(self._lbl_zwift_udp, "– – –", self.TEXT_DIM)
 
             # Last TX
-            flash_white = (_ft + 1) % 4 < 2      # LAST TX fázis
             if ble_fan is not None and getattr(ble_fan, "last_sent_time", 0) > 0:
                 cur_sent_time = ble_fan.last_sent_time
                 ago = now - cur_sent_time
@@ -1352,11 +1495,9 @@ class HUDWindow(QWidget):
                     self._sound.play("fan_tx")
                 self._prev_last_sent_time = cur_sent_time
             else:
-                c = self._lighten(self.TEXT_DIM) if flash_white else self.TEXT_DIM
-                self._update_label(self._lbl_last_sent, "– – –", c)
+                self._update_label(self._lbl_last_sent, "– – –", self.TEXT_DIM)
 
             # Cooldown – a snapshot-ot a tile frissítése is újrahasznosítja
-            flash_white = (_ft + 2) % 4 < 2      # COOLDOWN fázis
             cd_active = False
             if cool is not None:
                 cd_active, remaining = cool.snapshot()
@@ -1365,11 +1506,9 @@ class HUDWindow(QWidget):
                         self._lbl_cool, f"{remaining:.0f}s", self.LCARS_GOLD
                     )
                 else:
-                    c = self._lighten(self.TEXT_DIM) if flash_white else self.TEXT_DIM
-                    self._update_label(self._lbl_cool, "INACTIVE", c)
+                    self._update_label(self._lbl_cool, "INACTIVE", self.TEXT_DIM)
             else:
-                c = self._lighten(self.TEXT_DIM) if flash_white else self.TEXT_DIM
-                self._update_label(self._lbl_cool, "– – –", c)
+                self._update_label(self._lbl_cool, "– – –", self.TEXT_DIM)
 
             # ── Állapot csík frissítése (aktív = villogó háttér) ──
             def _tile_state(active: bool, phase: int) -> str:
@@ -1451,6 +1590,9 @@ class HUDWindow(QWidget):
         self._header.set_scale(s)
         self._footer.set_scale(s)
         self._sidebar.set_scale(s)
+        self._zone_bar.set_scale(s)
+        self._power_meter.set_scale(s)
+        self._hr_meter.set_scale(s)
         # A szöveges label-ek betűmérete és fix szélessége is skálázódik
         for lbl, base_pt, base_fw, bold in self._scalable_texts:
             self._apply_label_scale(lbl, base_pt, base_fw, bold)
