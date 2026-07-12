@@ -65,6 +65,10 @@ class ZwiftUDPInputHandler:
 
         # HUD számára: utolsó érvényes csomag ideje
         self.last_packet_time: float = 0.0
+        # Per-metrika időbélyegek – a HUD a BLE/ANT handlerekkel konzisztens
+        # P:OK/FAIL ill. HR:OK/FAIL kijelzéséhez olvassa őket
+        self.power_lastdata: float = 0.0
+        self.hr_lastdata: float = 0.0
 
     async def run(self) -> None:
         """A Zwift UDP fogadó fő korrutinja – asyncio DatagramProtocol-t indít."""
@@ -127,6 +131,7 @@ class ZwiftUDPInputHandler:
                 try:
                     self.power_queue.put_nowait(round(p))
                     valid_any = True
+                    self.power_lastdata = time.monotonic()
                 except asyncio.QueueFull:
                     logger.debug("Zwift UDP: power queue teli, adat elvetve")
             else:
@@ -138,6 +143,7 @@ class ZwiftUDPInputHandler:
                 try:
                     self.hr_queue.put_nowait(round(h))
                     valid_any = True
+                    self.hr_lastdata = time.monotonic()
                 except asyncio.QueueFull:
                     logger.debug("Zwift UDP: hr queue teli, adat elvetve")
             else:

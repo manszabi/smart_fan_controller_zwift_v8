@@ -12,7 +12,7 @@ A vezérlőpanelen állítható:
   - Jel be/ki forrásonként (dropout / FAIL / NO SIGNAL tesztelése)
   - HIGHER WINS zóna mód be/ki
   - BLE ventilátor engedélyezés és kapcsolódás (DISABLED/OFFLINE/ONLINE)
-  - ZRO IMM / ZHR IMM tile-ok, cooldown szimuláció
+  - ZPO IMM / ZHR IMM tile-ok, cooldown szimuláció
 
 Indítás a projekt gyökeréből vagy bárhonnan:
     python hud_test/run_hud_test.py
@@ -78,10 +78,12 @@ class FakeSensorHandler:
 
 
 class FakeZwiftUdp:
-    """Zwift UDP handler – a HUD a last_packet_time-ot olvassa."""
+    """Zwift UDP handler – a HUD a per-metrika időbélyegeket olvassa."""
 
     def __init__(self) -> None:
         self.last_packet_time = 0.0
+        self.power_lastdata = 0.0
+        self.hr_lastdata = 0.0
 
 
 class FakeCooldown:
@@ -200,7 +202,7 @@ class HudTestPanel(QWidget):
         self.chk_higher_wins = QCheckBox("HIGHER WINS (ki = power only)")
         self.chk_higher_wins.setChecked(True)
         f_zone.addRow(self.chk_higher_wins)
-        self.chk_zero_pwr = QCheckBox("ZRO IMM (zero_power_immediate)")
+        self.chk_zero_pwr = QCheckBox("ZPO IMM (zero_power_immediate)")
         f_zone.addRow(self.chk_zero_pwr)
         self.chk_zero_hr = QCheckBox("ZHR IMM (zero_hr_immediate)")
         f_zone.addRow(self.chk_zero_hr)
@@ -335,11 +337,15 @@ class HudTestPanel(QWidget):
                 ctrl._ble_sensor_handler.power_lastdata = now
             elif ds.power_source == DataSource.ANTPLUS:
                 ctrl._antplus_handler.power_lastdata = now
+            elif ds.power_source == DataSource.ZWIFTUDP:
+                ctrl._zwift_udp.power_lastdata = now
         if hr_ok:
             if ds.hr_source == DataSource.BLE:
                 ctrl._ble_sensor_handler.hr_lastdata = now
             elif ds.hr_source == DataSource.ANTPLUS:
                 ctrl._antplus_handler.hr_lastdata = now
+            elif ds.hr_source == DataSource.ZWIFTUDP:
+                ctrl._zwift_udp.hr_lastdata = now
         if (power_ok and ds.power_source == DataSource.ZWIFTUDP) or (
             hr_ok and ds.hr_source == DataSource.ZWIFTUDP
         ):

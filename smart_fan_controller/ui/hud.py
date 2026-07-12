@@ -228,22 +228,18 @@ class LCARSFooterWidget(QWidget):
         corner_r = max(12, int(18 * s))
         fs = max(7, int(9 * s))
 
+        # A teljes footer festés az ablak-kártya lekerekített ALSÓ sarkaira
+        # vágva – így az egymásra festett sávok (kék alap a tan íve alatt)
+        # nem lóghatnak ki szögletes sarokként a kártya íve mögül.
+        # A rect felfelé corner_r-rel túlnyúlik, hogy a felső sarkok
+        # vágatlanok (szögletesek) maradjanak.
+        clip = QPainterPath()
+        clip.addRoundedRect(QRectF(0, -corner_r, w, fh + corner_r),
+                            corner_r, corner_r)
+        p.setClipPath(clip)
+
         cache_key = (w, s, fh)
         if self._path_cache_key != cache_key:
-            # Fő kék sáv ívvel + lekerekített bal alsó sarok
-            path = QPainterPath()
-            path.moveTo(0, 0)
-            path.lineTo(sw, 0)
-            # Belső könyök ív – középpont (sw+R, bar_top-R), 180°→270°
-            path.arcTo(QRectF(sw, bar_top - 2 * R, 2 * R, 2 * R), 180, 90)
-            path.lineTo(w - 6, bar_top)
-            path.lineTo(w - 6, fh)
-            path.lineTo(corner_r, fh)
-            path.arcTo(QRectF(0, fh - 2 * corner_r, 2 * corner_r, 2 * corner_r),
-                       270, -90)
-            path.lineTo(0, 0)
-            path.closeSubpath()
-
             # Szegmensek – középen a lila, tőle balra a kék alapsáv, jobbra a tan.
             # A tan közvetlenül a lila után kezdődik (nincs kék sliver).
             right_edge = w - 6                       # a sáv jobb széle
@@ -253,6 +249,22 @@ class LCARSFooterWidget(QWidget):
             purple_w = max(1, int((flat_right - flat_left) / 3))
             purple_left = int(center - purple_w / 2)
             tan_left = purple_left + purple_w        # a tan rögtön a lila után
+
+            # Fő kék sáv ívvel + lekerekített bal alsó sarok. A sáv csak a
+            # tan kezdetéig tart (a lila fedi a végét) – így a jobb alsó
+            # sarokban nem lóg ki a kék a tan lekerekített íve mögül.
+            path = QPainterPath()
+            path.moveTo(0, 0)
+            path.lineTo(sw, 0)
+            # Belső könyök ív – középpont (sw+R, bar_top-R), 180°→270°
+            path.arcTo(QRectF(sw, bar_top - 2 * R, 2 * R, 2 * R), 180, 90)
+            path.lineTo(tan_left, bar_top)
+            path.lineTo(tan_left, fh)
+            path.lineTo(corner_r, fh)
+            path.arcTo(QRectF(0, fh - 2 * corner_r, 2 * corner_r, 2 * corner_r),
+                       270, -90)
+            path.lineTo(0, 0)
+            path.closeSubpath()
 
             # Fő tan (narancs) sáv ívvel + lekerekített jobb alsó sarok
             # – a bal alsó kék sarok pontos tükörképe (x' = right_edge - x)
@@ -732,7 +744,7 @@ class HUDWindow(QWidget):
         tile_layout.setContentsMargins(0, 0, 0, 4)
         tile_layout.setSpacing(2)
 
-        self._tile_zero_imm = self._make_tile(tile_layout, "ZRO IMM", self.LCARS_CYAN)
+        self._tile_zero_imm = self._make_tile(tile_layout, "ZPO IMM", self.LCARS_CYAN)
         self._tile_zero_hr_imm = self._make_tile(tile_layout, "ZHR IMM", self.LCARS_CYAN)
         self._tile_higher_wins = self._make_tile(tile_layout, "HI WINS", self.LCARS_ORANGE)
         self._tile_ant = self._make_tile(tile_layout, "ANT+", self.LCARS_PURPLE)
@@ -759,9 +771,9 @@ class HUDWindow(QWidget):
         # ───────── RENDSZER STÁTUSZ ─────────
         self._lbl_ble = self._make_status_row(content_layout, "BLE FAN", "OFFLINE",
                                                self.LCARS_BLUE)
-        self._lbl_ble_sens = self._make_status_row(content_layout, "BLE SENS",
+        self._lbl_ble_sens = self._make_status_row(content_layout, "BLE SEN.",
                                                      "– – –", self.LCARS_BLUE)
-        self._lbl_ant = self._make_status_row(content_layout, "ANT+",
+        self._lbl_ant = self._make_status_row(content_layout, "ANT+ SEN.",
                                                "– – –", self.LCARS_PURPLE)
         self._lbl_zwift_udp = self._make_status_row(content_layout, "ZWIFT",
                                                       "– – –", self.LCARS_PURPLE)
@@ -1461,20 +1473,40 @@ class HUDWindow(QWidget):
             flash_white = (_ft + 3) % 4 < 2      # ZWIFT fázis
 
             if zwift is not None and (power_zwift or hr_zwift):
-                ok = (
-                    zwift.last_packet_time > 0
-                    and (now - zwift.last_packet_time) < 5.0
+                # A BLE/ANT sorokkal konzisztens P:OK/FAIL/-- ill. HR:... kijelzés
+                power_ok = (
+                    power_zwift
+                    and (zwift.power_lastdata > 0)
+                    and (now - zwift.power_lastdata < self._SENSOR_STALE_S)
                 )
-                zwift_status = "RECEIVING" if ok else "NO SIGNAL"
-                if ok:
-                    self._update_label(
-                        self._lbl_zwift_udp, "RECEIVING", self.LCARS_CYAN
-                    )
-                else:
-                    c = self._lighten(self.LCARS_RED) if flash_white else self.LCARS_RED
-                    self._update_label(self._lbl_zwift_udp, "NO SIGNAL", c)
+                hr_ok = (
+                    hr_zwift
+                    and (zwift.hr_lastdata > 0)
+                    and (now - zwift.hr_lastdata < self._SENSOR_STALE_S)
+                )
+                p_s = "OK" if power_ok else ("--" if not power_zwift else "FAIL")
+                h_s = "OK" if hr_ok else ("--" if not hr_zwift else "FAIL")
 
-                # Zwift hangeffekt
+                zwift_states: list[bool] = []
+                if power_zwift:
+                    zwift_states.append(power_ok)
+                if hr_zwift:
+                    zwift_states.append(hr_ok)
+
+                if any(s is False for s in zwift_states):
+                    row_color = self._lighten(self.LCARS_RED) if flash_white else self.LCARS_RED
+                elif all(s is True for s in zwift_states):
+                    row_color = self.LCARS_CYAN
+                else:
+                    row_color = self.LCARS_GOLD
+
+                self._update_label(self._lbl_zwift_udp, f"P:{p_s}  HR:{h_s}", row_color)
+
+                # Zwift hangeffekt – ha az összes kiválasztott metrika él,
+                # az RECEIVING; bármelyik kiesése NO SIGNAL
+                zwift_status = (
+                    "RECEIVING" if all(zwift_states) else "NO SIGNAL"
+                )
                 if self._prev_zwift_status is not None and zwift_status != self._prev_zwift_status:
                     if zwift_status == "RECEIVING":
                         self._sound.play("zwift_connect")

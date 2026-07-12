@@ -30,10 +30,10 @@ Két ablak nyílik: maga a HUD, és mellette a **HUD teszt vezérlő** panel.
 |---|---|
 | AUTO szimuláció | Hullámzó power/pulzus, az összes zónát bejárja |
 | Power / Pulzus csúszka | Kézi értékadás (AUTO kikapcsolva) |
-| Power / Pulzus forrás | ANT+ / BLE / Zwift UDP – a BLE SENS, ANT+ és ZWIFT sorok és tile-ok ennek megfelelően élnek |
+| Power / Pulzus forrás | ANT+ / BLE / Zwift UDP – a BLE SEN., ANT+ SEN. és ZWIFT sorok és tile-ok ennek megfelelően élnek |
 | Power / Pulzus jel aktív | Kikapcsolva dropout: FAIL / NO SIGNAL villogás ~5–10 s után |
 | HIGHER WINS | Zóna mód váltás (be: higher_wins, ki: power_only) – HI WINS tile |
-| ZRO IMM / ZHR IMM | zero_power_immediate / zero_hr_immediate tile-ok |
+| ZPO IMM / ZHR IMM | zero_power_immediate / zero_hr_immediate tile-ok |
 | BLE fan engedélyezve | Kikapcsolva: DISABLED sor |
 | BLE fan kapcsolódva | Kikapcsolva: OFFLINE (villogó) |
 | PIN hiba | PIN FAIL állapot |
