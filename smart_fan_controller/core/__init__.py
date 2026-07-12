@@ -1,8 +1,8 @@
-"""Tiszta domain-logika (zóna, átlagolás, cooldown, state, helpers, asyncio).
+"""Pure domain logic (zones, averaging, cooldown, state, helpers, asyncio).
 
-Ez a csomag a mellékhatás-mentes (Qt/BLE/IO-független) magfüggvényeket és
--osztályokat gyűjti össze. Az asyncio.Lock használat lehetővé teszi az async
-korrutinok közötti szálbiztos adatcserét.
+This package collects the side-effect-free (Qt/BLE/IO-independent) core
+functions and classes. asyncio.Lock usage enables thread-safe data
+exchange between async coroutines.
 """
 from __future__ import annotations
 

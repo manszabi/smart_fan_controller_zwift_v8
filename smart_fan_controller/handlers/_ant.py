@@ -1,8 +1,9 @@
-"""ANT+ Input handler – saját daemon szálban futó asyncio interfacing.
+"""ANT+ input handler – asyncio interfacing running in its own daemon thread.
 
-Az openant könyvtár blokkoló API-t használ, ezért saját daemon szálban fut.
-Az érkező adatokat az asyncio event loop-ba hídalkotja
-(loop.call_soon_threadsafe + put_nowait) és az asyncio queue-kba teszi.
+The openant library exposes a blocking API, so it runs in its own daemon
+thread. Incoming data is bridged into the asyncio event loop
+(loop.call_soon_threadsafe + put_nowait) and placed into the asyncio
+queues.
 """
 from __future__ import annotations
 
@@ -20,7 +21,7 @@ from smart_fan_controller.core.helpers import resolve_log_dir
 logger = logging.getLogger("zwift_fan_controller_new")
 user_logger = logging.getLogger("user")
 
-# Openant library imports – opcionális
+# openant library imports – optional
 Node: Any = None
 ANTPLUS_NETWORK_KEY: Any = None
 PowerMeter: Any = None
@@ -46,33 +47,35 @@ __all__ = [
 
 
 class ANTPlusInputHandler:
-    """ANT+ power és HR adatforrás kezelője saját daemon szálban.
+    """ANT+ power and HR data source handler in its own daemon thread.
 
-    Az openant könyvtár blokkoló API-t használ, ezért saját daemon szálban fut.
-    Az érkező adatokat az asyncio event loop-ba hídalkotja
-    (loop.call_soon_threadsafe + put_nowait) és az asyncio queue-kba teszi.
+    The openant library exposes a blocking API, so it runs in its own
+    daemon thread. Incoming data is bridged into the asyncio event loop
+    (loop.call_soon_threadsafe + put_nowait) and placed into the queues.
 
-    Ha a settings-ben ant_power_device_id / ant_hr_device_id meg van adva
-    (és nem 0), specifikus eszközhöz csatlakozik. Ha 0, az első elérhető
-    (wildcard) eszközt használja.
+    When ant_power_device_id / ant_hr_device_id is set (non-zero) in the
+    settings it connects to the specific device. When 0, the first
+    available (wildcard) device is used.
 
-    Attribútumok:
-        power_queue: asyncio.Queue a power adatokhoz.
-        hr_queue: asyncio.Queue a HR adatokhoz.
-        loop: A fő asyncio event loop referenciája.
+    Attributes:
+        power_queue: asyncio.Queue for the power data.
+        hr_queue: asyncio.Queue for the HR data.
+        loop: Reference to the main asyncio event loop.
     """
 
     MAX_RETRY_COOLDOWN = 30
-    WATCHDOG_TIMEOUT = 30  # Ha ennyi mp-ig nincs adat, a node-ot leállítjuk
+    WATCHDOG_TIMEOUT = 30  # Stop the node after this many seconds without data
 
-    # Induláskor / újracsatlakozáskor a USB ANT+ stick libusb0 meghajtója pár száz
-    # ms-ot igényelhet, amíg elérhetővé válik. Windows-on tipikus átmeneti hibák:
-    # "could not claim interface (resource busy)" és "device not recognize command".
-    # Ennyit várunk az első próbálkozás előtt, hogy a stick készen álljon.
+    # At startup / reconnect the USB ANT+ stick's libusb0 driver may need a
+    # few hundred ms to become available. Typical transient errors on
+    # Windows: "could not claim interface (resource busy)" and "device not
+    # recognize command". Wait this long before the first attempt so the
+    # stick is ready.
     INITIAL_GRACE_DELAY = 0.5
-    # Az első ennyi sikertelen kísérletet csak fejlesztői logba (info) írjuk, nem
-    # riasztjuk a felhasználót – ezek tipikusan átmeneti USB-init hibák, amiket a
-    # retry magától helyrehoz. E fölött már user-facing warning megy.
+    # The first this-many failed attempts only go to the developer log
+    # (info), the user is not alerted – these are typically transient USB
+    # init errors the retry fixes on its own. Above it a user-facing
+    # warning is emitted.
     QUIET_RETRIES = 3
 
     def __init__(
@@ -89,12 +92,12 @@ class ANTPlusInputHandler:
         self.hr_queue = hr_queue
         self.loop = loop
 
-        # ANT+ device ID-k (0 = wildcard / első elérhető)
+        # ANT+ device IDs (0 = wildcard / first available)
         self._power_device_id: int = self.ds.ant_power_device_id
         self._hr_device_id: int = self.ds.ant_hr_device_id
 
-        # Reconnect beállítások a settings-ből (a kettő közül a nagyobbat használja,
-        # mert a power és HR egyetlen közös ANT+ szálban fut)
+        # Reconnect settings from the settings (uses the larger of the two
+        # because power and HR share a single common ANT+ thread)
         self._reconnect_delay: int = max(
             self.ds.ant_power_reconnect_interval,
             self.ds.ant_hr_reconnect_interval,
@@ -105,40 +108,41 @@ class ANTPlusInputHandler:
         )
 
         self._running = threading.Event()
-        self._stop_event = threading.Event()  # watchdog leállító jelzés
+        self._stop_event = threading.Event()  # watchdog stop signal
         self._node: Any | None = None
         self._devices: list[Any] = []
-        # A node/devices referenciák cseréjét védő lock: a stop() a fő
-        # szálból, a _thread_loop a saját szálán is bonthatja a node-ot.
+        # Lock guarding the swap of the node/devices refs: stop() from the
+        # main thread and _thread_loop on its own thread may both tear the
+        # node down.
         self._node_lock = threading.Lock()
-        # Windows driver-hint: csak egyszer írjuk ki
+        # Windows driver hint: printed only once
         self._usb_hint_shown = False
-        self._lastdata: float = 0.0  # utolsó bármilyen adat ideje (thread loop használja)
-        self._node_started: float = 0.0  # node.start() indulási ideje (watchdog-hoz)
+        self._lastdata: float = 0.0  # time of the last data of any kind (thread loop)
+        self._node_started: float = 0.0  # node.start() launch time (for the watchdog)
         self.power_lastdata: float = 0.0
         self.hr_lastdata: float = 0.0
         self.power_connected: bool = False
         self.hr_connected: bool = False
 
-        # Logging beállítások a settings-ből
+        # Logging settings from the settings
         gs = settings["global_settings"]
         self._log_dir: str = resolve_log_dir(gs.log_directory)
         self._logging_enabled: bool = gs.logging
 
     def start(self) -> threading.Thread:
-        """Elindítja az ANT+ daemon szálat.
+        """Start the ANT+ daemon thread.
 
         Returns:
-            A létrehozott daemon threading.Thread objektum.
+            The created daemon threading.Thread object.
         """
         self._running.set()
-        self._stop_event.clear()  # watchdog újraindulásához
+        self._stop_event.clear()  # so the watchdog can restart
         t = threading.Thread(
             target=self._thread_loop, daemon=True, name="ANTPlus-Thread"
         )
         t.start()
 
-        # Indulási log: milyen device ID-kkal indul
+        # Startup log: which device IDs it starts with
         power_src = self.ds.power_source
         hr_src = self.ds.hr_source
         if power_src == DataSource.ANTPLUS:
@@ -153,58 +157,59 @@ class ANTPlusInputHandler:
         return t
 
     def stop(self) -> None:
-        """Leállítja az ANT+ szálat és az ANT+ node-ot."""
+        """Stop the ANT+ thread and the ANT+ node."""
         self._running.clear()
-        self._stop_event.set()  # watchdog szál felébresztése és leállítása
+        self._stop_event.set()  # wake and stop the watchdog thread
         self._stop_node()
 
     def _queue_put(self, queue: asyncio.Queue[float], value: float, label: str) -> None:
-        """Queue-ba helyezés – az asyncio event loop szálán fut.
+        """Put into the queue – runs on the asyncio event loop thread.
 
-        put_nowait + eldobás teli queue-nál, konzisztensen a BLE/UDP
-        handlerekkel (mindig a legfrissebb adat számít)."""
+        put_nowait + drop on a full queue, consistent with the BLE/UDP
+        handlers (only the freshest data matters)."""
         try:
             queue.put_nowait(value)
         except asyncio.QueueFull:
             logger.debug("ANT+ %s queue teli, adat elvetve", label)
 
     def _put_power(self, power: float) -> None:
-        """Power értéket tesz az asyncio queue-ba (thread-safe, nem blokkoló).
+        """Put a power value into the asyncio queue (thread-safe, non-blocking).
 
-        call_soon_threadsafe: nem allokál koroutint/Future-t mintánként
-        (a run_coroutine_threadsafe-fel ellentétben), és a queue-hiba sem
-        veszik el csendben."""
+        call_soon_threadsafe: allocates no coroutine/Future per sample
+        (unlike run_coroutine_threadsafe), and a queue error is not lost
+        silently either."""
         try:
             self.loop.call_soon_threadsafe(
                 self._queue_put, self.power_queue, float(power), "power"
             )
         except RuntimeError:
-            pass  # Loop már leállt – shutdown közben normális
+            pass  # The loop already stopped – normal during shutdown
 
     def _put_hr(self, hr: int) -> None:
-        """HR értéket tesz az asyncio queue-ba (thread-safe, nem blokkoló)."""
+        """Put an HR value into the asyncio queue (thread-safe, non-blocking)."""
         try:
             self.loop.call_soon_threadsafe(
                 self._queue_put, self.hr_queue, float(hr), "HR"
             )
         except RuntimeError:
-            pass  # Loop már leállt – shutdown közben normális
+            pass  # The loop already stopped – normal during shutdown
 
     def _on_any_broadcast(self, data: Any) -> None:
-        """Watchdog heartbeat: minden beérkező ANT+ broadcast frissíti az időbélyeget.
+        """Watchdog heartbeat: every incoming ANT+ broadcast refreshes the timestamp.
 
-        Az openant on_update callbackje minden adatcsomagnál hívódik,
-        függetlenül attól, hogy az event count változott-e (tehát akkor is,
-        ha a power meter 0W-ot küld mert a felhasználó nem teker).
-        Ez biztosítja, hogy a watchdog ne detektáljon false positive-ot.
+        The openant on_update callback fires for every data packet,
+        regardless of whether the event count changed (so also when the
+        power meter sends 0 W because the user is not pedaling).
+        This keeps the watchdog free of false positives.
         """
         self._lastdata = time.monotonic()
 
     def _on_data(self, page: Any, page_name: str, data: Any) -> None:
-        """ANT+ adatcsomag callback – power és HR adatokat irányít a queue-kba.
+        """ANT+ data packet callback – routes power and HR data to the queues.
 
-        Csak akkor hívódik, ha ÚJ mérési adat érkezett (event count változott).
-        A watchdog heartbeat-et az _on_any_broadcast kezeli külön.
+        Only called when NEW measurement data arrived (event count
+        changed). The watchdog heartbeat is handled separately by
+        _on_any_broadcast.
         """
         if not _ANTPLUS_AVAILABLE:
             return
@@ -219,20 +224,20 @@ class ANTPlusInputHandler:
     def _make_on_found(
         self, sensor_label: str, device_type_str: str, device_ref: Any
     ) -> Any:
-        """Létrehoz egy on_found callbacket az adott szenzorhoz.
+        """Create an on_found callback for the given sensor.
 
-        Az openant on_found() paraméter nélkül hívódik (staticmethod).
-        A device_ref az openant device objektum referenciája, amelyen
-        a device_id attribútum elérhető (wildcard esetén az openant
-        automatikusan beállítja az első talált eszköz ID-jára).
+        The openant on_found() is called without parameters (staticmethod).
+        device_ref is the openant device object reference exposing the
+        device_id attribute (in wildcard mode openant sets it to the ID of
+        the first device found automatically).
 
         Args:
-            sensor_label: Log prefix (pl. "ANT+ Power").
-            device_type_str: Logfájl eszköz típus (pl. "PowerMeter").
-            device_ref: Az openant device objektum referenciája.
+            sensor_label: Log prefix (e.g. "ANT+ Power").
+            device_type_str: Log file device type (e.g. "PowerMeter").
+            device_ref: Reference to the openant device object.
 
         Returns:
-            Paraméter nélküli callback függvény.
+            A zero-argument callback function.
         """
         def _on_found() -> None:
             if "Power" in sensor_label:
@@ -248,7 +253,7 @@ class ANTPlusInputHandler:
         return _on_found
 
     def _ant_log_path(self) -> str:
-        """Visszaadja az ant_devices.log teljes útvonalát a konfigurált log könyvtárban."""
+        """Return the full path of ant_devices.log in the configured log dir."""
         return os.path.join(self._log_dir, "ant_devices.log")
 
     def _log_ant_device_to_file(
@@ -257,28 +262,28 @@ class ANTPlusInputHandler:
         device_id: int,
         device_info: str,
     ) -> None:
-        """Talált ANT+ eszközt ír az ant_devices.log fájlba (append módban).
+        """Append a discovered ANT+ device to the ant_devices.log file.
 
-        Csak akkor ír, ha az eszköz (device_type + device_id) még nem szerepel
-        a fájlban. Ha a fájl nem létezik, létrehozza.
+        Only writes when the device (device_type + device_id) is not in
+        the file yet. Creates the file when it does not exist.
 
         Args:
-            device_type: Az eszköz típusa (pl. "PowerMeter", "HeartRate").
-            device_id: Az ANT+ device number.
-            device_info: Egyéb információ az eszközről.
+            device_type: Type of the device (e.g. "PowerMeter", "HeartRate").
+            device_id: The ANT+ device number.
+            device_info: Additional information about the device.
         """
-        # Loggolás kikapcsolva → nem írunk eszköz-log fájlt sem
+        # Logging disabled → no device log file is written either
         if not self._logging_enabled:
             return
-        # Egyedi kulcs: "típus | device_id"
+        # Unique key: "type | device_id"
         entry_key = f"{device_type} | {device_id}"
 
-        # Meglévő bejegyzések ellenőrzése
+        # Check the existing entries
         existing_entries: set[str] = set()
         try:
             with open(self._ant_log_path(), "r", encoding="utf-8") as f:
                 for line in f:
-                    # Sorok formátuma: "  TÍPUS | DEVICE_ID | info"
+                    # Line format: "  TYPE | DEVICE_ID | info"
                     parts = line.split("|")
                     if len(parts) >= 2:
                         existing_entries.add(f"{parts[0].strip()} | {parts[1].strip()}")
@@ -301,10 +306,11 @@ class ANTPlusInputHandler:
             logger.warning(f"Nem sikerült írni a {self._ant_log_path()} fájlba: {exc}")
 
     def _init_node(self) -> None:
-        """Inicializálja az ANT+ node-ot és regisztrálja az eszközöket.
+        """Initialize the ANT+ node and register the devices.
 
-        Ha ant_power_device_id / ant_hr_device_id meg van adva (nem 0),
-        specifikus eszközhöz csatlakozik. Ha 0, wildcard mód (első elérhető).
+        When ant_power_device_id / ant_hr_device_id is set (non-zero) it
+        connects to the specific device. When 0, wildcard mode (first
+        available).
         """
         if not _ANTPLUS_AVAILABLE:
             raise RuntimeError("openant könyvtár nem elérhető")
@@ -328,19 +334,19 @@ class ANTPlusInputHandler:
             hr_monitor.on_update = self._on_any_broadcast
             devices.append(hr_monitor)
 
-        # Csak a teljesen felépített node-ot publikáljuk (lock alatt), hogy a
-        # stop()/watchdog soha ne lásson félkész állapotot.
+        # Publish only the fully built node (under the lock) so that
+        # stop()/watchdog never sees a half-initialized state.
         with self._node_lock:
             self._node = node
             self._devices = devices
 
     def _stop_node(self) -> None:
-        """Leállítja és felszabadítja az ANT+ node-ot (szálbiztos, idempotens).
+        """Stop and release the ANT+ node (thread-safe, idempotent).
 
-        A referenciákat lock alatt, atomikusan vesszük ki, így hiába hívja
-        egyszerre a stop() (fő szál) és a _thread_loop (ANT szál), a node-ot
-        csak az egyik bontja. A connected flag-eket visszaállítja False-ra,
-        mert az openant on_lost callbackje nem létezik.
+        The references are taken out atomically under the lock, so even
+        when stop() (main thread) and _thread_loop (ANT thread) call it
+        concurrently, only one of them tears the node down. The connected
+        flags are reset to False because openant has no on_lost callback.
         """
         self.power_connected = False
         self.hr_connected = False
@@ -361,24 +367,26 @@ class ANTPlusInputHandler:
             logger.debug(f"ANT+ cleanup hiba: {exc}")
 
     def _log_retry(self, detail: str, retry_count: int) -> None:
-        """Retry-üzenet logolása a próbálkozások számától függő szinten.
+        """Log a retry message at a level depending on the attempt count.
 
-        Az első ``QUIET_RETRIES`` kísérlet csak a fejlesztői logba (info) kerül,
-        mert ezek tipikusan átmeneti USB-init hibák (pl. libusb "resource busy"
-        induláskor), amiket a retry-logika magától helyrehoz. E fölött már
-        user-facing ``warning`` megy, hogy a tartós hiba látható maradjon.
+        The first ``QUIET_RETRIES`` attempts only go to the developer log
+        (info), since these are typically transient USB init errors (e.g.
+        libusb "resource busy" at startup) the retry logic fixes on its
+        own. Above it a user-facing ``warning`` is emitted so a persistent
+        failure stays visible.
 
         Args:
-            detail: A hiba szöveges leírása (kivétel vagy állapot).
-            retry_count: Az aktuális próbálkozás sorszáma.
+            detail: Textual description of the error (exception or state).
+            retry_count: Sequence number of the current attempt.
         """
-        # Windows: a leggyakoribb TARTÓS hiba a hiányzó libusb/WinUSB meghajtó.
-        # Erre egyszer célzott, cselekvésre ösztönző üzenetet adunk a nyers
-        # hibaszöveg ismételgetése helyett. Fontos: a "libusb" szó az induláskori
-        # ÁTMENETI hibaüzenetekben is előfordulhat (pl. claim/resource busy),
-        # ezért arra csak a csendes próbálkozások (QUIET_RETRIES) kimerülése
-        # után riasztunk – a "No backend available" (a backend/DLL teljes
-        # hiánya) viszont sosem gyógyul magától, arra azonnal.
+        # Windows: the most common PERSISTENT failure is the missing
+        # libusb/WinUSB driver. For that we emit one targeted, actionable
+        # message instead of repeating the raw error text. Note: the word
+        # "libusb" can appear in TRANSIENT startup errors too (e.g.
+        # claim/resource busy), so we only alert on it after the quiet
+        # attempts (QUIET_RETRIES) are exhausted – "No backend available"
+        # (the backend/DLL missing entirely) never heals itself, so that
+        # one alerts immediately.
         low = detail.lower()
         if not self._usb_hint_shown and (
             "no backend available" in low
@@ -403,16 +411,17 @@ class ANTPlusInputHandler:
             )
 
     def _watchdog(self) -> None:
-        """Watchdog szál: ha az ANT+ node fut, de sokáig nem jön adat, leállítja.
+        """Watchdog thread: stops the ANT+ node when it runs without data for long.
 
-        Az openant Node.start() blokkoló hívás, és USB megszakadás esetén
-        NEM tér vissza (a belső _main loop üres queue-ból olvas örökké).
-        Ez a watchdog detektálja a helyzetet és kívülről hívja a node.stop()-ot,
-        ami lehetővé teszi a _thread_loop retry logikájának lefutását.
+        openant's Node.start() is a blocking call and does NOT return on a
+        USB disconnect (its internal _main loop reads an empty queue
+        forever). This watchdog detects the situation and calls
+        node.stop() from the outside, letting the retry logic of
+        _thread_loop run.
         """
-        # _running.is_set() == True normális működésnél, ezért NEM használható
-        # wait(timeout)-ra (azonnal visszatérne). Helyette _stop_event-et
-        # használunk, ami CSAK leálláskor lesz set.
+        # _running.is_set() == True in normal operation, so it CANNOT be
+        # used for wait(timeout) (it would return immediately). We use
+        # _stop_event instead, which is only set at shutdown.
         stop_event = self._stop_event
         while not stop_event.wait(timeout=5):
             node = self._node
@@ -423,49 +432,49 @@ class ANTPlusInputHandler:
             started = self._node_started
             last = self._lastdata
 
-            # Ha a node fut és volt már sikeres adat, de azóta WATCHDOG_TIMEOUT
-            # ideje nem jött semmi → valószínűleg USB megszakadás
+            # The node runs and data has arrived before, but nothing for
+            # WATCHDOG_TIMEOUT since → most likely a USB disconnect
             if last > 0 and (now - last) > self.WATCHDOG_TIMEOUT:
                 user_logger.warning(
                     f"⚠ ANT+ {self.WATCHDOG_TIMEOUT}s óta nincs adat – "
                     f"kapcsolat megszakadt, újracsatlakozás..."
                 )
-                self._lastdata = 0.0  # Megakadályozza az ismételt triggerelést
+                self._lastdata = 0.0  # Prevents repeated triggering
                 try:
                     node.stop()
                 except Exception as exc:
                     logger.debug(f"ANT+ watchdog node.stop() hiba: {exc}")
-            # Ha a node elindul, de WATCHDOG_TIMEOUT * 2 ideje nem jött semmi adat
-            # (pl. rossz device_id, vagy az eszköz soha nem volt hatótávolságban)
+            # The node started but no data for WATCHDOG_TIMEOUT * 2 (e.g.
+            # wrong device_id, or the device was never in range)
             elif last == 0.0 and started > 0 and (now - started) > self.WATCHDOG_TIMEOUT * 2:
                 user_logger.warning(
                     f"⚠ ANT+ {self.WATCHDOG_TIMEOUT * 2}s óta nem található eszköz, "
                     f"újrapróbálkozás..."
                 )
-                self._node_started = 0.0  # Megakadályozza az ismételt triggerelést
+                self._node_started = 0.0  # Prevents repeated triggering
                 try:
                     node.stop()
                 except Exception as exc:
                     logger.debug(f"ANT+ watchdog node.stop() hiba: {exc}")
 
     def _thread_loop(self) -> None:
-        """Az ANT+ szál fő ciklusa – újracsatlakozási logikával.
+        """Main loop of the ANT+ thread – with reconnect logic.
 
-        Egy watchdog szálat is indít, ami figyeli, hogy jön-e adat. Ha az
-        USB ANT+ stick megszakad, az openant Node.start() nem tér vissza
-        magától – a watchdog kívülről hívja a node.stop()-ot, ami feloldja
-        a blokkolást.
+        Also starts a watchdog thread that checks whether data arrives.
+        When the USB ANT+ stick disconnects, openant's Node.start() does
+        not return on its own – the watchdog calls node.stop() from the
+        outside, which releases the block.
         """
-        # Watchdog szál indítása
+        # Start the watchdog thread
         watchdog = threading.Thread(
             target=self._watchdog, daemon=True, name="ANTPlus-Watchdog"
         )
         watchdog.start()
 
-        # Kezdeti grace-delay: esélyt adunk a USB ANT+ stick libusb0 meghajtójának
-        # elérhetővé válni, mielőtt az első claim/open próbát megtennénk. Ez
-        # kiküszöböli a tipikus induláskori "resource busy" / "device not recognize
-        # command" átmeneti hibákat. (Megszakítható, ha közben leállítás jön.)
+        # Initial grace delay: give the USB ANT+ stick's libusb0 driver a
+        # chance to become available before the first claim/open attempt.
+        # This eliminates the typical startup "resource busy" / "device not
+        # recognize command" transient errors. (Interruptible on shutdown.)
         if self.INITIAL_GRACE_DELAY > 0:
             self._stop_event.wait(timeout=self.INITIAL_GRACE_DELAY)
 
@@ -477,12 +486,12 @@ class ANTPlusInputHandler:
                 self._node_started = time.monotonic()
                 if self._node is None:
                     raise RuntimeError("Node inicializálás sikertelen")
-                self._node.start()  # Blokkoló hívás – itt vár, amíg az ANT+ node fut
+                self._node.start()  # Blocking call – waits here while the node runs
 
                 if not self._running.is_set():
                     break
 
-                # Ha volt sikeres adat, reseteljük a számolót
+                # Reset the counter when data has arrived successfully
                 if self._lastdata > 0:
                     retry_count = 0
                     user_logger.info("ANT+ kapcsolat megszakadt, újracsatlakozás...")
@@ -504,8 +513,8 @@ class ANTPlusInputHandler:
                     f"⚠ ANT+ {self._max_retries} sikertelen próbálkozás, "
                     f"{self.MAX_RETRY_COOLDOWN}s várakozás az újraindítás előtt..."
                 )
-                # stop_event.wait: ugyanannyit vár, de leállításkor azonnal
-                # ébred (time.sleep-pel a shutdown akár 30s-ot lógott volna)
+                # stop_event.wait: waits just as long but wakes immediately
+                # on shutdown (time.sleep could hang the shutdown for 30 s)
                 self._stop_event.wait(self.MAX_RETRY_COOLDOWN)
                 if not self._running.is_set():
                     break

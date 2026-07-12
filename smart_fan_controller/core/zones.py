@@ -1,8 +1,8 @@
-"""Tiszta zóna-logika – számítás, validáció, zóna-mód kombinálás.
+"""Pure zone logic – calculation, validation, zone-mode combination.
 
-Ez a modul mellékhatás-mentes (pure) függvényeket tartalmaz: nincs Qt, BLE,
-ANT+ vagy I/O függőség. Csak a beépített könyvtárakra és a ``ZoneMode`` enumra
-támaszkodik, ezért önmagában is könnyen tesztelhető.
+This module contains side-effect-free (pure) functions: no Qt, BLE,
+ANT+ or I/O dependencies. It relies only on the standard library and the
+``ZoneMode`` enum, so it is easily testable on its own.
 """
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from ..config.schemas import ZoneMode
 
 
 # ============================================================
-# ZÓNA SZÁMÍTÁS
+# ZONE CALCULATION
 # ============================================================
 
 
@@ -24,19 +24,19 @@ def calculate_power_zones(
     z1_pct: int,
     z2_pct: int,
 ) -> dict[int, tuple[int, int]]:
-    """Kiszámítja a teljesítmény zóna határokat.
+    """Compute the power zone boundaries.
 
     Args:
-        ftp: Funkcionális küszöbteljesítmény (W).
-        min_watt: Minimális érvényes pozitív teljesítmény (W).
-        max_watt: Maximális érvényes teljesítmény (W).
-        z1_pct: Z1 felső határ az FTP %-ában.
-        z2_pct: Z2 felső határ az FTP %-ában.
+        ftp: Functional threshold power (W).
+        min_watt: Minimum valid positive power (W).
+        max_watt: Maximum valid power (W).
+        z1_pct: Z1 upper bound as % of FTP.
+        z2_pct: Z2 upper bound as % of FTP.
 
     Returns:
-        Dict formátum: {0: (0,0), 1: (1, z1_max), 2: (z1_max+1, z2_max), 3: (z2_max+1, max_watt)}
+        Dict format: {0: (0,0), 1: (1, z1_max), 2: (z1_max+1, z2_max), 3: (z2_max+1, max_watt)}
     """
-    # max(1, ...) védi az érvénytelen z1_max=0 esetet (pl. nagyon alacsony FTP/százalék)
+    # max(1, ...) guards the invalid z1_max=0 case (e.g. very low FTP/percent)
     z1_max = max(1, int(ftp * z1_pct / 100))
     z2_max = max(2, min(int(ftp * z2_pct / 100), max_watt))
     z1_max = min(z1_max, z2_max - 1)
@@ -54,13 +54,13 @@ def calculate_hr_zones(
     z1_pct: int,
     z2_pct: int,
 ) -> dict[str, int]:
-    """Kiszámítja a HR zóna határokat bpm-ben.
+    """Compute the HR zone boundaries in bpm.
 
     Args:
-        max_hr: Maximális szívfrekvencia (bpm).
-        resting_hr: Pihenő szívfrekvencia (bpm); ez alatt Z0.
-        z1_pct: Z1 felső határ a max_hr %-ában.
-        z2_pct: Z2 felső határ a max_hr %-ában.
+        max_hr: Maximum heart rate (bpm).
+        resting_hr: Resting heart rate (bpm); below it means Z0.
+        z1_pct: Z1 upper bound as % of max_hr.
+        z2_pct: Z2 upper bound as % of max_hr.
 
     Returns:
         Dict: {'resting': int, 'z1_max': int, 'z2_max': int}
@@ -73,18 +73,18 @@ def calculate_hr_zones(
 
 
 def zone_for_power(power: float, zones: dict[int, tuple[int, int]]) -> int:
-    """Meghatározza a teljesítmény zónát (0–3) az adott watt értékhez.
+    """Determine the power zone (0–3) for the given watt value.
 
     Args:
-        power: Teljesítmény wattban.
-        zones: Zóna határok dict-je (calculate_power_zones kimenetele).
+        power: Power in watts.
+        zones: Zone boundary dict (output of calculate_power_zones).
 
     Returns:
-        Zóna szám (0–3).
+        Zone number (0–3).
     """
     if power <= 0:
         return 0
-    # Védekezés üres vagy hibás zones dict ellen (ValueError elkerülése)
+    # Guard against an empty or malformed zones dict (avoids ValueError)
     positive_lows = [lo for lo, _hi in zones.values() if lo > 0]
     if not positive_lows:
         return 0
@@ -95,18 +95,18 @@ def zone_for_power(power: float, zones: dict[int, tuple[int, int]]) -> int:
         lo, hi = zones[zone_num]
         if lo <= power <= hi:
             return zone_num
-    return 3  # csak max_watt felett érthető el
+    return 3  # only reachable above max_watt
 
 
 def zone_for_hr(hr: int, hr_zones: dict[str, int]) -> int:
-    """Meghatározza a HR zónát (0–3) az adott bpm értékhez.
+    """Determine the HR zone (0–3) for the given bpm value.
 
     Args:
-        hr: Szívfrekvencia bpm-ben.
-        hr_zones: HR zóna határok dict-je (calculate_hr_zones kimenetele).
+        hr: Heart rate in bpm.
+        hr_zones: HR zone boundary dict (output of calculate_hr_zones).
 
     Returns:
-        Zóna szám (0–3).
+        Zone number (0–3).
     """
     if hr <= 0 or hr < hr_zones["resting"]:
         return 0
@@ -118,20 +118,21 @@ def zone_for_hr(hr: int, hr_zones: dict[str, int]) -> int:
 
 
 # ============================================================
-# BEMENETI ADAT VALIDÁCIÓ
+# INPUT DATA VALIDATION
 # ============================================================
 
 
 def is_valid_power(power: Any, min_watt: int, max_watt: int) -> bool:
-    """Ellenőrzi, hogy az érték érvényes teljesítmény adat-e.
+    """Check whether the value is valid power data.
 
     Args:
-        power: Az ellenőrizendő érték.
-        min_watt: Minimális érvényes pozitív watt (0 és min_watt között elutasítva).
-        max_watt: Maximális érvényes watt.
+        power: The value to check.
+        min_watt: Minimum valid positive watt (values between 0 and
+            min_watt are rejected).
+        max_watt: Maximum valid watt.
 
     Returns:
-        True, ha érvényes teljesítmény adat.
+        True when the value is valid power data.
     """
     if isinstance(power, bool):
         return False
@@ -147,15 +148,15 @@ def is_valid_power(power: Any, min_watt: int, max_watt: int) -> bool:
 
 
 def is_valid_hr(hr: Any, valid_min_hr: int, valid_max_hr: int) -> bool:
-    """Ellenőrzi, hogy az érték érvényes szívfrekvencia adat-e.
+    """Check whether the value is valid heart-rate data.
 
     Args:
-        hr: Az ellenőrizendő érték.
-        valid_min_hr: Minimális érvényes HR érték (bpm).
-        valid_max_hr: Maximális érvényes HR érték (bpm).
+        hr: The value to check.
+        valid_min_hr: Minimum valid HR value (bpm).
+        valid_max_hr: Maximum valid HR value (bpm).
 
     Returns:
-        True, ha érvényes HR adat.
+        True when the value is valid HR data.
     """
     if isinstance(hr, bool):
         return False
@@ -169,19 +170,19 @@ def is_valid_hr(hr: Any, valid_min_hr: int, valid_max_hr: int) -> bool:
 
 
 # ============================================================
-# ZÓNA LOGIKA (higher_wins, zone_mode)
+# ZONE LOGIC (higher_wins, zone_mode)
 # ============================================================
 
 
 def higher_wins(zone_a: int, zone_b: int) -> int:
-    """A két zóna közül a nagyobbat adja vissza.
+    """Return the higher of the two zones.
 
     Args:
-        zone_a: Első zóna (0–3).
-        zone_b: Második zóna (0–3).
+        zone_a: First zone (0–3).
+        zone_b: Second zone (0–3).
 
     Returns:
-        A nagyobb zóna szám.
+        The higher zone number.
     """
     return max(zone_a, zone_b)
 
@@ -191,26 +192,26 @@ def apply_zone_mode(
     hr_zone: int | None,
     zone_mode: ZoneMode,
 ) -> int | None:
-    """A zone_mode alapján kombinálja a power és HR zónákat.
+    """Combine the power and HR zones based on zone_mode.
 
-    Zóna módok:
-        "power_only"  – csak a teljesítmény zóna dönt (HR figyelmen kívül)
-        "hr_only"     – csak a HR zóna dönt (power figyelmen kívül)
-        "higher_wins" – a kettő közül a nagyobb dönt
+    Zone modes:
+        "power_only"  – only the power zone decides (HR ignored)
+        "hr_only"     – only the HR zone decides (power ignored)
+        "higher_wins" – the higher of the two decides
 
     Args:
-        power_zone: Teljesítmény zóna (0–3), vagy None ha nem elérhető.
-        hr_zone: HR zóna (0–3), vagy None ha nem elérhető.
-        zone_mode: A kombinálási mód ("power_only", "hr_only", "higher_wins").
+        power_zone: Power zone (0–3), or None when unavailable.
+        hr_zone: HR zone (0–3), or None when unavailable.
+        zone_mode: Combination mode ("power_only", "hr_only", "higher_wins").
 
     Returns:
-        A végső zóna szám (0–3), vagy None ha nincs elég adat.
+        The final zone number (0–3), or None without enough data.
     """
     if zone_mode == ZoneMode.POWER_ONLY:
         return power_zone
     if zone_mode == ZoneMode.HR_ONLY:
         return hr_zone
-    # higher_wins: mindkét forrásból a nagyobb
+    # higher_wins: the higher of the two sources
     if power_zone is not None and hr_zone is not None:
         return higher_wins(power_zone, hr_zone)
     if power_zone is not None:

@@ -1,10 +1,11 @@
-"""Logging infrastruktúra: konzol, rotált fájl, korai pufferelés.
+"""Logging infrastructure: console, rotating file, early buffering.
 
-Biztosítja a két logger (user_logger, logger) konzisztens konfigurációját:
-- Konzol: user_logger csak üzenetek, logger WARNING+ debug info
-- Fájl: mindkettő DEBUG+
-- Headless mód: logging:false → NullHandler (némaság)
-- Korai logging: settings betöltés előtti logok pufferelése
+Ensures a consistent configuration of the two loggers (user_logger,
+logger):
+- Console: user_logger messages only, logger WARNING+ debug info
+- File: both DEBUG+
+- Headless mode: logging:false → NullHandler (silence)
+- Early logging: buffering of logs emitted before settings are loaded
 """
 
 import logging
@@ -29,36 +30,36 @@ user_logger = logging.getLogger("user")
 
 
 def _default_log_dir() -> str:
-    """Az alapértelmezett log könyvtár: a ``zwift_fan_controller.py`` belépő
-    script könyvtára (frozen exe esetén az exe melletti mappa).
+    """The default log directory: the directory of the
+    ``zwift_fan_controller.py`` entry script (next to the exe when frozen).
 
-    Ez a modul a ``smart_fan_controller/core/`` alatt él, ezért a belépő
-    script (projekt gyökér) három szinttel feljebb van. A refaktor előtt a
-    loggolás magában a belépő scriptben volt, így a logok a script mellé
-    kerültek – ezt a viselkedést állítja vissza.
+    This module lives under ``smart_fan_controller/core/``, so the entry
+    script (project root) is three levels up. Before the refactor logging
+    lived in the entry script itself, putting the logs next to the script
+    – this restores that behavior.
     """
     if getattr(sys, "frozen", False):
         return os.path.dirname(os.path.abspath(sys.executable))
-    # .../<gyökér>/smart_fan_controller/core/logging_setup.py → <gyökér>
+    # .../<root>/smart_fan_controller/core/logging_setup.py → <root>
     return os.path.dirname(
         os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     )
 
 
-# Modul-szintű state
+# Module-level state
 _log_dir: str = _default_log_dir()
 _logging_enabled: bool = True
 _early_mem_handlers: list[tuple[logging.Logger, MemoryHandler]] = []
 
 
 def _close_and_clear_handlers(lg: logging.Logger) -> None:
-    """A logger handlereit leválasztja ÉS bezárja.
+    """Detach AND close the logger's handlers.
 
-    A sima handlers.clear() nyitva hagyná a fájl-handlereket: a leírók
-    szivárognának, és Windows-on a nyitva felejtett handle miatt a
-    log-rotáció (fájl-átnevezés) WinError 32-vel meghiúsulna.
-    A MemoryHandler pufferét a close nem üríti (nincs target), így a korai
-    logok visszajátszása ettől nem sérül."""
+    A plain handlers.clear() would leave the file handlers open: the
+    descriptors would leak, and on Windows the forgotten open handle
+    makes log rotation (file rename) fail with WinError 32.
+    close does not drain the MemoryHandler buffer (it has no target), so
+    replaying the early logs is unaffected."""
     for h in lg.handlers[:]:
         lg.removeHandler(h)
         try:
@@ -68,31 +69,32 @@ def _close_and_clear_handlers(lg: logging.Logger) -> None:
 
 
 def setup_logging(log_directory: str | None = None, logging_enabled: bool = True) -> None:
-    """Logging konfiguráció: konzol + rotált fájl (500 KB max).
+    """Logging configuration: console + rotating file (500 KB max).
 
-    Két logger:
-      - ``user_logger``: Felhasználói üzenetek (konzolra + fájlba).
-        Konzolra tiszta formátum (csak az üzenet), fájlba időbélyeggel.
-      - ``logger``: Belső debug/info logok (fájlba mindig, konzolra WARNING+ felett).
+    Two loggers:
+      - ``user_logger``: user-facing messages (console + file). Clean
+        format on the console (message only), timestamped in the file.
+      - ``logger``: internal debug/info logs (always to file, console
+        only at WARNING+).
 
-    A log fájlok a ``log_directory``-ba kerülnek (ha érvényes), különben
-    a ``zwift_fan_controller.py`` belépő script könyvtárába (frozen exe
-    esetén az exe melletti mappába).
+    Log files go into ``log_directory`` (when valid), otherwise into the
+    directory of the ``zwift_fan_controller.py`` entry script (next to
+    the exe when frozen).
 
-    Ha ``logging_enabled`` False, mindkét logger NullHandler-t kap (teljes
-    némaság – se fájl, se konzol). A program-indítási összefoglaló ettől
-    függetlenül megjelenik (``print_startup_info`` print()-re vált).
+    When ``logging_enabled`` is False both loggers get a NullHandler
+    (total silence – no file, no console). The startup summary still
+    appears regardless (``print_startup_info`` switches to print()).
 
-    Többszöri hívás biztonságos: a korábbi handler-eket eltávolítja.
+    Safe to call repeatedly: previous handlers are removed.
 
     Args:
-        log_directory: Log fájlok könyvtára (None = alapértelmezett).
-        logging_enabled: Ha False, minden loggolás kikapcsol.
+        log_directory: Directory for the log files (None = default).
+        logging_enabled: When False, all logging is disabled.
     """
     global _log_dir, _logging_enabled
     _logging_enabled = logging_enabled
 
-    # Loggolás kikapcsolva → mindkét logger elnémítása NullHandler-rel
+    # Logging disabled → silence both loggers with a NullHandler
     if not logging_enabled:
         for name in ("user", "zwift_fan_controller_new"):
             lg = logging.getLogger(name)
@@ -116,9 +118,9 @@ def setup_logging(log_directory: str | None = None, logging_enabled: bool = True
     file_handler.setLevel(logging.DEBUG)
     file_handler.setFormatter(file_fmt)
 
-    # ── user_logger: felhasználói üzenetek ──
+    # ── user_logger: user-facing messages ──
     ul = logging.getLogger("user")
-    _close_and_clear_handlers(ul)  # Korábbi handlerek bezárása (újrahívás esetén)
+    _close_and_clear_handlers(ul)  # Close previous handlers (on re-invocation)
     ul.setLevel(logging.DEBUG)
     ul.propagate = False
 
@@ -128,7 +130,7 @@ def setup_logging(log_directory: str | None = None, logging_enabled: bool = True
     ul.addHandler(console_user)
     ul.addHandler(file_handler)
 
-    # ── logger: belső logok ──
+    # ── logger: internal logs ──
     il = logging.getLogger("zwift_fan_controller_new")
     _close_and_clear_handlers(il)
     il.setLevel(logging.DEBUG)
@@ -142,21 +144,20 @@ def setup_logging(log_directory: str | None = None, logging_enabled: bool = True
     il.addHandler(console_internal)
     il.addHandler(file_handler)
 
-    # Zajos külső könyvtárak elnémítása
+    # Silence noisy third-party libraries
     logging.getLogger("bleak").setLevel(logging.CRITICAL)
     logging.getLogger("openant").setLevel(logging.CRITICAL)
 
 
 def setup_early_logging() -> None:
-    """Korai loggolás: a settings betöltése ELŐTTI logokat memóriába puffereli.
+    """Early logging: buffer the logs emitted BEFORE settings are loaded.
 
-    Mivel a ``global_settings.logging`` flag csak a settings betöltése után
-    ismert, a korai logokat (pl. config validációs warningok) memóriában
-    tartjuk. A flag ismeretében később vagy visszajátsszuk a valódi
-    handlerekre (``flush_early_logging``), vagy eldobjuk
-    (``discard_early_logging``). Így ``logging: false`` esetén nem jön létre
-    fölösleges log fájl, ``logging: true`` esetén pedig a korai warningok sem
-    vesznek el.
+    Since the ``global_settings.logging`` flag is only known after the
+    settings load, the early logs (e.g. config validation warnings) are
+    kept in memory. Once the flag is known they are either replayed onto
+    the real handlers (``flush_early_logging``) or dropped
+    (``discard_early_logging``). This way ``logging: false`` creates no
+    stray log file, while ``logging: true`` loses no early warnings.
     """
     global _early_mem_handlers
     _early_mem_handlers = []
@@ -165,7 +166,7 @@ def setup_early_logging() -> None:
         _close_and_clear_handlers(lg)
         lg.setLevel(logging.DEBUG)
         lg.propagate = False
-        # Nagy kapacitás + magas flushLevel → nem ürül ki automatikusan
+        # Large capacity + high flushLevel → never flushes on its own
         mh = MemoryHandler(capacity=100000, flushLevel=logging.CRITICAL + 10)
         lg.addHandler(mh)
         _early_mem_handlers.append((lg, mh))
@@ -174,7 +175,7 @@ def setup_early_logging() -> None:
 
 
 def flush_early_logging() -> None:
-    """A pufferelt korai logokat visszajátssza a már beállított handlerekre."""
+    """Replay the buffered early logs onto the configured handlers."""
     global _early_mem_handlers
     for lg, mh in _early_mem_handlers:
         for record in mh.buffer:
@@ -184,7 +185,7 @@ def flush_early_logging() -> None:
 
 
 def discard_early_logging() -> None:
-    """A pufferelt korai logokat eldobja (logging: false eset)."""
+    """Drop the buffered early logs (the logging: false case)."""
     global _early_mem_handlers
     for _lg, mh in _early_mem_handlers:
         mh.buffer.clear()
@@ -193,9 +194,9 @@ def discard_early_logging() -> None:
 
 
 def is_logging_enabled() -> bool:
-    """Visszaadja, hogy a loggolás engedélyezve van-e (setup_logging állítja).
+    """Return whether logging is enabled (set by setup_logging).
 
-    A ``print_startup_info`` használja: ha a loggolás ki van kapcsolva,
-    ``print()``-re vált, hogy a startup összefoglaló akkor is megjelenjen.
+    Used by ``print_startup_info``: when logging is disabled it switches
+    to ``print()`` so the startup summary still appears.
     """
     return _logging_enabled

@@ -1,15 +1,15 @@
-"""Zwift API polling segédprocessz – moduláris felbontás.
+"""Zwift API polling helper process – modular breakdown.
 
-A Zwift HTTPS API-t kérdezi le és az adatokat UDP-n továbbítja a fő appnak.
-Külön processzként (akár külön ablakban) fut, a settings.json ``zwift_api``
-szekciójából konfigurálva.
+Polls the Zwift HTTPS API and forwards the data over UDP to the main
+app. Runs as a separate process (optionally in its own window),
+configured from the ``zwift_api`` section of settings.json.
 
-Almodulok:
-  - decoder:  ProtobufDecoder + PlayerState dekódolás
+Submodules:
+  - decoder:  ProtobufDecoder + PlayerState decoding
   - api:      ZwiftAuth (OAuth2) + ZwiftAPIClient (REST)
   - runtime:  ZwiftDataStore, UDPBroadcaster, run_polling_loop
-  - logsetup: saját loggolás (zwift_api_polling.log)
-  - __main__: belépési pont (settings.json betöltés, CLI)
+  - logsetup: its own logging (zwift_api_polling.log)
+  - __main__: entry point (settings.json loading, CLI)
 """
 from __future__ import annotations
 

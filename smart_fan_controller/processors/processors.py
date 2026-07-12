@@ -1,11 +1,11 @@
-"""Aszinkron processzorok – zóna-számítás, cooldown, dropout detektálás.
+"""Async processors – zone calculation, cooldown, dropout detection.
 
-Modulok közötti adatáramlás:
-- raw_power_queue, raw_hr_queue: Bemenő adatok
-- power_processor_task, hr_processor_task: Feldolgozás és zóna számítás
-- zone_event: Jelzés az új adat érkezéséről
-- zone_controller_task: Zóna kombinálás, cooldown, BLE küldés
-- dropout_checker_task: Adatforrás kiesés detektálása
+Data flow between the modules:
+- raw_power_queue, raw_hr_queue: incoming data
+- power_processor_task, hr_processor_task: processing and zone calculation
+- zone_event: signals the arrival of new data
+- zone_controller_task: zone combination, cooldown, BLE sending
+- dropout_checker_task: data source dropout detection
 """
 from __future__ import annotations
 
@@ -45,20 +45,20 @@ async def power_processor_task(
     settings: dict[str, Any],
     power_zones: dict[int, tuple[int, int]],
 ) -> None:
-    """Teljesítmény adatok feldolgozása – validálás, átlagolás, állapot frissítés.
+    """Process power data – validation, averaging, state updates.
 
-    Olvassa a raw_power_queue-t, validálja a beérkező watt értékeket,
-    gördülő átlagot számít, meghatározza a zónát, frissíti a megosztott
-    állapotot, majd jelzi a zone_event-tel, hogy zóna újraszámítás szükséges.
+    Reads raw_power_queue, validates the incoming watt values, computes
+    a rolling average, determines the zone, updates the shared state,
+    then signals via zone_event that a zone recalculation is needed.
 
     Args:
-        raw_power_queue: Nyers power adatok asyncio.Queue-ja.
-        state: A megosztott vezérlő állapot.
-        zone_event: asyncio.Event – beállítja, ha új átlag áll rendelkezésre.
-        power_averager: PowerAverager példány.
-        printer: ConsolePrinter a konzol kiíráshoz.
-        settings: Betöltött beállítások dict-je.
-        power_zones: Kiszámított power zóna határok.
+        raw_power_queue: asyncio.Queue of raw power data.
+        state: The shared controller state.
+        zone_event: asyncio.Event – set when a new average is available.
+        power_averager: PowerAverager instance.
+        printer: ConsolePrinter for console output.
+        settings: Dict of loaded settings.
+        power_zones: Precomputed power zone boundaries.
     """
     min_watt = settings["power_zones"].min_watt
     max_watt = settings["power_zones"].max_watt
@@ -81,8 +81,8 @@ async def power_processor_task(
 
         avg_power = power_averager.add_sample(power)
         if avg_power is None:
-            # Fix #39: Buffer feltöltés alatt is frissítjük a timestampet,
-            # hogy a dropout checker ne jelezzen hamis kiesést
+            # Fix #39: refresh the timestamp during buffer fill-up too, so
+            # the dropout checker does not report a false dropout
             async with state.lock:
                 state.last_power_time = now
             continue
@@ -105,14 +105,14 @@ async def power_processor_task(
             state.last_power_time = now
             state.current_power_zone = new_power_zone
             state.current_avg_power = avg_power
-            # Fix #1: UI snapshot frissítése lock alatt – konzisztens pillanatfelvétel
+            # Fix #1: update the UI snapshot under the lock – consistent view
             state.ui_snapshot.update(
                 state.current_zone,
                 float(avg_power),
                 state.current_avg_hr,
             )
 
-        zone_event.set()  # Zone controller újraszámítást igényel
+        zone_event.set()  # The zone controller needs a recalculation
 
 
 async def hr_processor_task(
@@ -124,23 +124,23 @@ async def hr_processor_task(
     settings: dict[str, Any],
     hr_zones: dict[str, int],
 ) -> None:
-    """HR adatok feldolgozása – validálás, átlagolás, állapot frissítés.
+    """Process HR data – validation, averaging, state updates.
 
-    Olvassa a raw_hr_queue-t, validálja a bpm értékeket, gördülő átlagot
-    számít, meghatározza a HR zónát, frissíti a megosztott állapotot, majd
-    jelzi a zone_event-tel, hogy zóna újraszámítás szükséges.
+    Reads raw_hr_queue, validates the bpm values, computes a rolling
+    average, determines the HR zone, updates the shared state, then
+    signals via zone_event that a zone recalculation is needed.
 
-    Frissíti a state.last_hr_time mezőt, amelyet a dropout checker
-    hr_only és higher_wins módban figyelembe vesz.
+    Updates state.last_hr_time, which the dropout checker takes into
+    account in the hr_only and higher_wins modes.
 
     Args:
-        raw_hr_queue: Nyers HR adatok asyncio.Queue-ja.
-        state: A megosztott vezérlő állapot.
-        zone_event: asyncio.Event – beállítja, ha új átlag áll rendelkezésre.
-        hr_averager: HRAverager példány.
-        printer: ConsolePrinter a konzol kiíráshoz.
-        settings: Betöltött beállítások dict-je.
-        hr_zones: Kiszámított HR zóna határok.
+        raw_hr_queue: asyncio.Queue of raw HR data.
+        state: The shared controller state.
+        zone_event: asyncio.Event – set when a new average is available.
+        hr_averager: HRAverager instance.
+        printer: ConsolePrinter for console output.
+        settings: Dict of loaded settings.
+        hr_zones: Precomputed HR zone boundaries.
     """
     hrz = settings["heart_rate_zones"]
     zone_mode = get_effective_zone_mode(settings)
@@ -159,7 +159,7 @@ async def hr_processor_task(
         if not is_valid_hr(hr, valid_min_hr, valid_max_hr):
             continue
 
-        # Egyetlen now a ciklus elejéhez – konzisztens timestamp az egész iterációban
+        # A single now at the top of the loop – consistent timestamp per iteration
         now = time.monotonic()
 
         if not hr_enabled:
@@ -174,7 +174,7 @@ async def hr_processor_task(
         avg_hr = hr_averager.add_sample(hr)
 
         if avg_hr is None:
-            # Buffer feltöltés alatt is frissítjük a timestampet (dropout checker számára)
+            # Refresh the timestamp during buffer fill-up too (for the dropout checker)
             async with state.lock:
                 state.last_hr_time = now
             continue
@@ -197,14 +197,14 @@ async def hr_processor_task(
             state.last_hr_time = now
             state.current_hr_zone = new_hr_zone
             state.current_avg_hr = float(avg_hr)
-            # Fix #1: UI snapshot frissítése lock alatt – konzisztens pillanatfelvétel
+            # Fix #1: update the UI snapshot under the lock – consistent view
             state.ui_snapshot.update(
                 state.current_zone,
                 state.current_avg_power,
                 float(avg_hr),
             )
 
-        zone_event.set()  # Zone controller újraszámítást igényel
+        zone_event.set()  # The zone controller needs a recalculation
 
 
 async def zone_controller_task(
@@ -214,24 +214,24 @@ async def zone_controller_task(
     settings: dict[str, Any],
     zone_event: asyncio.Event,
 ) -> None:
-    """Zóna vezérlő – kombinálja a power és HR zónákat, alkalmazza a cooldownt.
+    """Zone controller – combines the power and HR zones, applies the cooldown.
 
-    Megvárja a zone_event jelzést (amelyet a power és HR processorok állítanak be),
-    majd a legfrissebb állapot alapján:
-    1. Meghatározza a final zónát (apply_zone_mode / higher_wins)
-    2. Alkalmazza a cooldown logikát (CooldownController)
-    3. Ha szükséges, elküldi a zóna parancsot a BLE fan queue-ba
+    Waits for the zone_event signal (set by the power and HR processors),
+    then based on the freshest state:
+    1. Determines the final zone (apply_zone_mode / higher_wins)
+    2. Applies the cooldown logic (CooldownController)
+    3. Sends the zone command to the BLE fan queue when needed
 
-    Megjegyzés higher_wins módban: ha hr_zone None (az átlagoló még nem gyűjtött
-    elég mintát), de hr_fresh True, az apply_zone_mode csak a power_zone-t
-    használja – ez szándékos viselkedés.
+    Note for higher_wins mode: when hr_zone is None (the averager has not
+    collected enough samples yet) but hr_fresh is True, apply_zone_mode
+    uses only power_zone – this is intentional.
 
     Args:
-        state: A megosztott vezérlő állapot.
-        zone_queue: BLE fan output asyncio.Queue-ja.
-        cooldown_ctrl: CooldownController példány.
-        settings: Betöltött beállítások dict-je.
-        zone_event: asyncio.Event – jelzi, hogy új adat érkezett.
+        state: The shared controller state.
+        zone_queue: asyncio.Queue of the BLE fan output.
+        cooldown_ctrl: CooldownController instance.
+        settings: Dict of loaded settings.
+        zone_event: asyncio.Event – signals that new data arrived.
     """
     zone_mode = get_effective_zone_mode(settings)
     zero_power_immediate = settings["power_zones"].zero_power_immediate
@@ -246,7 +246,7 @@ async def zone_controller_task(
     while True:
         await zone_event.wait()
         zone_event.clear()
-        # Állapot pillanatfelvétel (lock alatt)
+        # State snapshot (under the lock)
         async with state.lock:
             power_zone = state.current_power_zone
             hr_zone = state.current_hr_zone
@@ -255,15 +255,15 @@ async def zone_controller_task(
             last_power = state.last_power_time
             last_hr = state.last_hr_time
 
-        # Frissesség ellenőrzése (dropout figyelembe vételéhez)
-        # Fix #3: last_power_time most Optional – None = még nem érkezett adat
+        # Freshness check (to account for dropouts)
+        # Fix #3: last_power_time is Optional now – None = no data received yet
         power_fresh = (
             last_power is not None
             and (now - last_power) < power_dropout_timeout
         )
         hr_fresh = last_hr is not None and (now - last_hr) < hr_dropout_timeout
 
-        # Zóna kombinálás a zone_mode alapján
+        # Zone combination based on zone_mode
         if zone_mode == ZoneMode.POWER_ONLY:
             final_zone = power_zone if power_fresh else None
         elif zone_mode == ZoneMode.HR_ONLY:
@@ -274,21 +274,21 @@ async def zone_controller_task(
             final_zone = apply_zone_mode(p, h, zone_mode)
 
         if final_zone is None:
-            continue  # Nincs elég friss adat a döntéshez
+            continue  # Not enough fresh data for a decision
 
-        # Azonnali leállás flag (zero_power_immediate / zero_hr_immediate)
+        # Immediate stop flag (zero_power_immediate / zero_hr_immediate)
         use_zero_immediate = (
             (zero_power_immediate and power_zone is not None and power_zone == 0 and power_fresh)
             or (zero_hr_immediate and hr_zone is not None and hr_zone == 0 and hr_fresh)
         )
 
-        # Cooldown logika alkalmazása
+        # Apply the cooldown logic
         zone_to_send = cooldown_ctrl.process(current_zone, final_zone, use_zero_immediate)
 
         if zone_to_send is not None:
             async with state.lock:
                 state.current_zone = zone_to_send
-                # Fix #1: UI snapshot frissítése lock alatt – konzisztens pillanatfelvétel
+                # Fix #1: update the UI snapshot under the lock – consistent view
                 state.ui_snapshot.update(
                     zone_to_send,
                     state.current_avg_power,
@@ -309,18 +309,18 @@ async def dropout_checker_task(
     zone_mode: ZoneMode,
     cooldown_ctrl: CooldownController,
 ) -> None:
-    """Adatforrás kiesés detektálása, Z0 küldése és pufferek ürítése.
+    """Detect data source dropouts, send Z0 and clear the buffers.
 
     Args:
-        state: A megosztott vezérlő állapot.
-        zonequeue: BLE fan output asyncio.Queue-ja.
-        settings: Betöltött beállítások dict-je.
-        poweraverager: PowerAverager példány (ürítéshez).
-        hraverager: HRAverager példány (ürítéshez).
-        power_dropout_timeout: Power forrás timeout másodpercben.
-        hr_dropout_timeout: HR forrás timeout másodpercben.
-        zone_mode: Aktív zóna mód (paraméterként kapja, nem számolja újra).
-        cooldown_ctrl: CooldownController példány (dropout-kor reseteléshez).
+        state: The shared controller state.
+        zonequeue: asyncio.Queue of the BLE fan output.
+        settings: Dict of loaded settings.
+        poweraverager: PowerAverager instance (for clearing).
+        hraverager: HRAverager instance (for clearing).
+        power_dropout_timeout: Power source timeout in seconds.
+        hr_dropout_timeout: HR source timeout in seconds.
+        zone_mode: Active zone mode (received as a parameter, not recomputed).
+        cooldown_ctrl: CooldownController instance (reset on dropout).
     """
     logger.info("Dropout checker korrutin elindítva")
 
@@ -329,12 +329,12 @@ async def dropout_checker_task(
         now = time.monotonic()
         send_dropout = False
 
-        # Fix #2: Egyetlen lock blokk az egész ellenőrzéshez
+        # Fix #2: a single lock block for the whole check
         async with state.lock:
             if state.current_zone is None or state.current_zone == 0:
                 continue
 
-            # Fix #3: last_power_time Optional – None = még nem érkezett adat
+            # Fix #3: last_power_time is Optional – None = no data received yet
             power_fresh = (
                 state.last_power_time is not None
                 and (now - state.last_power_time) < power_dropout_timeout
@@ -344,7 +344,7 @@ async def dropout_checker_task(
                 and (now - state.last_hr_time) < hr_dropout_timeout
             )
 
-            # Eltelt idő az utolsó adat óta (inf, ha még sosem érkezett)
+            # Time since the last data (inf when none ever arrived)
             power_elapsed = (
                 now - state.last_power_time
                 if state.last_power_time is not None else math.inf
@@ -359,7 +359,7 @@ async def dropout_checker_task(
                 elapsed = power_elapsed
                 label = "power"
             elif zone_mode == ZoneMode.HR_ONLY:
-                # Fix #4: hr_only dropout akkor is triggerel, ha soha nem érkezett HR
+                # Fix #4: hr_only dropout triggers even when HR never arrived
                 stale = not hr_fresh
                 elapsed = hr_elapsed
                 label = "HR"
@@ -386,9 +386,9 @@ async def dropout_checker_task(
                     state.current_avg_hr = None
                     state.current_hr_zone = None
                 state.current_zone = 0
-                # Fix #28: Cooldown állapot resetelése dropout-kor
+                # Fix #28: reset the cooldown state on dropout
                 cooldown_ctrl.reset()
-                # Fix #40: UI snapshot frissítése – a HUD is lássa a dropout-ot
+                # Fix #40: update the UI snapshot – the HUD must see the dropout too
                 state.ui_snapshot.update(0, state.current_avg_power, state.current_avg_hr)
                 send_dropout = True
 
@@ -404,28 +404,29 @@ async def _guarded_task(
     retry_delay: float = 5.0,
     coro_factory: Callable[[], Coroutine[Any, Any, None]] | None = None,
 ) -> None:
-    """Task wrapper: elkapja és logolja a váratlan kivételeket.
+    """Task wrapper: catches and logs unexpected exceptions.
 
-    CancelledError-t tovább engedi (normál leálláshoz szükséges).
-    Minden más kivételt kritikus szinten logolja, hogy ne tűnjön el csendben.
+    CancelledError is re-raised (needed for a normal shutdown). Every
+    other exception is logged at error level so nothing dies silently.
 
-    Ha max_retries > 0 és coro_factory adott, a task automatikusan újraindul
-    exponenciális backoff-fal (retry_delay * 2^attempt, max 60s).
+    When max_retries > 0 and a coro_factory is given, the task restarts
+    automatically with exponential backoff (retry_delay * 2^attempt,
+    capped at 60 s).
 
     Args:
-        coro: Az indítandó korrutin (első futáshoz).
-        name: A task neve (logoláshoz).
-        max_retries: Max újrapróbálkozások száma (0 = nincs retry).
-        retry_delay: Kezdő várakozás másodpercben újraindítás előtt.
-        coro_factory: Paraméter nélküli callable, ami új korrutint ad vissza.
-            Retry-hoz kötelező, mert egy korrutin csak egyszer await-elhető.
+        coro: The coroutine to run (for the first run).
+        name: Name of the task (for logging).
+        max_retries: Maximum retry count (0 = no retry).
+        retry_delay: Initial wait in seconds before a restart.
+        coro_factory: Zero-argument callable returning a fresh coroutine.
+            Required for retries, since a coroutine can only be awaited once.
     """
     attempt = 0
     current_coro = coro
     while True:
         try:
             await current_coro
-            return  # Normál befejezés
+            return  # Normal completion
         except asyncio.CancelledError:
             raise
         except Exception as exc:

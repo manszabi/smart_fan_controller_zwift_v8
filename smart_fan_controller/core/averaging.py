@@ -1,27 +1,27 @@
-"""Gördülő átlagolás – tiszta domain-logika (nincs Qt/BLE/IO függőség).
+"""Rolling averaging – pure domain logic (no Qt/BLE/IO dependencies).
 
-A ``_RollingAverager`` és leszármazottai bejövő numerikus mintákból számítanak
-gördülő átlagot. Csak a beépített könyvtárakra (``collections.deque``,
-``logging``) támaszkodnak, ezért önállóan is tesztelhetők.
+``_RollingAverager`` and its subclasses compute rolling averages from
+incoming numeric samples. They rely only on the standard library
+(``collections.deque``, ``logging``), so they are testable on their own.
 """
 from __future__ import annotations
 
 import logging
 from collections import deque
 
-# A belső debug logok a projekt nevesített loggerére mennek (nem a root-ra),
-# konzisztensen a többi modullal.
+# Internal debug logs go to the project's named logger (not the root),
+# consistent with the other modules.
 logger = logging.getLogger("zwift_fan_controller_new")
 
 
 def compute_average(samples: "deque[float]") -> float | None:
-    """Kiszámítja a minták számtani átlagát.
+    """Compute the arithmetic mean of the samples.
 
     Args:
-        samples: Mintákat tartalmazó deque.
+        samples: Deque holding the samples.
 
     Returns:
-        Az átlag float értéke, vagy None, ha nincs minta.
+        The average as float, or None when there are no samples.
     """
     if not samples:
         return None
@@ -29,18 +29,18 @@ def compute_average(samples: "deque[float]") -> float | None:
 
 
 class _RollingAverager:
-    """Gördülő átlagot számít bejövő numerikus mintákból.
+    """Computes a rolling average from incoming numeric samples.
 
-    buffer_rate_hz mintát vár másodpercenként, és buffer_seconds
-    másodpercnyi ablakot tart. Az effective_minimum automatikusan
-    alkalmazkodik a valódi buffer méretéhez, így akkor is
-    számol átlagot, ha kevesebb adat érkezik, mint minimum_samples.
+    Expects buffer_rate_hz samples per second and keeps a window of
+    buffer_seconds. The effective_minimum automatically adapts to the
+    real buffer size, so an average is produced even when fewer samples
+    arrive than minimum_samples.
 
-    Attribútumok:
-        buffer: Mintákat tároló deque (maxlen = buffer_seconds × buffer_rate_hz).
-        minimum_samples: Kívánt minimum mintaszám érvényes átlaghoz.
-        effective_minimum: Ténylegesen alkalmazott minimum (max: buffersize // 2).
-        buffersize: A buffer maximális mérete.
+    Attributes:
+        buffer: Deque of samples (maxlen = buffer_seconds × buffer_rate_hz).
+        minimum_samples: Desired minimum sample count for a valid average.
+        effective_minimum: Actually applied minimum (cap: buffersize // 2).
+        buffersize: Maximum size of the buffer.
     """
 
     def __init__(
@@ -54,12 +54,12 @@ class _RollingAverager:
         self.buffersize = max(1, int(buffer_seconds) * rate)
         self.buffer: deque[float] = deque(maxlen=self.buffersize)
         self.minimum_samples = minimum_samples
-        # Védelem: effective_minimum soha nem nagyobb, mint a buffer fele
+        # Guard: effective_minimum never exceeds half of the buffer
         self.effective_minimum = min(self.minimum_samples, max(1, self.buffersize // 2))
         self._label = label
 
     def add_sample(self, value: float) -> float | None:
-        """Új minta hozzáadása és az átlag visszaadása, ha elég minta van."""
+        """Add a sample and return the average once enough samples exist."""
         self.buffer.append(value)
         if len(self.buffer) < self.effective_minimum:
             logger.debug(
@@ -72,12 +72,12 @@ class _RollingAverager:
         return compute_average(self.buffer)
 
     def clear(self) -> None:
-        """Törli az összes pufferelt mintát."""
+        """Clear all buffered samples."""
         self.buffer.clear()
 
 
 class PowerAverager(_RollingAverager):
-    """Gördülő átlagszámítás teljesítmény (watt) mintákhoz."""
+    """Rolling average for power (watt) samples."""
 
     def __init__(
         self, buffer_seconds: int, minimum_samples: int, buffer_rate_hz: int = 4
@@ -86,7 +86,7 @@ class PowerAverager(_RollingAverager):
 
 
 class HRAverager(_RollingAverager):
-    """Gördülő átlagszámítás szívfrekvencia (bpm) mintákhoz."""
+    """Rolling average for heart-rate (bpm) samples."""
 
     def __init__(
         self, buffer_seconds: int, minimum_samples: int, buffer_rate_hz: int = 4

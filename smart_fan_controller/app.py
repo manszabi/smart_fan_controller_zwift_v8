@@ -1,16 +1,16 @@
-"""Alkalmazás belépőpont – asyncio event loop + PySide6 HUD összehangolása.
+"""Application entry point – coordinating the asyncio loop and the PySide6 HUD.
 
-A ``main()`` indítja a teljes alkalmazást:
-  1. Windows-specifikus asyncio event loop policy
-  2. Korai logging (settings betöltés előtti pufferelés)
-  3. Settings betöltés (frozen exe esetén az exe mellől, különben a script mellől)
-  4. Logging véglegesítés a global_settings.logging szerint
-  5. FanController asyncio futtatása külön daemon szálon
-  6. PySide6 HUD a fő szálon (headless módban HUD nélkül)
-  7. Signal-kezelés (SIGTERM/SIGINT) és tiszta leállítás
+``main()`` starts the whole application:
+  1. Windows-specific asyncio event loop policy
+  2. Early logging (buffering before the settings load)
+  3. Settings load (next to the exe when frozen, next to the script otherwise)
+  4. Logging finalized per global_settings.logging
+  5. FanController asyncio run on a separate daemon thread
+  6. PySide6 HUD on the main thread (headless mode runs without a HUD)
+  7. Signal handling (SIGTERM/SIGINT) and clean shutdown
 
-A domain-logika a smart_fan_controller almodulokban van; ez a modul csak
-az életciklust és a szálak/Qt összehangolását végzi.
+The domain logic lives in the smart_fan_controller submodules; this
+module only manages the lifecycle and thread/Qt coordination.
 """
 from __future__ import annotations
 
@@ -24,14 +24,15 @@ import threading
 import warnings
 from typing import Any
 
-# COM inicializálás threading modellje – APARTMENTTHREADED kell a Qt-nek (OLE/DnD),
-# és ezt a pywinauto/PySide6 importálása ELŐTT kell beállítani, különben COM conflict lesz.
+# COM init threading model – Qt needs APARTMENTTHREADED (OLE/DnD), and it
+# must be set BEFORE importing pywinauto/PySide6, otherwise COM conflicts.
 if not hasattr(sys, "coinit_flags"):
     sys.coinit_flags = 2  # type: ignore[attr-defined]  # COINIT_APARTMENTTHREADED
 
-# A pywinauto importáláskor figyelmeztet, ha a coinit_flags-et kívülről állították be
-# (lásd fent). Ez nálunk szándékos, ezért a (ártalmatlan) UserWarning-ot elnémítjuk.
-# A coinit_flags beállítás MARAD érvényben – csak a warning szöveget rejtjük el.
+# pywinauto warns at import time when coinit_flags was set externally (see
+# above). That is intentional here, so the (harmless) UserWarning is
+# silenced. The coinit_flags setting REMAINS in effect – only the warning
+# text is hidden.
 warnings.filterwarnings(
     "ignore",
     message="Apply externally defined coinit_flags",
@@ -39,9 +40,10 @@ warnings.filterwarnings(
     module="pywinauto",
 )
 
-# A Qt multimédia FFmpeg-háttere induláskor egy info sort ír ki
-# ("qt.multimedia.ffmpeg: Using Qt multimedia with FFmpeg ..."). Ezt a Qt logging
-# szabályon keresztül némítjuk. A meglévő QT_LOGGING_RULES-t nem írjuk felül, hozzáfűzünk.
+# The Qt multimedia FFmpeg backend prints an info line at startup
+# ("qt.multimedia.ffmpeg: Using Qt multimedia with FFmpeg ..."). It is
+# silenced via a Qt logging rule. The existing QT_LOGGING_RULES is not
+# overwritten, we append to it.
 _qt_rule = "qt.multimedia.ffmpeg=false"
 _existing_rules = os.environ.get("QT_LOGGING_RULES", "")
 if _qt_rule not in _existing_rules:
@@ -61,8 +63,9 @@ from smart_fan_controller.core import (
 
 __all__ = ["main", "_PYSIDE6_AVAILABLE"]
 
-# PySide6 elérhetőség: a HUD opcionális (headless módban, pl. Raspberry Pi
-# terminálon, az app HUD nélkül fut). A flag a main() ágválasztását vezérli.
+# PySide6 availability: the HUD is optional (in headless mode, e.g. on a
+# Raspberry Pi terminal, the app runs without a HUD). The flag drives the
+# branch selection in main().
 _PYSIDE6_AVAILABLE: bool = False
 try:
     from PySide6.QtWidgets import QApplication  # noqa: F401  # type: ignore[import-untyped]
@@ -72,7 +75,8 @@ try:
 except ImportError:
     pass
 
-# A HUD ablak a ui csomagban van; PySide6 nélkül az import elhasal (None marad).
+# The HUD window lives in the ui package; without PySide6 the import
+# fails (stays None).
 HUDWindow: Any = None
 try:
     from smart_fan_controller.ui import HUDWindow  # type: ignore[assignment]
@@ -81,48 +85,48 @@ except ImportError:
 
 
 def main() -> None:
-    # Korai logging: a settings betöltése előtti logokat memóriába puffereljük,
-    # mert a logging flag még nem ismert. Így logging:false esetén nem jön létre
-    # fölösleges log fájl, logging:true esetén a korai warningok sem vesznek el.
+    # Early logging: logs before the settings load are buffered in memory
+    # because the logging flag is not known yet. logging:false then creates
+    # no stray log file, while logging:true loses no early warnings.
     setup_early_logging()
 
-    # PyInstaller frozen exe: settings.json az exe mellett keresendő
+    # PyInstaller frozen exe: settings.json is looked up next to the exe
     if getattr(sys, 'frozen', False):
         _exe_dir = os.path.dirname(os.path.abspath(sys.executable))
         _settings_path = os.path.join(_exe_dir, "settings.json")
     else:
-        # A fő belépő script könyvtára (a csomag szülője), nem ezé a modulé.
+        # Directory of the main entry script (the package parent), not this module.
         _script_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         _settings_path = os.path.join(_script_dir, "settings.json")
     controller = FanController(_settings_path)
 
-    # Logging konfigurálása a betöltött beállítások alapján
+    # Configure logging based on the loaded settings
     _gs = controller.settings["global_settings"]
     if not _gs.logging:
-        # Loggolás kikapcsolva → teljes némaság, korai logok eldobva
+        # Logging disabled → total silence, early logs dropped
         setup_logging(_gs.log_directory, logging_enabled=False)
         discard_early_logging()
     else:
         setup_logging(_gs.log_directory)
-        # Korai (betöltés előtti) logok visszajátszása a valódi handlerekre
+        # Replay the early (pre-load) logs onto the real handlers
         flush_early_logging()
 
     controller.print_startup_info()
 
-    # Windows: SelectorEventLoop megbízhatóbb threaded asyncio-hoz. Explicit
-    # loop-példányosítás (nem event loop policy): a policy API deprecated
-    # (Python 3.16-ban megszűnik), és a policy-s megoldás 3.14+ alatt már
-    # nem is érvényesült.
+    # Windows: SelectorEventLoop is more reliable for threaded asyncio.
+    # Explicit loop instantiation (not an event loop policy): the policy
+    # API is deprecated (removed in Python 3.16), and the policy-based
+    # solution no longer took effect on 3.14+ anyway.
     if _platform.system() == "Windows":
         loop: asyncio.AbstractEventLoop = asyncio.SelectorEventLoop()
     else:
         loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     cleaned_up = False
-    # Shutdown event: az asyncio loop-ot megbízhatóan leállítja
+    # Shutdown event: stops the asyncio loop reliably
     shutdown_event = asyncio.Event()
-    # Mutable konténer: a signal handler-nek kell a HUD referencia,
-    # ami később jön létre. Lista azért, hogy nonlocal nélkül módosítható legyen.
+    # Mutable container: the signal handler needs the HUD reference that
+    # is created later. A list so it can be mutated without nonlocal.
     hud_ref: list[Any] = [None]
 
     def cleanup() -> None:
@@ -135,9 +139,9 @@ def main() -> None:
     def signal_handler(signum: int, frame: Any) -> None:
         user_logger.info(f"\nSignal {signum} fogadva, leállítás...")
         cleanup()
-        # A HUD close()-on keresztül indítjuk a leállítást, hogy a
-        # shutdown hang lejátszódhasson. A closeEvent timer-je a hang
-        # végén hívja a tényleges close-t, ami kilép a Qt event loop-ból.
+        # Shutdown goes through HUD close() so the shutdown sound can
+        # play. The closeEvent timer performs the real close at the end
+        # of the sound, which exits the Qt event loop.
         hud = hud_ref[0]
         if hud is not None:
             try:
@@ -146,7 +150,7 @@ def main() -> None:
                     hud, "close", Qt.ConnectionType.QueuedConnection,
                 )
             except Exception as exc:
-                # Fallback: ha az invokeMethod nem működik, quit() azonnal
+                # Fallback: when invokeMethod does not work, quit() immediately
                 logger.debug(f"HUD invokeMethod hiba: {exc}")
                 try:
                     from PySide6.QtWidgets import QApplication as _QApp
@@ -160,20 +164,20 @@ def main() -> None:
         except Exception as exc:
             logger.debug(f"shutdown_event.set hiba: {exc}")
 
-    # SIGTERM: Unix-on megbízható, Windows-on a Popen.terminate() nem garantálja
-    # SIGINT: Ctrl+C mindkét platformon működik
+    # SIGTERM: reliable on Unix; on Windows Popen.terminate() gives no guarantee
+    # SIGINT: Ctrl+C works on both platforms
     signal.signal(signal.SIGTERM, signal_handler)
     try:
         signal.signal(signal.SIGINT, signal_handler)
     except (OSError, ValueError):
-        pass  # Egyes környezetekben (pl. nem főszál) SIGINT nem regisztrálható
+        pass  # In some environments (e.g. non-main thread) SIGINT cannot be registered
 
     atexit.register(cleanup)
 
     loop_ready = threading.Event()
 
     async def _run_until_shutdown() -> None:
-        """Controller futtatása shutdown_event-ig."""
+        """Run the controller until shutdown_event."""
         controller_task = asyncio.create_task(controller.run())
         shutdown_task = asyncio.create_task(shutdown_event.wait())
         _done, pending = await asyncio.wait(
@@ -189,57 +193,58 @@ def main() -> None:
 
     def run_asyncio() -> None:
         asyncio.set_event_loop(loop)
-        # Jelezzük, hogy az event loop fut és kész feladatokat fogadni
+        # Signal that the event loop runs and is ready to accept work
         loop.call_soon(loop_ready.set)
         try:
             loop.run_until_complete(_run_until_shutdown())
         except Exception as exc:
-            # Fix #22: teljes traceback logolása
+            # Fix #22: log the full traceback
             logger.error(f"AsyncioThread hiba: {exc}", exc_info=True)
         finally:
-            loop_ready.set()  # Ha hiba miatt kilép, ne blokkoljon örökre
+            loop_ready.set()  # On an error exit, never block forever
 
     asyncio_thread = threading.Thread(
         target=run_asyncio, daemon=True, name="AsyncioThread"
     )
     asyncio_thread.start()
 
-    # Megvárjuk, amíg az asyncio event loop ténylegesen elindul (max 5s)
+    # Wait until the asyncio event loop has actually started (max 5 s)
     loop_ready.wait(timeout=5.0)
 
     def _finish_shutdown() -> None:
-        """Közös leállítási lépések (HUD-os és headless ág)."""
+        """Shared shutdown steps (HUD and headless branches)."""
         cleanup()
-        # Shutdown event jelzése → asyncio loop megbízhatóan leáll
+        # Signal the shutdown event → the asyncio loop stops reliably
         try:
             loop.call_soon_threadsafe(shutdown_event.set)
         except Exception as exc:
             logger.debug(f"shutdown_event.set hiba: {exc}")
         asyncio_thread.join(timeout=3.0)
         if asyncio_thread.is_alive():
-            # Futó event loopot TILOS bezárni (RuntimeError-t dobna a
-            # kilépési útvonalon); a daemon szál a processz végén leáll.
+            # A running event loop must NOT be closed (it would raise a
+            # RuntimeError on the exit path); the daemon thread dies with
+            # the process.
             logger.warning("AsyncioThread nem állt le 3s alatt – loop.close() kihagyva")
         else:
             loop.close()
         user_logger.info("\nProgram leállítva.")
 
-    # Fix #20: PySide6 opcionális – headless módban HUD nélkül fut
+    # Fix #20: PySide6 is optional – headless mode runs without a HUD
     if _PYSIDE6_AVAILABLE:
         from PySide6.QtWidgets import QApplication
         from PySide6.QtCore import qInstallMessageHandler, QtMsgType
 
-        # A pywinauto már beállította a process DPI awareness-t, ezért a Qt
-        # SetProcessDpiAwarenessContext() hívása "access denied"-del meghiúsul.
-        # Ez ártalmatlan warning – elnyomjuk, hogy ne zavarjon a konzol outputban.
+        # pywinauto already set the process DPI awareness, so the Qt
+        # SetProcessDpiAwarenessContext() call fails with "access denied".
+        # A harmless warning – suppressed to keep the console output clean.
         def _qt_message_filter(mode: QtMsgType, _context: Any, message: str) -> None:
             if "SetProcessDpiAwarenessContext" in message:
-                return  # elnyomjuk
+                return  # suppress
             sys.stderr.write(message + "\n")
 
         qInstallMessageHandler(_qt_message_filter)
         app = QApplication(sys.argv)
-        qInstallMessageHandler(None)  # type: ignore[arg-type]  # visszaállítjuk az alapértelmezett handler-t
+        qInstallMessageHandler(None)  # type: ignore[arg-type]  # restore the default handler
         hud = HUDWindow(controller, app)
         hud_ref[0] = hud
         try:
@@ -247,11 +252,11 @@ def main() -> None:
         except KeyboardInterrupt:
             user_logger.info("\nLeállítás (Ctrl+C)...")
         finally:
-            # Ha a HUD még nem kezdte a bezárást, elindítjuk a shutdown hangot
+            # If the HUD has not begun closing yet, start the shutdown sound
             if not getattr(hud, "_closing", False):
-                hud.close()  # closeEvent phase 1: hang indul, event.ignore()
-                # Qt event loop már nem fut, manuálisan pumpáljuk az eseményeket
-                # amíg a shutdown hang lejátszódik
+                hud.close()  # closeEvent phase 1: sound starts, event.ignore()
+                # The Qt event loop no longer runs; pump the events manually
+                # while the shutdown sound plays
                 duration_ms = hud.sound.sound_duration_ms("hud_shutdown")
                 if duration_ms > 0:
                     from PySide6.QtCore import QElapsedTimer
@@ -259,7 +264,7 @@ def main() -> None:
                     elapsed.start()
                     while elapsed.elapsed() < duration_ms + 150:
                         app.processEvents()
-            # Mindenképpen biztosítjuk a végleges bezárást
+            # Guarantee the final close in every case
             hud._close_done = True
             hud.cleanup_sound()
             hud.close()

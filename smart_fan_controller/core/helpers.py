@@ -1,7 +1,8 @@
-"""Segédfüggvények – tiszta logika, nincs Qt/BLE/IO függőség.
+"""Helper functions – pure logic, no Qt/BLE/IO dependencies.
 
-Path validáció, audio generálás, és egyéb utilitások az alkalmazás
-számára. Ezek a függvények nincs mellékhatásuk és egymástól függetlenek.
+Path validation, audio generation and other utilities for the
+application. These functions are side-effect free and independent of
+each other.
 """
 from __future__ import annotations
 
@@ -18,22 +19,22 @@ user_logger = logging.getLogger("user")
 def resolve_log_dir(
     log_directory: str | None, default_dir: str | None = None
 ) -> str:
-    """Log könyvtár meghatározása és validálása.
+    """Determine and validate the log directory.
 
-    Ha ``log_directory`` None, üres, vagy nem létezik / nem hozható létre,
-    a ``default_dir`` fallback-et használja. Ha ``default_dir`` None,
-    az aktuális munkakönyvtárat (CWD) használja.
+    When ``log_directory`` is None, empty, or cannot be created/written,
+    the ``default_dir`` fallback is used. When ``default_dir`` is None,
+    the current working directory (CWD) is used.
 
-    A fő alkalmazás a saját modul-könyvtárát adja át ``default_dir``-ként,
-    hogy a logok a script mellé kerüljenek (a refaktor előtti viselkedés),
-    nem pedig az indítási munkakönyvtárba.
+    The main application passes its own module directory as
+    ``default_dir`` so the logs land next to the script (pre-refactor
+    behavior) instead of the launch working directory.
 
     Args:
-        log_directory: Kérésezett log könyvtár elérési útja, vagy None.
-        default_dir: Fallback könyvtár (None = aktuális munkakönyvtár).
+        log_directory: Requested log directory path, or None.
+        default_dir: Fallback directory (None = current working dir).
 
     Returns:
-        Érvényes, írható könyvtár elérési útja.
+        A valid, writable directory path.
     """
     if default_dir is None:
         default_dir = os.getcwd()
@@ -46,14 +47,14 @@ def resolve_log_dir(
 
     try:
         os.makedirs(log_directory, exist_ok=True)
-        # Írhatóság tesztelése
+        # Writability test
         test_file = os.path.join(log_directory, ".log_write_test")
         with open(test_file, "w") as f:
             f.write("test")
         os.remove(test_file)
         return log_directory
     except OSError:
-        # Nem sikerült létrehozni / írni – fallback
+        # Could not create / write – fall back
         user_logger.warning(
             f"⚠ log_directory nem elérhető: '{log_directory}', "
             f"alapértelmezett használata: '{default_dir}'"
@@ -66,16 +67,16 @@ def generate_tone(
     sample_rate: int = 22050,
     volume: float = 0.4,
 ) -> bytes:
-    """Szinuszhullám-alapú WAV generálás memóriában.
+    """Sine-wave based WAV generation in memory.
 
     Args:
-        frequencies: Lista (freq_hz, duration_sec, amplitude_mult) tuple-ökből.
-                     Több elem esetén egymás után fűzi a hangokat.
-        sample_rate: Mintavételezési ráta (Hz).
-        volume: Hangerő szorzó (0.0–1.0).
+        frequencies: List of (freq_hz, duration_sec, amplitude_mult)
+                     tuples. Multiple items are concatenated in order.
+        sample_rate: Sampling rate (Hz).
+        volume: Volume multiplier (0.0–1.0).
 
     Returns:
-        WAV audio adat byte-okban (memóriában, lejátszáshoz kész).
+        WAV audio data in bytes (in memory, ready for playback).
 
     Example:
         >>> wav_data = generate_tone([(440, 0.5, 1.0), (880, 0.5, 0.5)])
@@ -87,7 +88,7 @@ def generate_tone(
         n_samples = int(sample_rate * duration)
         for i in range(n_samples):
             t = i / sample_rate
-            # Fade in/out az audió kattanás elkerülésére
+            # Fade in/out to avoid audio clicks
             fade_samples = min(200, n_samples // 4)
             fade = 1.0
             if fade_samples > 0:

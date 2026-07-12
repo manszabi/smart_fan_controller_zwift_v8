@@ -1,13 +1,14 @@
-"""zwift_api_polling.py – vékony belépő a Zwift API polling segédprocesszhez.
+"""zwift_api_polling.py – thin entry for the Zwift API polling helper process.
 
-A tényleges implementáció a ``smart_fan_controller.zwift_api`` csomagba került
-(decoder / api / runtime / logsetup / __main__). Ez a fájl megőrzi a közvetlen
-futtatás és a PyInstaller entry-point kompatibilitását.
+The actual implementation moved into the ``smart_fan_controller.zwift_api``
+package (decoder / api / runtime / logsetup / __main__). This file
+preserves direct-run and PyInstaller entry-point compatibility.
 
-Konfiguráció: a settings.json ``zwift_api`` szekciója (a fő apppal közös fájl).
-A fő app (FanController) a ``--settings <path>`` paraméterrel indítja.
+Configuration: the ``zwift_api`` section of settings.json (shared with the
+main app). The main app (FanController) launches it with
+``--settings <path>``.
 
-Futtatás önállóan:
+Standalone run:
     python zwift_api_polling.py --settings settings.json
 """
 from __future__ import annotations

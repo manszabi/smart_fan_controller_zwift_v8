@@ -1,4 +1,4 @@
-"""Futásidejű komponensek: adattároló, UDP broadcaster és a polling ciklus."""
+"""Runtime components: data store, UDP broadcaster and the polling loop."""
 from __future__ import annotations
 
 import json
@@ -85,10 +85,10 @@ class UDPBroadcaster:
         self._port = port
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         if _platform.system() == "Windows":
-            # Windows-egyediség: ha a cél-port nem figyel (a fő app még nem
-            # indult el), az ICMP "port unreachable" a KÜLDŐ socketen
-            # ConnectionResetError-t okoz a következő műveletnél. A
-            # SIO_UDP_CONNRESET ioctl ezt a jelentést kapcsolja ki.
+            # Windows quirk: when the target port is not listening (the main
+            # app has not started yet), the ICMP "port unreachable" causes a
+            # ConnectionResetError on the SENDING socket at the next
+            # operation. The SIO_UDP_CONNRESET ioctl disables that report.
             try:
                 SIO_UDP_CONNRESET = -1744830452  # 0x9800000C
                 self._sock.ioctl(SIO_UDP_CONNRESET, struct.pack("I", 0))
@@ -101,7 +101,7 @@ class UDPBroadcaster:
         self._sock.sendto(payload, (self._host, self._port))
 
     def log_console(self, data: dict[str, Any]) -> None:
-        """Egy soros összefoglaló logolása (konzol + fájl)."""
+        """Log a one-line summary (console + file)."""
         log.info(
             f"⚡ {data['power']:>4}W  "
             f"❤️  {data['heartrate']:>3}bpm  "
@@ -127,12 +127,12 @@ def _is_zwift_running() -> bool:
             capture_output=True,
             text=True,
             timeout=10,
-            # Ablakos (pythonw/noconsole) futtatásnál se villanjon konzol
+            # No console flash even under windowed (pythonw/noconsole) runs
             creationflags=subprocess.CREATE_NO_WINDOW,
         )
         return "zwiftapp.exe" in result.stdout.lower()
     except (subprocess.TimeoutExpired, OSError):
-        return True  # ha nem tudjuk ellenőrizni, ne lépjünk ki
+        return True  # when we cannot check, do not exit
 
 
 def run_polling_loop(
@@ -150,9 +150,9 @@ def run_polling_loop(
     world_id: int | None = None
     consecutive_errors: int = 0
     _ZWIFT_CHECK_INTERVAL = 10.0  # seconds between process checks
-    _ZWIFT_GRACE_PERIOD = 300.0   # 5 perc várakozás a Zwift indulására
+    _ZWIFT_GRACE_PERIOD = 300.0   # wait 5 minutes for Zwift to start
     _last_zwift_check: float = 0.0
-    _zwift_seen: bool = False      # True ha egyszer már láttuk futni
+    _zwift_seen: bool = False      # True once we saw it running
 
     # Wait for ZwiftApp.exe to start (grace period)
     if _platform.system() == "Windows" and not _is_zwift_running():
@@ -217,8 +217,8 @@ def run_polling_loop(
             try:
                 broadcaster.send(data)
             except OSError as exc:
-                # A konzol-összefoglalót akkor is kiírjuk, ha az UDP küldés
-                # átmenetileg nem megy (pl. a fő app még nem figyel)
+                # Print the console summary even when the UDP send is
+                # temporarily failing (e.g. the main app is not listening yet)
                 log.debug(f"UDP küldés sikertelen: {exc}")
             broadcaster.log_console(data)
             consecutive_errors = 0
@@ -265,10 +265,10 @@ def _sleep_remainder(loop_start: float, interval: float, stop_event: threading.E
 
 
 def _backoff_seconds(consecutive_errors: int, cap: float = 30.0) -> float:
-    """Exponenciális backoff sapkázott kitevővel.
+    """Exponential backoff with a capped exponent.
 
-    A kitevőt is sapkázni kell, nem csak az eredményt: a 2.0**N float hatvány
-    nagy N-nél (~1024, azaz több órányi folyamatos hiba után) OverflowError-t
-    dobna – éppen a hibakezelő ágban.
+    The exponent must be capped too, not just the result: the 2.0**N
+    float power raises OverflowError for large N (~1024, i.e. after
+    hours of continuous errors) – right inside the error handling path.
     """
     return min(cap, 2.0 ** min(consecutive_errors, 10))

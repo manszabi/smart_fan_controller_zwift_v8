@@ -1,18 +1,18 @@
-"""Zwift API polling segédprocessz – belépési pont.
+"""Zwift API polling helper process – entry point.
 
-A fő app (FanController) indítja subprocess-ként, a settings.json útvonalát
-``--settings`` paraméterrel átadva. A bejelentkezési adatokat, a lekérdezési
-gyakoriságot és a broadcast célt a settings.json-ból olvassa:
+Launched by the main app (FanController) as a subprocess, receiving the
+settings.json path via ``--settings``. Reads the credentials, polling
+interval and broadcast target from settings.json:
 
-  - zwift_api.username / password / poll_interval   → bejelentkezés, gyakoriság
-  - datasource.zwift_udp_host / zwift_udp_port       → UDP broadcast cél
-  - global_settings.logging / log_directory          → loggolás
+  - zwift_api.username / password / poll_interval   → login, cadence
+  - datasource.zwift_udp_host / zwift_udp_port       → UDP broadcast target
+  - global_settings.logging / log_directory          → logging
 
-Credential prioritás: CLI (--username/--password) > környezeti változó
-(ZWIFT_USERNAME/ZWIFT_PASSWORD) > settings.json zwift_api szekció > interaktív
-bekérés (külön ablak esetén).
+Credential priority: CLI (--username/--password) > environment variables
+(ZWIFT_USERNAME/ZWIFT_PASSWORD) > the settings.json zwift_api section >
+interactive prompt (with a separate window).
 
-Önállóan is futtatható: ``python -m smart_fan_controller.zwift_api --settings <path>``
+Standalone run: ``python -m smart_fan_controller.zwift_api --settings <path>``
 """
 from __future__ import annotations
 
@@ -42,7 +42,7 @@ __version__ = "1.2.0"
 
 
 def _default_settings_path() -> str:
-    """A settings.json alapértelmezett útvonala, ha nincs --settings megadva."""
+    """Default path of settings.json when no --settings is given."""
     base = (
         os.path.dirname(os.path.abspath(sys.executable))
         if getattr(sys, "frozen", False)
@@ -91,12 +91,13 @@ def resolve_credentials(
     Priority:
       1. CLI args (--username / --password)
       2. Environment variables (ZWIFT_USERNAME / ZWIFT_PASSWORD)
-      3. settings.json zwift_api szekció
-      4. Interaktív bekérés (csak ha a stdin interaktív; az eredmény mentve)
+      3. The settings.json zwift_api section
+      4. Interactive prompt (only with an interactive stdin; result saved)
 
-    Ha hiányzik az adat ÉS a stdin nem interaktív (pl. a fő app DEVNULL stdin-nel
-    indította, vagy nincs külön konzol-ablak), tiszta hibaüzenetet ad és üres
-    ("", "") párt térít vissza – a main() ezt érti és kilép, traceback nélkül.
+    When the data is missing AND stdin is not interactive (e.g. the main
+    app launched it with a DEVNULL stdin, or there is no separate console
+    window), it logs a clean error and returns an empty ("", "") pair –
+    main() understands that and exits without a traceback.
     """
     username = (
         args.username
@@ -111,9 +112,10 @@ def resolve_credentials(
 
     from_prompt = False
     if not username or not password:
-        # Interaktív bekérés csak valódi TTY esetén. A fő app DEVNULL stdin-nel
-        # indítja a subprocesst, és a külön konzol-ablak (CREATE_NEW_CONSOLE) is
-        # csak Windows-on létezik – minden más esetben az input() EOFError-t adna.
+        # Interactive prompt only on a real TTY. The main app launches the
+        # subprocess with a DEVNULL stdin, and the separate console window
+        # (CREATE_NEW_CONSOLE) only exists on Windows – in every other case
+        # input() would raise EOFError.
         if not sys.stdin or not sys.stdin.isatty():
             log.error(
                 "❌ Hiányzó Zwift bejelentkezési adat / Missing Zwift credentials. "
@@ -153,11 +155,11 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     settings_path = args.settings or _default_settings_path()
-    # A log fájlok alapértelmezett könyvtára a settings.json mappája legyen.
+    # The default directory of the log files is the settings.json folder.
     logsetup.set_base_dir(os.path.dirname(os.path.abspath(settings_path)))
 
-    # Korai logging: a settings betöltése előtti logokat memóriába puffereljük,
-    # mert a "logging" flag még nem ismert (mint a fő appban).
+    # Early logging: logs before the settings load are buffered in memory
+    # because the "logging" flag is not known yet (same as the main app).
     logsetup.setup_early_logging()
 
     log.info("=" * 60)
@@ -165,13 +167,13 @@ def main(argv: list[str] | None = None) -> int:
     log.info(" HTTPS API lekérdezés + UDP broadcast")
     log.info("=" * 60)
 
-    # Beállítások betöltése a settings.json-ból (a fő apppal közös fájl).
+    # Load the settings from settings.json (shared with the main app).
     settings = load_settings(settings_path)
     cfg: ZwiftApiConfig = settings["zwift_api"]
     gs = settings["global_settings"]
     ds = settings["datasource"]
 
-    # Loggolás konfigurálása a global_settings szerint (egységes a fő appal).
+    # Configure logging per global_settings (consistent with the main app).
     if gs.logging:
         logsetup.setup_logging(gs.log_directory, enabled=True, debug=args.debug)
         logsetup.flush_early_logging()
@@ -179,19 +181,19 @@ def main(argv: list[str] | None = None) -> int:
         logsetup.setup_logging(enabled=False)
         logsetup.discard_early_logging()
 
-    # Poll interval: CLI > settings.json zwift_api szekció > hard-coded default
+    # Poll interval: CLI > settings.json zwift_api section > hard-coded default
     poll_interval: float = float(
         args.poll_interval if args.poll_interval is not None
         else (cfg.poll_interval or DEFAULT_POLL_INTERVAL)
     )
 
-    # Broadcast cél: a datasource UDP host/port (nincs duplikáció).
+    # Broadcast target: the datasource UDP host/port (no duplication).
     broadcast_host = ds.zwift_udp_host
     broadcast_port = ds.zwift_udp_port
 
     username, password = resolve_credentials(args, cfg, settings_path)
     if not username or not password:
-        # A hiba okát a resolve_credentials már logolta – tiszta kilépés.
+        # resolve_credentials already logged the cause – clean exit.
         return 1
 
     auth = ZwiftAuth(username, password, debug=args.debug)
@@ -202,9 +204,10 @@ def main(argv: list[str] | None = None) -> int:
         log.error(f"❌ Bejelentkezés sikertelen / Login failed: {exc}")
         return 1
     except (requests.RequestException, ValueError) as exc:
-        # RequestException lefedi a ConnectionError/Timeout/JSONDecodeError
-        # eseteket is (pl. captive portal HTML-t ad 200-zal); a ValueError a
-        # token nélküli auth-válasz. Tiszta hibaüzenet traceback helyett.
+        # RequestException also covers the ConnectionError/Timeout/
+        # JSONDecodeError cases (e.g. a captive portal serving HTML with
+        # 200); ValueError is the token-less auth response. A clean error
+        # message instead of a traceback.
         log.error(f"❌ Bejelentkezési hiba / Login error: {exc}")
         return 1
 
