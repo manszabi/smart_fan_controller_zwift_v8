@@ -240,7 +240,11 @@ smart_fan_controller/
 ├── sounds/              # LCARS hangeffektek (WAV; tools/generate_lcars_sounds.py)
 │
 ├── ui/
-│   └── hud.py           # HUDWindow (PySide6 LCARS HUD + fajl alapu hangeffektek)
+│   ├── theme.py         # LCARS szinpaletta + cache-elt QColor/QBrush helperek
+│   ├── widgets.py       # QPainter-rel rajzolt LCARS widgetek (header, footer, meterek)
+│   ├── sound.py         # LCARSSoundManager (fajl alapu hangeffektek)
+│   ├── window.py        # HUDWindow (fo lebego ablak)
+│   └── hud.py           # visszafele kompatibilis aggregator (re-export)
 │
 ├── zwift_api/           # Zwift HTTPS API polling segedprocessz (kulon processz)
 │   ├── __main__.py      # belepo: settings.json betoltes, CLI, credential feloldas

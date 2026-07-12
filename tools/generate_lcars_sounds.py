@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""LCARS hangeffekt WAV fájlok generálása a smart_fan_controller/sounds/ mappába.
+"""Generate the LCARS sound effect WAVs into smart_fan_controller/sounds/.
 
-A HUD hangjai fájl alapúak (smart_fan_controller/sounds/*.wav). Ez a szkript
-a hangokat az eredeti, szintetizált tone-definíciókból állítja elő – a
-kimenet bitre azonos a korábban futásidőben generált hangokkal.
+The HUD sounds are file based (smart_fan_controller/sounds/*.wav). This
+script produces them from the original synthesized tone definitions – the
+output is bit-identical to the sounds formerly generated at runtime.
 
-Futtatás a projekt gyökeréből:
+Run from the project root:
     python tools/generate_lcars_sounds.py
 
-Egy meglévő fájlt csak a --force kapcsolóval ír felül, így a kézzel
-lecserélt (egyedi) hangfájlok nem vesznek el véletlenül.
+Existing files are only overwritten with --force, so manually replaced
+(custom) sound files are never lost by accident.
 """
 from __future__ import annotations
 
@@ -17,45 +17,45 @@ import argparse
 import sys
 from pathlib import Path
 
-# A projekt gyökere kerüljön a sys.path-ra (bárhonnan futtatható legyen)
+# Put the project root on sys.path (runnable from anywhere)
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from smart_fan_controller.core.helpers import generate_tone
 
-# Hang definíciók: (frekvencia_hz, időtartam_sec, amplitúdó)
+# Tone definitions: (frequency_hz, duration_sec, amplitude)
 SOUND_DEFS: dict[str, list[tuple[float, float, float]]] = {
-    # Zónaváltás hangok – jellegzetes LCARS csippanások
-    "zone_up": [(880, 0.08, 1.0), (1320, 0.12, 0.8)],       # felfelé lépés
-    "zone_down": [(1320, 0.08, 0.8), (880, 0.12, 1.0)],     # lefelé lépés
-    "zone_standby": [(440, 0.15, 0.5), (330, 0.2, 0.4)],    # standby-ba lépés
-    # Szenzor események
-    "sensor_dropout": [                                        # vészjelzés – hármas csipogás
+    # Zone change sounds – signature LCARS chirps
+    "zone_up": [(880, 0.08, 1.0), (1320, 0.12, 0.8)],       # stepping up
+    "zone_down": [(1320, 0.08, 0.8), (880, 0.12, 1.0)],     # stepping down
+    "zone_standby": [(440, 0.15, 0.5), (330, 0.2, 0.4)],    # entering standby
+    # Sensor events
+    "sensor_dropout": [                                        # alarm – triple beep
         (1760, 0.06, 1.0), (0, 0.04, 0.0),
         (1760, 0.06, 1.0), (0, 0.04, 0.0),
         (1760, 0.06, 1.0),
     ],
-    "sensor_reconnect": [                                      # visszacsatlakozás – emelkedő
+    "sensor_reconnect": [                                      # reconnect – rising
         (660, 0.08, 0.7), (880, 0.08, 0.8), (1100, 0.12, 1.0),
     ],
     # Zwift
-    "zwift_connect": [                                         # comm channel nyitás
+    "zwift_connect": [                                         # comm channel opening
         (440, 0.06, 0.6), (660, 0.06, 0.7), (880, 0.06, 0.8),
         (1100, 0.15, 1.0),
     ],
-    "zwift_disconnect": [                                      # comm channel zárás
+    "zwift_disconnect": [                                      # comm channel closing
         (1100, 0.06, 0.8), (880, 0.06, 0.7), (660, 0.06, 0.6),
         (440, 0.15, 0.5),
     ],
-    # Fan sebesség – rövid visszajelzés
-    "fan_tx": [(1047, 0.05, 0.5), (1319, 0.07, 0.6)],       # parancs elküldve
-    # HUD indítás – tricorder kinyitás hangeffekt
+    # Fan speed – short feedback
+    "fan_tx": [(1047, 0.05, 0.5), (1319, 0.07, 0.6)],       # command sent
+    # HUD startup – tricorder opening effect
     "hud_startup": [
         (1200, 0.06, 0.3), (1500, 0.06, 0.4), (1800, 0.06, 0.5),
         (2200, 0.08, 0.6), (2600, 0.10, 0.7), (3000, 0.08, 0.8),
         (2400, 0.06, 0.5), (2800, 0.06, 0.6), (3200, 0.12, 0.9),
         (2000, 0.15, 0.4),
     ],
-    # HUD bezárás – tricorder becsukás hangeffekt (fordított söprés lefelé)
+    # HUD shutdown – tricorder closing effect (reversed downward sweep)
     "hud_shutdown": [
         (2000, 0.06, 0.4), (3200, 0.06, 0.6), (2800, 0.06, 0.5),
         (2400, 0.08, 0.7), (3000, 0.08, 0.8), (2600, 0.06, 0.6),

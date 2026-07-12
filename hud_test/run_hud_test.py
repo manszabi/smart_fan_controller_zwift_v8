@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
-"""Önállóan indítható HUD tesztkörnyezet – fake telemetriával és vezérlőpanellel.
+"""Standalone HUD test harness – fake telemetry with a control panel.
 
-A HUD ablak NEM másolat: közvetlenül a ``smart_fan_controller.ui.hud``
-modulból importált, éles ``HUDWindow`` osztály fut, egy szimulált (fake)
-controller mögé kötve. Így a HUD minden későbbi módosítása automatikusan
-itt is megjelenik – nincs mit szinkronban tartani.
+The HUD window is NOT a copy: the production ``HUDWindow`` class imported
+from ``smart_fan_controller.ui.window`` runs against a simulated (fake)
+controller. Any later change to the HUD therefore shows up here
+automatically – there is nothing to keep in sync.
 
-A vezérlőpanelen állítható:
-  - Power / pulzus érték (csúszkával vagy AUTO szimulációval)
-  - Power / pulzus adatforrás külön-külön (ANT+ / BLE / Zwift UDP)
-  - Jel be/ki forrásonként (dropout / FAIL / NO SIGNAL tesztelése)
-  - HIGHER WINS zóna mód be/ki
-  - BLE ventilátor engedélyezés és kapcsolódás (DISABLED/OFFLINE/ONLINE)
-  - ZPO IMM / ZHR IMM tile-ok, cooldown szimuláció
+The control panel can adjust:
+  - power / heart-rate values (sliders or AUTO simulation)
+  - power / heart-rate data source independently (ANT+ / BLE / Zwift UDP)
+  - per-source signal on/off (dropout / FAIL / NO SIGNAL testing)
+  - HIGHER WINS zone mode on/off
+  - BLE fan enable and connection state (DISABLED/OFFLINE/ONLINE)
+  - ZPO IMM / ZHR IMM tiles, cooldown simulation
 
-Indítás a projekt gyökeréből vagy bárhonnan:
+Run from the project root (or anywhere):
     python hud_test/run_hud_test.py
 """
 from __future__ import annotations
@@ -25,8 +25,8 @@ import sys
 import time
 from pathlib import Path
 
-# A projekt gyökere kerüljön a sys.path-ra, hogy a smart_fan_controller
-# csomag bárhonnan indítva importálható legyen
+# Put the project root on sys.path so the smart_fan_controller package
+# imports no matter where the script is launched from
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from PySide6.QtCore import Qt, QTimer
@@ -47,7 +47,7 @@ from smart_fan_controller.core.zones import (
 
 UPDATE_INTERVAL_MS = 500
 
-# A combo-k forrás sorrendje (a kijelzett felirat → DataSource)
+# Source order of the combos (displayed caption → DataSource)
 SOURCE_OPTIONS: list[tuple[str, DataSource]] = [
     ("ANT+", DataSource.ANTPLUS),
     ("BLE", DataSource.BLE),
@@ -56,12 +56,12 @@ SOURCE_OPTIONS: list[tuple[str, DataSource]] = [
 
 
 # ============================================================
-# FAKE KOMPONENSEK – a HUDWindow által olvasott interfészek
+# FAKE COMPONENTS – the interfaces HUDWindow reads
 # ============================================================
 
 
 class FakeBleFan:
-    """A BLE ventilátor HUD által olvasott mezői."""
+    """The BLE fan fields read by the HUD."""
 
     def __init__(self) -> None:
         self.auth_failed = False
@@ -70,7 +70,7 @@ class FakeBleFan:
 
 
 class FakeSensorHandler:
-    """BLE/ANT+ szenzor handler – a HUD a lastdata időbélyegeket olvassa."""
+    """BLE/ANT+ sensor handler – the HUD reads the lastdata timestamps."""
 
     def __init__(self) -> None:
         self.power_lastdata = 0.0
@@ -78,7 +78,7 @@ class FakeSensorHandler:
 
 
 class FakeZwiftUdp:
-    """Zwift UDP handler – a HUD a per-metrika időbélyegeket olvassa."""
+    """Zwift UDP handler – the HUD reads the per-metric timestamps."""
 
     def __init__(self) -> None:
         self.last_packet_time = 0.0
@@ -87,7 +87,7 @@ class FakeZwiftUdp:
 
 
 class FakeCooldown:
-    """Cooldown vezérlő – snapshot() → (aktív, hátralévő másodperc)."""
+    """Cooldown controller – snapshot() → (active, remaining seconds)."""
 
     def __init__(self) -> None:
         self._end: float = 0.0
@@ -106,17 +106,17 @@ class FakeCooldown:
 
 
 class FakeController:
-    """A HUDWindow által használt controller-interfész fake megvalósítása.
+    """Fake implementation of the controller interface used by HUDWindow.
 
-    Csak azokat a mezőket tartalmazza, amelyeket a HUD ténylegesen olvas:
-    settings, settings_file, state, ble_fan, cooldown_ctrl, valamint a
-    _ble_sensor_handler / _antplus_handler / _zwift_udp handlerek.
+    Contains only the members the HUD actually reads: settings,
+    settings_file, state, ble_fan, cooldown_ctrl, plus the
+    _ble_sensor_handler / _antplus_handler / _zwift_udp handlers.
     """
 
     def __init__(self) -> None:
         hud = HudConfig()
-        hud.save_hud_settings = False       # teszt: soha ne írjon fájlt
-        hud.close_at_zwiftapp_exe = False   # teszt: ne figyelje a ZwiftApp.exe-t
+        hud.save_hud_settings = False       # test: never write files
+        hud.close_at_zwiftapp_exe = False   # test: do not watch ZwiftApp.exe
         ds = DatasourceConfig()
         ds.power_source = DataSource.ZWIFTUDP
         ds.hr_source = DataSource.ZWIFTUDP
@@ -143,12 +143,12 @@ class FakeController:
 
 
 # ============================================================
-# SZIMULÁCIÓ + VEZÉRLŐPANEL
+# SIMULATION + CONTROL PANEL
 # ============================================================
 
 
 class HudTestPanel(QWidget):
-    """Vezérlőpanel a fake telemetria és a HUD állapotok kézi vezérléséhez."""
+    """Control panel for driving the fake telemetry and HUD states."""
 
     def __init__(self, ctrl: FakeController) -> None:
         super().__init__()
@@ -169,7 +169,7 @@ class HudTestPanel(QWidget):
 
         root = QVBoxLayout(self)
 
-        # ── Telemetria ──
+        # ── Telemetry ──
         g_tel = QGroupBox("Telemetria (fake adat)")
         f_tel = QFormLayout(g_tel)
         self.chk_auto = QCheckBox("AUTO szimuláció (hullámzó power/pulzus)")
@@ -181,7 +181,7 @@ class HudTestPanel(QWidget):
         f_tel.addRow("Pulzus:", self._wrap(self.sld_hr, self.lbl_hr))
         root.addWidget(g_tel)
 
-        # ── Adatforrások ──
+        # ── Data sources ──
         g_src = QGroupBox("Adatforrások")
         f_src = QFormLayout(g_src)
         self.cmb_power_src = self._make_source_combo(DataSource.ZWIFTUDP)
@@ -196,7 +196,7 @@ class HudTestPanel(QWidget):
         f_src.addRow(self.chk_hr_signal)
         root.addWidget(g_src)
 
-        # ── Zóna mód ──
+        # ── Zone mode ──
         g_zone = QGroupBox("Zóna mód")
         f_zone = QFormLayout(g_zone)
         self.chk_higher_wins = QCheckBox("HIGHER WINS (ki = power only)")
@@ -208,7 +208,7 @@ class HudTestPanel(QWidget):
         f_zone.addRow(self.chk_zero_hr)
         root.addWidget(g_zone)
 
-        # ── BLE ventilátor ──
+        # ── BLE fan ──
         g_fan = QGroupBox("BLE ventilátor")
         f_fan = QFormLayout(g_fan)
         self.chk_fan_enabled = QCheckBox("Engedélyezve (ki = DISABLED)")
@@ -221,7 +221,7 @@ class HudTestPanel(QWidget):
         f_fan.addRow(self.chk_fan_pin_fail)
         root.addWidget(g_fan)
 
-        # ── Egyéb ──
+        # ── Misc ──
         g_misc = QGroupBox("Egyéb")
         f_misc = QFormLayout(g_misc)
         self.chk_cooldown = QCheckBox("Cooldown indítása (120 s)")
@@ -229,7 +229,7 @@ class HudTestPanel(QWidget):
         root.addWidget(g_misc)
 
         hint = QLabel(
-            "A HUD az éles smart_fan_controller.ui.hud.HUDWindow –\n"
+            "A HUD az éles smart_fan_controller.ui.window.HUDWindow –\n"
             "minden HUD módosítás automatikusan itt is megjelenik."
         )
         hint.setStyleSheet("color: #667788; font-size: 9pt;")
@@ -238,13 +238,13 @@ class HudTestPanel(QWidget):
 
         self.chk_cooldown.toggled.connect(self._on_cooldown_toggle)
 
-        # Szimulációs léptető – ugyanolyan ütemben, mint a HUD frissítés
+        # Simulation stepper – same cadence as the HUD refresh
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._tick)
         self._timer.start(UPDATE_INTERVAL_MS)
         self._tick()
 
-    # ────────── UI segédek ──────────
+    # ────────── UI helpers ──────────
 
     @staticmethod
     def _make_slider(lo: int, hi: int, val: int, unit: str) -> tuple[QSlider, QLabel]:
@@ -282,14 +282,14 @@ class HudTestPanel(QWidget):
         else:
             self._ctrl.cooldown_ctrl.stop()
 
-    # ────────── Szimulációs léptetés ──────────
+    # ────────── Simulation step ──────────
 
     def _tick(self) -> None:
         ctrl = self._ctrl
         now = time.monotonic()
         t = now - self._t0
 
-        # 1) Beállítások átvezetése a fake configba
+        # 1) Propagate the panel settings into the fake config
         ds: DatasourceConfig = ctrl.settings["datasource"]  # type: ignore[assignment]
         ds.power_source = self.cmb_power_src.currentData()
         ds.hr_source = self.cmb_hr_src.currentData()
@@ -303,7 +303,7 @@ class HudTestPanel(QWidget):
         pz.zero_power_immediate = self.chk_zero_pwr.isChecked()
         hz.zero_hr_immediate = self.chk_zero_hr.isChecked()
 
-        # 2) BLE ventilátor állapot
+        # 2) BLE fan state
         if self.chk_fan_enabled.isChecked():
             ctrl.ble_fan = self._fan
             self._fan.is_connected = self.chk_fan_connected.isChecked()
@@ -311,9 +311,9 @@ class HudTestPanel(QWidget):
         else:
             ctrl.ble_fan = None
 
-        # 3) Telemetria érték (AUTO hullám vagy csúszka)
+        # 3) Telemetry values (AUTO wave or sliders)
         if self.chk_auto.isChecked():
-            # Lassú "edzés" hullám – az összes zónát bejárja
+            # Slow "workout" wave – sweeps through every zone
             power = max(0.0, 160 + 140 * math.sin(t / 18.0))
             hr = 130 + 45 * math.sin(t / 23.0 + 1.2)
             self.sld_power.blockSignals(True)
@@ -331,7 +331,7 @@ class HudTestPanel(QWidget):
         power_ok = self.chk_power_signal.isChecked()
         hr_ok = self.chk_hr_signal.isChecked()
 
-        # 4) Handler "élő adat" időbélyegek a kiválasztott forrás szerint
+        # 4) "Live data" handler timestamps for the selected source
         if power_ok:
             if ds.power_source == DataSource.BLE:
                 ctrl._ble_sensor_handler.power_lastdata = now
@@ -351,7 +351,7 @@ class HudTestPanel(QWidget):
         ):
             ctrl._zwift_udp.last_packet_time = now
 
-        # 5) Zóna számítás az ÉLES zóna-logikával (core.zones)
+        # 5) Zone calculation with the PRODUCTION zone logic (core.zones)
         p_zones = calculate_power_zones(
             pz.ftp, pz.min_watt, pz.max_watt, pz.z1_max_percent, pz.z2_max_percent
         )
@@ -362,14 +362,14 @@ class HudTestPanel(QWidget):
         hr_zone = zone_for_hr(int(hr), h_zones) if hr_ok else None
         zone = apply_zone_mode(power_zone, hr_zone, hz.zone_mode)
 
-        # 6) Snapshot frissítés – a HUD innen olvas
+        # 6) Snapshot update – the HUD reads from here
         ctrl.state.ui_snapshot.update(
             zone,
             power if power_ok else None,
             hr if hr_ok else None,
         )
 
-        # 7) Zónaváltáskor "parancs küldés" a ventilátornak (LAST TX / hang)
+        # 7) "Send a command" to the fan on zone change (LAST TX / sound)
         if (
             zone is not None
             and zone != self._prev_zone
@@ -383,21 +383,21 @@ class HudTestPanel(QWidget):
 def main() -> int:
     app = QApplication(sys.argv)
 
-    # A HUD import a QApplication után történik – így hibaüzenet helyett
-    # használható traceback-et kapunk, ha a csomag nem elérhető
-    from smart_fan_controller.ui.hud import HUDWindow
+    # Import the HUD after the QApplication exists – a missing package
+    # yields a usable traceback instead of a Qt error
+    from smart_fan_controller.ui.window import HUDWindow
 
     ctrl = FakeController()
     panel = HudTestPanel(ctrl)
     hud = HUDWindow(ctrl, app)
 
-    # A panel a HUD mellé kerüljön; bármelyik ablak bezárása kilép
+    # Place the panel next to the HUD; closing either window quits
     hud.move(60, 60)
     panel.move(60 + hud.width() + 30, 60)
     panel.show()
     app.lastWindowClosed.connect(app.quit)
 
-    hud._restore_geometry()  # noop, ha nincs mentett geometria
+    hud._restore_geometry()  # no-op without saved geometry
     hud.show()
     hud.sound.play("hud_startup")
     return app.exec()
