@@ -54,17 +54,26 @@ class LCARSHeaderWidget(QWidget):
         R = max(14, int(26 * s))
         corner_r = max(12, int(18 * s))
 
+        # Clip all header painting to the window card's rounded TOP corners
+        # so nothing (bar, badge) can poke outside the card contour. The
+        # clip rect extends corner_r below the bottom edge to keep the
+        # bottom corners unclipped (square).
+        clip = QPainterPath()
+        clip.addRoundedRect(QRectF(0, 0, w, ch + corner_r), corner_r, corner_r)
+        p.setClipPath(clip)
+
         cache_key = (w, s, ch)
         if self._path_cache_key != cache_key:
-            # Main orange sweep with rounded top-left AND top-right corners
-            # (the top-right arc follows the window rounding so the bar
-            # cannot poke into the transparent corner)
+            # Main orange sweep with rounded top-left AND top-right corners.
+            # The bar runs flush to the card's right edge, so its top-right
+            # arc is the SAME curve as the window card's rounded corner –
+            # the card rounding follows the colored bar exactly.
             rr = min(corner_r, bar_h)
             path = QPainterPath()
             path.moveTo(corner_r, 0)
-            path.lineTo(w - 6 - rr, 0)
-            path.arcTo(QRectF(w - 6 - 2 * rr, 0, 2 * rr, 2 * rr), 90, -90)
-            path.lineTo(w - 6, bar_h)
+            path.lineTo(w - rr, 0)
+            path.arcTo(QRectF(w - 2 * rr, 0, 2 * rr, 2 * rr), 90, -90)
+            path.lineTo(w, bar_h)
             # Inner elbow arc – center (sw+R, bar_h+R), 90°→180°
             path.arcTo(QRectF(sw, bar_h, 2 * R, 2 * R), 90, 90)
             path.lineTo(sw, ch)
@@ -82,7 +91,7 @@ class LCARSHeaderWidget(QWidget):
         title_size = max(8, int(12 * s))
         p.setFont(QFont(self._font_family, title_size, QFont.Weight.Bold))
         p.setPen(qcolor(theme.LCARS_CYAN))
-        p.drawText(QRectF(sw + R, bar_h, w - 6 - sw - R, ch - bar_h),
+        p.drawText(QRectF(sw + R, bar_h, w - sw - R, ch - bar_h),
                     Qt.AlignmentFlag.AlignCenter, "ZWIFT FAN CTRL")
 
         # Version badge (rounded magenta pill)
@@ -201,7 +210,9 @@ class LCARSFooterWidget(QWidget):
         if self._path_cache_key != cache_key:
             # Segments – purple in the middle, blue base bar to its left,
             # tan to the right, starting right after the purple (no sliver).
-            right_edge = w - 6                       # right end of the bar
+            # The bar runs flush to the card's right edge, so the tan's
+            # bottom-right arc is the SAME curve as the card's corner.
+            right_edge = w                           # right end of the bar
             flat_left = sw + R                       # end of the left arc
             flat_right = right_edge - sw - R         # start of the right arc
             center = (flat_left + flat_right) / 2    # = right_edge / 2
