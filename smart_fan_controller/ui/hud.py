@@ -874,6 +874,15 @@ class HUDWindow(QWidget):
         self._geo_save_timer.setInterval(2500)
         self._geo_save_timer.timeout.connect(self._auto_save_geometry)
 
+        # Debounce-olt opacity mentés: a csúszka húzása közben ne írjunk
+        # fájlt minden értékváltozásnál, csak a beállítás végén egyszer
+        self._opacity_save_timer = QTimer(self)
+        self._opacity_save_timer.setSingleShot(True)
+        self._opacity_save_timer.setInterval(800)
+        self._opacity_save_timer.timeout.connect(
+            lambda: self._save_hud_setting("opacity", self._alpha_slider.value())
+        )
+
         # Az ablak minimális mérete a tartalom olvasható méretéhez igazodik
         self._update_min_size()
 
@@ -1064,7 +1073,10 @@ class HUDWindow(QWidget):
         if event.button() == Qt.MouseButton.LeftButton:
             pos = event.position()
             wh = self.windowHandle()
-            if (self.width() - pos.x() < 20) and (self.height() - pos.y() < 20):
+            # Az átméretező sarok mérete a skálával nő (nagy HUD-nál is
+            # kényelmesen eltalálható maradjon)
+            grip = max(20, int(20 * self._scale))
+            if (self.width() - pos.x() < grip) and (self.height() - pos.y() < grip):
                 # Húzás idejére az abszolút minimumra engedjük az ablakot,
                 # hogy egyetlen mozdulattal is le lehessen kicsinyíteni;
                 # a tartalom-alapú minimum a debounce timerrel áll vissza
@@ -1137,15 +1149,17 @@ class HUDWindow(QWidget):
     # ────────── OPACITY ──────────
 
     def _set_alpha_from_menu(self, percent: int) -> None:
-        self.setWindowOpacity(percent / 100.0)
+        # A setValue valueChanged-et vált ki → _on_alpha_change intézi a
+        # tényleges beállítást és a (debounce-olt) mentést
         self._alpha_slider.setValue(percent)
-        self._alpha_value.setText(f"{percent}%")
-        self._save_hud_setting("opacity", percent)
 
     def _on_alpha_change(self, value: int) -> None:
         self.setWindowOpacity(value / 100.0)
         self._alpha_value.setText(f"{value}%")
-        self._save_hud_setting("opacity", value)
+        # Memóriában azonnal frissül, a fájlba írás debounce-olva történik
+        hud_cfg: HudConfig = self._ctrl.settings["hud"]
+        hud_cfg.opacity = value
+        self._opacity_save_timer.start()
 
     # ────────── KONTEXTUS MENÜ ──────────
 
@@ -1634,15 +1648,21 @@ class HUDWindow(QWidget):
     def _apply_scale(self) -> None:
         s = self._scale
 
-        self._header.set_scale(s)
-        self._footer.set_scale(s)
-        self._sidebar.set_scale(s)
-        self._zone_bar.set_scale(s)
-        self._power_meter.set_scale(s)
-        self._hr_meter.set_scale(s)
-        # A szöveges label-ek betűmérete és fix szélessége is skálázódik
-        for lbl, base_pt, base_fw, bold in self._scalable_texts:
-            self._apply_label_scale(lbl, base_pt, base_fw, bold)
+        # Batch: az egyes widget-frissítések ne triggeljenek külön-külön
+        # repaintet – átméretezés alatt így egyetlen újrarajzolás történik
+        self.setUpdatesEnabled(False)
+        try:
+            self._header.set_scale(s)
+            self._footer.set_scale(s)
+            self._sidebar.set_scale(s)
+            self._zone_bar.set_scale(s)
+            self._power_meter.set_scale(s)
+            self._hr_meter.set_scale(s)
+            # A szöveges label-ek betűmérete és fix szélessége is skálázódik
+            for lbl, base_pt, base_fw, bold in self._scalable_texts:
+                self._apply_label_scale(lbl, base_pt, base_fw, bold)
+        finally:
+            self.setUpdatesEnabled(True)
         # A minimum méret frissítését NEM itt végezzük: élő átméretezés alatt
         # a növekvő minimum visszalökné az ablakot (ugrálás); a debounce
         # timer hívja az _update_min_size-t, amikor a húzás megállt
@@ -1658,13 +1678,23 @@ class HUDWindow(QWidget):
                            base_fw: int | None, bold: bool) -> None:
         """A teljes fontot (család, méret, vastagság) setFont-tal állítjuk – a
         stíluslapban nincs font-* tulajdonság, így nem írja felül. A fix
-        szélesség is skálázódik."""
+        szélesség is skálázódik.
+
+        A kerekített pontméret/szélesség csak a skála nagyobb lépéseinél
+        változik – ha az előzővel azonos, kihagyjuk a setFont/setFixedWidth
+        hívást (élő átméretezés alatt így jóval kevesebb a relayout)."""
         s = self._scale
-        f = QFont(self._font_family, max(6, int(base_pt * s)))
+        pt = max(6, int(base_pt * s))
+        fw = None if base_fw is None else max(1, int(base_fw * s))
+        key = (pt, fw, bold)
+        if getattr(lbl, "_hud_font_key", None) == key:
+            return
+        lbl._hud_font_key = key
+        f = QFont(self._font_family, pt)
         f.setBold(bold)
         lbl.setFont(f)
-        if base_fw is not None:
-            lbl.setFixedWidth(max(1, int(base_fw * s)))
+        if fw is not None:
+            lbl.setFixedWidth(fw)
 
     def _update_min_size(self) -> None:
         """Az ablak minimális méretét a tartalom természetes (olvasható) méretéből
@@ -1693,7 +1723,13 @@ class HUDWindow(QWidget):
     def _restore_geometry(self) -> None:
         """Visszaállítja az ablak pozícióját/méretét az utoljára használt monitorhoz.
 
-        Ha a mentett monitor nem létezik, az aktív (elsődleges) monitorra helyezi.
+        Ha a mentett (utoljára használt) monitor már nincs csatlakoztatva:
+          1. ha az elsődleges monitorhoz is van mentett geometria, azt használja;
+          2. különben az utolsó mentett MÉRETET megtartva az elsődleges monitor
+             közepére helyezi az ablakot (a mentett pozíció a hiányzó monitor
+             területére mutatna, ott értelmetlen).
+        A monitorválasztástól függetlenül a teljes ablak a képernyő látható
+        (available) területén belülre kerül – sosem indul képernyőn kívül.
         """
         hud_cfg: HudConfig = self._ctrl.settings["hud"]
         geo_map = hud_cfg.window_geometry
@@ -1701,37 +1737,51 @@ class HUDWindow(QWidget):
             return
 
         # Elérhető monitorok nevei
-        available = {}
-        for s in self._app.screens():
-            available[s.name()] = s
+        available = {s.name(): s for s in self._app.screens()}
 
         # Megpróbáljuk az utolsó használt monitort (a dict utolsó kulcsa)
-        last_screen_name = list(geo_map.keys())[-1] if geo_map else ""
-        if last_screen_name in available and last_screen_name in geo_map:
+        last_screen_name = list(geo_map.keys())[-1]
+        center_on_screen = False
+        if last_screen_name in available:
             rect = geo_map[last_screen_name]
             target_screen = available[last_screen_name]
         else:
-            # Monitor nem létezik → aktív (elsődleges) monitor, ha van rá mentett geom
-            primary = self._app.primaryScreen()
-            if primary is None:
+            # A mentett monitor nincs csatlakoztatva → elsődleges monitor
+            target_screen = self._app.primaryScreen()
+            if target_screen is None:
                 return
-            pname = primary.name()
+            pname = target_screen.name()
             if pname in geo_map:
                 rect = geo_map[pname]
+                logger.info(
+                    "A mentett monitor (%s) nincs csatlakoztatva – az "
+                    "elsődleges monitor (%s) mentett pozíciójának használata.",
+                    last_screen_name, pname,
+                )
             else:
-                # Nincs semmilyen mentett geometria ehhez a monitorhoz
-                return
-            target_screen = primary
+                # Az elsődlegeshez nincs mentett bejegyzés: a mentett méretet
+                # megtartjuk, a pozíciót középre igazítjuk
+                rect = geo_map[last_screen_name]
+                center_on_screen = True
+                logger.info(
+                    "A mentett monitor (%s) nincs csatlakoztatva – a HUD a "
+                    "mentett méretével az elsődleges monitor (%s) közepére "
+                    "kerül.", last_screen_name, pname,
+                )
 
-        # Validáljuk, hogy a pozíció a monitor területén belül van
         sg = target_screen.availableGeometry()
-        x = max(sg.x(), min(rect["x"], sg.x() + sg.width() - 100))
-        y = max(sg.y(), min(rect["y"], sg.y() + sg.height() - 100))
         # Az abszolút padlóhoz (MIN_W/MIN_H) igazítunk, NEM az aktuális
         # minimumhoz: induláskor a minimum még az 1.0-s skálájú tartalomhoz
         # van kiszámolva, ami a mentett kis méretet felfelé kerekítené
         w = max(self.MIN_W, min(rect["w"], sg.width()))
         h = max(self.MIN_H, min(rect["h"], sg.height()))
+        if center_on_screen:
+            x = sg.x() + (sg.width() - w) // 2
+            y = sg.y() + (sg.height() - h) // 2
+        else:
+            # A TELJES ablak a monitor látható területén belülre kerül
+            x = max(sg.x(), min(rect["x"], sg.x() + sg.width() - w))
+            y = max(sg.y(), min(rect["y"], sg.y() + sg.height() - h))
         # A setGeometry-t a Qt az érvényes minimumra vágná – előtte a padlóra
         # engedjük; a helyes (mentett skálájú) tartalom-minimumot a resizeEvent
         # által indított debounce timer számolja újra
