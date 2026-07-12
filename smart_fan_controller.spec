@@ -20,6 +20,9 @@ main_a = Analysis(
         # LCARS Antonio fontok: a hud.py a package-beli fonts/ mappából tölti
         # (frozen esetben <exe_dir>/smart_fan_controller/fonts).
         ('smart_fan_controller/fonts', 'smart_fan_controller/fonts'),
+        # LCARS hangeffektek: a hud.py a package-beli sounds/ mappából tölti
+        # (frozen esetben <exe_dir>/smart_fan_controller/sounds).
+        ('smart_fan_controller/sounds', 'smart_fan_controller/sounds'),
     ],
     hiddenimports=[
         # A belépő script vékony – a tényleges kód a smart_fan_controller csomagban.

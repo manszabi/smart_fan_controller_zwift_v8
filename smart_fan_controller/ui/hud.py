@@ -14,15 +14,13 @@ This module contains the visual components for the LCARS-style HUD:
 
 from __future__ import annotations
 
-import atexit
 import logging
 import os
 import platform as _platform
-import shutil
 import sys
-import tempfile
 import threading
 import time
+import wave
 from functools import lru_cache
 from typing import TYPE_CHECKING, Any
 
@@ -42,7 +40,6 @@ from smart_fan_controller.config import DataSource, ZoneMode
 from smart_fan_controller.config.loader import (
     HudConfig, DatasourceConfig, save_hud_settings_only,
 )
-from smart_fan_controller.core.helpers import generate_tone
 
 if TYPE_CHECKING:
     # A FanController a smart_fan_controller.controller modulban él. A körkörös
@@ -457,81 +454,106 @@ class LCARSMeterWidget(QWidget):
 
 
 # ────────────────────────────────────────────────────────────────────────────
-#  Star Trek LCARS hangeffektek – WAV generátor és lejátszó
+#  Star Trek LCARS hangeffektek – fájl alapú lejátszó
 # ────────────────────────────────────────────────────────────────────────────
 
 
 class LCARSSoundManager:
-    """Star Trek LCARS hangeffektek kezelője – QSoundEffect alapú lejátszás."""
+    """Star Trek LCARS hangeffektek kezelője – QSoundEffect alapú lejátszás.
 
-    # Hang definíciók: (frekvencia_hz, időtartam_sec, amplitúdó)
-    _SOUND_DEFS: dict[str, list[tuple[float, float, float]]] = {
-        # Zónaváltás hangok – jellegzetes LCARS csippanások
-        "zone_up": [(880, 0.08, 1.0), (1320, 0.12, 0.8)],       # felfelé lépés
-        "zone_down": [(1320, 0.08, 0.8), (880, 0.12, 1.0)],     # lefelé lépés
-        "zone_standby": [(440, 0.15, 0.5), (330, 0.2, 0.4)],    # standby-ba lépés
-        # Szenzor események
-        "sensor_dropout": [                                        # vészjelzés – hármas csipogás
-            (1760, 0.06, 1.0), (0, 0.04, 0.0),
-            (1760, 0.06, 1.0), (0, 0.04, 0.0),
-            (1760, 0.06, 1.0),
-        ],
-        "sensor_reconnect": [                                      # visszacsatlakozás – emelkedő
-            (660, 0.08, 0.7), (880, 0.08, 0.8), (1100, 0.12, 1.0),
-        ],
-        # Zwift
-        "zwift_connect": [                                         # comm channel nyitás
-            (440, 0.06, 0.6), (660, 0.06, 0.7), (880, 0.06, 0.8),
-            (1100, 0.15, 1.0),
-        ],
-        "zwift_disconnect": [                                      # comm channel zárás
-            (1100, 0.06, 0.8), (880, 0.06, 0.7), (660, 0.06, 0.6),
-            (440, 0.15, 0.5),
-        ],
-        # Fan sebesség – rövid visszajelzés
-        "fan_tx": [(1047, 0.05, 0.5), (1319, 0.07, 0.6)],       # parancs elküldve
-        # HUD indítás – tricorder kinyitás hangeffekt
-        "hud_startup": [
-            (1200, 0.06, 0.3), (1500, 0.06, 0.4), (1800, 0.06, 0.5),
-            (2200, 0.08, 0.6), (2600, 0.10, 0.7), (3000, 0.08, 0.8),
-            (2400, 0.06, 0.5), (2800, 0.06, 0.6), (3200, 0.12, 0.9),
-            (2000, 0.15, 0.4),
-        ],
-        # HUD bezárás – tricorder becsukás hangeffekt (fordított söprés lefelé)
-        "hud_shutdown": [
-            (2000, 0.06, 0.4), (3200, 0.06, 0.6), (2800, 0.06, 0.5),
-            (2400, 0.08, 0.7), (3000, 0.08, 0.8), (2600, 0.06, 0.6),
-            (2200, 0.06, 0.5), (1800, 0.06, 0.5), (1500, 0.06, 0.4),
-            (1200, 0.10, 0.3), (800, 0.15, 0.2),
-        ],
-    }
+    A hangok fájl alapúak: a package ``sounds/`` mappájából töltődnek
+    (``smart_fan_controller/sounds/<név>.wav``). Hiányzó vagy hibás fájl
+    esetén a program hang nélkül fut tovább – a logba pontos figyelmeztetés
+    kerül (melyik fájl, milyen útvonalon hiányzik), így később pótolható.
+
+    A fájlok a ``tools/generate_lcars_sounds.py`` szkripttel újragenerálhatók,
+    vagy tetszőleges saját WAV-ra cserélhetők (tömörítetlen PCM WAV kell,
+    a QSoundEffect csak ezt támogatja).
+    """
+
+    # Az elvárt hangeffekt fájlnevek (<név>.wav a sounds/ mappában)
+    SOUND_NAMES: tuple[str, ...] = (
+        "zone_up",          # zónaváltás felfelé
+        "zone_down",        # zónaváltás lefelé
+        "zone_standby",     # standby-ba lépés
+        "sensor_dropout",   # szenzor jelvesztés
+        "sensor_reconnect",  # szenzor visszacsatlakozás
+        "zwift_connect",    # Zwift adat érkezik
+        "zwift_disconnect",  # Zwift jelvesztés
+        "fan_tx",           # ventilátor parancs elküldve
+        "hud_startup",      # HUD indítás
+        "hud_shutdown",     # HUD bezárás
+    )
 
     def __init__(self) -> None:
-        self._temp_dir = tempfile.mkdtemp(prefix="lcars_snd_")
         self._effects: dict[str, QSoundEffect] = {}
+        self._durations_ms: dict[str, int] = {}
         self._enabled = True
         self._volume = 0.5
         self._cleaned_up = False
-        self._generate_all()
-        atexit.register(self.cleanup)
+        self._load_all()
 
-    def _generate_all(self) -> None:
-        """Összes hangeffekt generálása és QSoundEffect létrehozása."""
-        for name, tones in self._SOUND_DEFS.items():
+    @staticmethod
+    def sounds_dir() -> str:
+        """A hangfájlok könyvtára (fejlesztői és PyInstaller frozen módban).
+
+        Keresési sorrend (a fonts/ mappával azonos logika):
+          1. <package_dir>/sounds                       (smart_fan_controller/sounds)
+          2. <exe_dir>/smart_fan_controller/sounds      (PyInstaller frozen)
+        """
+        if getattr(sys, "frozen", False):
+            base_dir = os.path.join(
+                os.path.dirname(os.path.abspath(sys.executable)),
+                "smart_fan_controller",
+            )
+        else:
+            # hud.py: smart_fan_controller/ui/hud.py → package gyökér egy szinttel feljebb
+            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        return os.path.join(base_dir, "sounds")
+
+    def _load_all(self) -> None:
+        """Összes hangeffekt betöltése a sounds/ mappából.
+
+        Hiányzó fájl nem hiba: az adott effekt némítva marad, a log pedig
+        pontosan megmondja, melyik fájlt hova kell tenni a pótláshoz.
+        """
+        snd_dir = self.sounds_dir()
+        missing: list[str] = []
+        for name in self.SOUND_NAMES:
+            wav_path = os.path.join(snd_dir, f"{name}.wav")
+            if not os.path.isfile(wav_path):
+                missing.append(wav_path)
+                continue
             try:
-                wav_data = generate_tone(tones)
-                wav_path = os.path.join(self._temp_dir, f"{name}.wav")
-                with open(wav_path, "wb") as f:
-                    f.write(wav_data)
+                # Időtartam a WAV fejlécből (a bezáró hang kivárásához kell)
+                with wave.open(wav_path, "rb") as wf:
+                    rate = wf.getframerate()
+                    self._durations_ms[name] = (
+                        int(wf.getnframes() * 1000 / rate) if rate > 0 else 0
+                    )
                 effect = QSoundEffect()
                 effect.setSource(QUrl.fromLocalFile(wav_path))
                 effect.setVolume(self._volume)
                 self._effects[name] = effect
             except Exception as exc:
-                logger.warning("LCARS hang generálás sikertelen (%s): %s", name, exc)
+                logger.warning(
+                    "LCARS hangfájl betöltése sikertelen: %s (%s) – "
+                    "a(z) '%s' hangeffekt némítva.", wav_path, exc, name
+                )
+        for path in missing:
+            logger.warning(
+                "LCARS hangfájl hiányzik: %s – a hangeffekt némítva; "
+                "pótolható a fájl elhelyezésével, vagy újragenerálható: "
+                "python tools/generate_lcars_sounds.py", path
+            )
+        if missing and not self._effects:
+            logger.warning(
+                "Egyetlen LCARS hangfájl sem található a %s mappában – "
+                "a HUD hang nélkül fut.", snd_dir
+            )
 
     def play(self, name: str) -> None:
-        """Hangeffekt lejátszása név alapján."""
+        """Hangeffekt lejátszása név alapján (hiányzó hangnál csendes no-op)."""
         if not self._enabled:
             return
         effect = self._effects.get(name)
@@ -548,10 +570,7 @@ class LCARSSoundManager:
 
     def sound_duration_ms(self, name: str) -> int:
         """Adott hangeffekt időtartama milliszekundumban (0, ha nem töltődött be)."""
-        if name not in self._effects:
-            return 0
-        tones = self._SOUND_DEFS.get(name, [])
-        return sum(int(d * 1000) for _, d, _ in tones)
+        return self._durations_ms.get(name, 0) if name in self._effects else 0
 
     def set_enabled(self, enabled: bool) -> None:
         """Hangeffektek be/kikapcsolása."""
@@ -564,17 +583,13 @@ class LCARSSoundManager:
             effect.setVolume(volume)
 
     def cleanup(self) -> None:
-        """Összes effect leállítása és temp fájlok törlése."""
+        """Összes effect leállítása és felszabadítása."""
         if self._cleaned_up:
             return
         self._cleaned_up = True
         for effect in self._effects.values():
             effect.stop()
         self._effects.clear()
-        try:
-            shutil.rmtree(self._temp_dir, ignore_errors=True)
-        except Exception as exc:
-            logger.debug("Temp dir törlési hiba: %s", exc)
 
 
 class HUDWindow(QWidget):
