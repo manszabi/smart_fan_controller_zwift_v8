@@ -1,27 +1,27 @@
 #!/usr/bin/env python3
-"""zwift_fan_controller.py – vékony belépő.
+"""zwift_fan_controller.py – thin entry point.
 
-Smart Fan Controller – moduláris, párhuzamos implementáció (v8).
+Smart Fan Controller – modular, concurrent implementation (v8).
 
-A tényleges kód a ``smart_fan_controller`` csomagba szerveződött:
-  - config      – típusbiztos beállítás-modellek + betöltő (settings.json)
-  - core        – tiszta domain-logika (zónák, átlagolás, cooldown, state, logging)
-  - handlers    – be/kimeneti adatkezelők (ANT+, BLE, Zwift UDP)
-  - processors  – async feldolgozó task-ok (power/hr/zone/dropout)
+The actual code is organized into the ``smart_fan_controller`` package:
+  - config      – type-safe settings models + loader (settings.json)
+  - core        – pure domain logic (zones, averaging, cooldown, state, logging)
+  - handlers    – input/output data handlers (ANT+, BLE, Zwift UDP)
+  - processors  – async processing tasks (power/hr/zone/dropout)
   - ui          – PySide6 LCARS HUD
-  - zwift_api   – Zwift HTTPS API polling segédprocessz
-  - controller  – FanController orchestrátor
-  - app         – belépőpont (asyncio loop + Qt HUD összehangolása)
+  - zwift_api   – Zwift HTTPS API polling helper process
+  - controller  – FanController orchestrator
+  - app         – entry point (asyncio loop + Qt HUD coordination)
 
-Ez a fájl megőrzi a közvetlen futtatás és a PyInstaller entry-point
-kompatibilitását, és visszafelé kompatibilis re-exportokat biztosít a
-tesztek és a meglévő kód számára.
+This file preserves direct-run and PyInstaller entry-point
+compatibility, and provides backwards-compatible re-exports for the
+tests and existing code.
 """
 from __future__ import annotations
 
-# --- Visszafelé kompatibilis re-exportok ---
-# A tesztek és a meglévő kód egy része innen (a fő modulból) importál néhány
-# gyakran használt szimbólumot. Ezeket a csomag almoduljaiból re-exportáljuk.
+# --- Backwards-compatible re-exports ---
+# The tests and parts of the existing code import a few frequently used
+# symbols from here (the main module). Re-exported from the submodules.
 from smart_fan_controller.config import (
     BleConfig,
     DataSource,
@@ -44,7 +44,7 @@ from smart_fan_controller.core import (
     zone_for_power,
 )
 from smart_fan_controller.app import main, _PYSIDE6_AVAILABLE
-from smart_fan_controller import __version__  # egyetlen verzió-forrás
+from smart_fan_controller import __version__  # single source of the version
 
 __all__ = [
     "main",

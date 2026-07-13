@@ -1,9 +1,9 @@
-"""A zwift_api segédprocessz saját loggolása (külön zwift_api_polling.log fájl).
+"""The zwift_api helper's own logging (separate zwift_api_polling.log file).
 
-A subprocess külön processzben fut, ezért saját loggert és log fájlt használ,
-hogy ne ütközzön a fő app fájlírásával. A loggolást a settings.json
-``global_settings.logging`` / ``log_directory`` mezői vezérlik – a fő app
-beállításaival egységesen.
+The subprocess runs as a separate process, so it uses its own logger and
+log file to avoid clashing with the main app's file writes. Logging is
+driven by the ``global_settings.logging`` / ``log_directory`` fields of
+settings.json – consistent with the main app's configuration.
 """
 from __future__ import annotations
 
@@ -14,24 +14,25 @@ from typing import Any
 
 log = logging.getLogger("zwift_api_polling")
 
-# A program indítási könyvtára (frozen exe vagy a settings.json mappája).
+# The program's launch directory (frozen exe or the settings.json folder).
 _base_dir: str = (
     os.path.dirname(os.path.abspath(sys.executable))
     if getattr(sys, "frozen", False)
     else os.getcwd()
 )
 
-# A feloldott log könyvtár (a setup_logging állítja be)
+# The resolved log directory (set by setup_logging)
 _log_dir: str = _base_dir
-# A korai (settings betöltés előtti) logokat pufferelő handler
+# Handler buffering the early (pre-settings-load) logs
 _early_mem_handler: Any = None
 
 
 def _close_and_clear_handlers() -> None:
-    """A logger handlereit leválasztja ÉS bezárja.
+    """Detach AND close the logger's handlers.
 
-    A sima handlers.clear() nyitva hagyná a fájl-handlereket: Windows-on a
-    nyitva felejtett handle a log-rotációt (átnevezést) is meghiúsítaná."""
+    A plain handlers.clear() would leave the file handlers open: on
+    Windows the forgotten open handle would also break the log rotation
+    (renaming)."""
     for h in log.handlers[:]:
         log.removeHandler(h)
         try:
@@ -41,14 +42,14 @@ def _close_and_clear_handlers() -> None:
 
 
 def set_base_dir(path: str) -> None:
-    """Beállítja a log fájlok alapértelmezett könyvtárát (fallback)."""
+    """Set the default (fallback) directory of the log files."""
     global _base_dir, _log_dir
     _base_dir = path
     _log_dir = path
 
 
 def resolve_log_dir(log_directory: str | None) -> str:
-    """Log könyvtár meghatározása és validálása (fallback: a base könyvtár)."""
+    """Determine and validate the log directory (fallback: the base dir)."""
     if not log_directory:
         return _base_dir
     resolved = os.path.abspath(os.path.expanduser(log_directory))
@@ -68,12 +69,12 @@ def resolve_log_dir(log_directory: str | None) -> str:
 
 
 def setup_early_logging() -> None:
-    """A settings betöltése ELŐTTI logokat memóriába puffereli.
+    """Buffer the logs emitted BEFORE the settings load in memory.
 
-    A 'logging' flag csak a settings betöltése után ismert, ezért a korai
-    logokat (pl. validációs warningok) memóriában tartjuk, majd a flag
-    ismeretében visszajátsszuk (flush_early_logging) vagy eldobjuk
-    (discard_early_logging).
+    The 'logging' flag is only known after the settings load, so the
+    early logs (e.g. validation warnings) are kept in memory and later
+    replayed (flush_early_logging) or dropped (discard_early_logging)
+    once the flag is known.
     """
     from logging.handlers import MemoryHandler
 
@@ -91,9 +92,9 @@ def setup_logging(
     enabled: bool = True,
     debug: bool = False,
 ) -> None:
-    """Loggolás konfigurálása: konzol + rotált fájl (zwift_api_polling.log).
+    """Configure logging: console + rotating file (zwift_api_polling.log).
 
-    Ha ``enabled`` False → NullHandler (teljes némaság, nincs fájl).
+    When ``enabled`` is False → NullHandler (total silence, no file).
     """
     from logging.handlers import RotatingFileHandler
 
@@ -108,13 +109,13 @@ def setup_logging(
     level = logging.DEBUG if debug else logging.INFO
     log.setLevel(level)
 
-    # Konzol (tiszta formátum – csak az üzenet)
+    # Console (clean format – message only)
     console = logging.StreamHandler(sys.stdout)
     console.setLevel(level)
     console.setFormatter(logging.Formatter("%(message)s"))
     log.addHandler(console)
 
-    # Rotált fájl (időbélyeggel)
+    # Rotating file (timestamped)
     _log_dir = resolve_log_dir(log_directory)
     file_handler = RotatingFileHandler(
         os.path.join(_log_dir, "zwift_api_polling.log"),
@@ -128,7 +129,7 @@ def setup_logging(
 
 
 def flush_early_logging() -> None:
-    """A pufferelt korai logokat visszajátssza a már beállított handlerekre."""
+    """Replay the buffered early logs onto the configured handlers."""
     global _early_mem_handler
     if _early_mem_handler is not None:
         for record in _early_mem_handler.buffer:
@@ -138,7 +139,7 @@ def flush_early_logging() -> None:
 
 
 def discard_early_logging() -> None:
-    """A pufferelt korai logokat eldobja (logging: false eset)."""
+    """Drop the buffered early logs (the logging: false case)."""
     global _early_mem_handler
     if _early_mem_handler is not None:
         _early_mem_handler.buffer.clear()

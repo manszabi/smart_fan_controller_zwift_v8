@@ -1,14 +1,14 @@
-"""BLE kezelő modulok – ventilátor kimenet és szenzor bemenetek.
+"""BLE handler modules – fan output and sensor inputs.
 
-Ez a modul az összes BLE-kezelő osztályt tartalmazza:
-- BLEFanOutputController: BLE ventilátor zóna küldés
-- _BLESensorInputHandler: Abstract base szenzor kezelőkhöz
-- BLEPowerInputHandler: BLE power métering
-- BLEHRInputHandler: BLE szívfrekvencia
-- BLECombinedSensor: Power + HR aggregátor
-- Segédfüggvények: scan, log, send_zone
+This module contains every BLE handler class:
+- BLEFanOutputController: BLE fan zone sending
+- _BLESensorInputHandler: abstract base for sensor handlers
+- BLEPowerInputHandler: BLE power metering
+- BLEHRInputHandler: BLE heart rate
+- BLECombinedSensor: power + HR aggregator
+- Helper functions: scan, log, send_zone
 
-Asyncio korrutin alapú implementáció, bleak könyvtárral.
+Asyncio coroutine based implementation using the bleak library.
 """
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ from typing import Any
 logger = logging.getLogger("zwift_fan_controller_new")
 user_logger = logging.getLogger("user")
 
-# Bleak könyvtár ellenőrzése
+# Check for the bleak library
 try:
     from bleak import BleakClient, BleakScanner
     _BLEAK_AVAILABLE = True
@@ -35,12 +35,12 @@ from smart_fan_controller.core.helpers import resolve_log_dir
 
 
 # ============================================================
-# BLE ESZKÖZ KERESÉS ÉS LOGOLÁS (közös segédfüggvények)
+# BLE DEVICE DISCOVERY AND LOGGING (shared helpers)
 # ============================================================
 
 
 def _ble_log_path(log_dir: str) -> str:
-    """Visszaadja a ble_devices.log teljes útvonalát a konfigurált log könyvtárban."""
+    """Return the full path of ble_devices.log in the configured log dir."""
     return os.path.join(log_dir, "ble_devices.log")
 
 
@@ -50,39 +50,39 @@ def _log_ble_devices_to_file(
     log_dir: str,
     logging_enabled: bool,
 ) -> None:
-    """Talált BLE eszközöket ír a ble_devices.log fájlba (append módban).
+    """Append discovered BLE devices to the ble_devices.log file.
 
-    Csak olyan eszközöket ír a fájlba, amelyek address-e még nem szerepel benne.
-    Ha a fájl nem létezik, létrehozza. Minden bejegyzés időbélyeggel ellátott.
+    Only devices whose address is not in the file yet are written.
+    Creates the file when it does not exist. Every entry is timestamped.
 
     Args:
-        devices_info: Lista (name, address, service_uuids) tuple-ökből.
-        scan_context: A keresés kontextusa (pl. "BLE Fan", "BLE Power").
-        log_dir: Log könyvtár elérési útja.
-        logging_enabled: True, ha a logging engedélyezett.
+        devices_info: List of (name, address, service_uuids) tuples.
+        scan_context: Context of the scan (e.g. "BLE Fan", "BLE Power").
+        log_dir: Path of the log directory.
+        logging_enabled: True when logging is enabled.
     """
-    # Loggolás kikapcsolva → nem írunk eszköz-log fájlt sem
+    # Logging disabled → no device log file is written either
     if not logging_enabled:
         return
     if not devices_info:
         return
 
-    # Meglévő address-ek beolvasása a fájlból
+    # Read the existing addresses from the file
     existing_addresses: set[str] = set()
     ble_log = _ble_log_path(log_dir)
     try:
         with open(ble_log, "r", encoding="utf-8") as f:
             for line in f:
-                # Sorok formátuma: "  név | ADDRESS | UUIDs: ..."
+                # Line format: "  name | ADDRESS | UUIDs: ..."
                 parts = line.split("|")
                 if len(parts) >= 2:
                     existing_addresses.add(parts[1].strip())
     except FileNotFoundError:
-        pass  # Még nem létezik a fájl, minden eszköz új
+        pass  # The file does not exist yet, every device is new
     except OSError as exc:
         logger.warning(f"Nem sikerült olvasni a {ble_log} fájlt: {exc}")
 
-    # Csak az új eszközök szűrése
+    # Filter for the new devices only
     new_devices = [
         (name, addr, uuids)
         for name, addr, uuids in devices_info
@@ -108,12 +108,12 @@ def _print_ble_devices(
     scan_context: str,
     matched_addr: str | None = None,
 ) -> None:
-    """Talált BLE eszközöket ír a konzolra.
+    """Print the discovered BLE devices to the console.
 
     Args:
-        devices_info: Lista (name, address, service_uuids) tuple-ökből.
-        scan_context: A keresés kontextusa.
-        matched_addr: Az automatikusan kiválasztott eszköz címe (◄ jelöléshez).
+        devices_info: List of (name, address, service_uuids) tuples.
+        scan_context: Context of the scan.
+        matched_addr: Address of the auto-selected device (for the ◄ marker).
     """
     user_logger.info(f"\n📡 BLE Scan ({scan_context}): {len(devices_info)} eszköz található")
     for name, addr, uuids in devices_info:
@@ -132,21 +132,21 @@ async def _scan_ble_with_autodiscovery(
     log_dir: str,
     logging_enabled: bool,
 ) -> tuple[Any, list[tuple[str | None, str, list[str]]]]:
-    """BLE eszközöket keres, logolja, és opcionálisan keres egy megadott service UUID-val.
+    """Scan for BLE devices, log them, optionally match a given service UUID.
 
-    Ha target_service_uuid megadva, az első olyan eszközt választja ki,
-    amelyik hirdeti ezt az UUID-t.
+    When target_service_uuid is given, the first device advertising that
+    UUID is selected.
 
     Args:
-        scan_timeout: Keresési timeout másodpercben.
-        target_service_uuid: Keresett service UUID (vagy None).
-        scan_context: A keresés kontextusa (logoláshoz).
-        log_dir: Log könyvtár elérési útja.
-        logging_enabled: True, ha a logging engedélyezett.
+        scan_timeout: Scan timeout in seconds.
+        target_service_uuid: Service UUID to look for (or None).
+        scan_context: Context of the scan (for logging).
+        log_dir: Path of the log directory.
+        logging_enabled: True when logging is enabled.
 
     Returns:
-        (matched_device, devices_info) – matched_device az első egyezés (BLEDevice)
-        vagy None, devices_info a teljes lista.
+        (matched_device, devices_info) – matched_device is the first match
+        (BLEDevice) or None, devices_info is the full list.
     """
     if not _BLEAK_AVAILABLE:
         return None, []
@@ -157,7 +157,7 @@ async def _scan_ble_with_autodiscovery(
 
     try:
         # return_adv=True: dict[str, tuple[BLEDevice, AdvertisementData]]
-        # (bleak >= 0.21 garantálja; a régi list-alapú API-t már nem támogatjuk)
+        # (guaranteed by bleak >= 0.21; the old list-based API is unsupported)
         discovered = await BleakScanner.discover(
             timeout=scan_timeout, return_adv=True
         )
@@ -185,23 +185,23 @@ def _report_gatt_characteristics(
     log_dir: str,
     logging_enabled: bool,
 ) -> None:
-    """A csatlakozott eszköz GATT characteristic UUID-jait konzolra és fájlba írja.
+    """Print the connected device's GATT characteristic UUIDs to console and file.
 
-    A characteristic UUID-k – a service UUID-kkel ellentétben – NEM szerepelnek a
-    BLE hirdetési csomagban, csak csatlakozás + GATT discovery után olvashatók ki.
-    Ezért ezt a függvényt sikeres csatlakozás után kell hívni (a ``client.services``
-    ekkor már fel van töltve).
+    Unlike service UUIDs, characteristic UUIDs are NOT part of the BLE
+    advertisement packet – they are only readable after connecting + GATT
+    discovery. Call this function after a successful connection
+    (``client.services`` is populated by then).
 
     Args:
-        client: Csatlakozott BleakClient (``client.services``-szel).
-        label: Eszköz/kontextus címke a kimenethez (pl. "BLE Fan").
-        log_dir: Log könyvtár elérési útja.
-        logging_enabled: True, ha a logging engedélyezett.
+        client: Connected BleakClient (with ``client.services``).
+        label: Device/context label for the output (e.g. "BLE Fan").
+        log_dir: Path of the log directory.
+        logging_enabled: True when logging is enabled.
     """
     if not _BLEAK_AVAILABLE:
         return
 
-    # (service_uuid, char_uuid, [properties]) hármasok gyűjtése
+    # Collect (service_uuid, char_uuid, [properties]) triples
     entries: list[tuple[str, str, list[str]]] = []
     try:
         services = getattr(client, "services", None)
@@ -220,13 +220,13 @@ def _report_gatt_characteristics(
     if not entries:
         return
 
-    # Konzol kimenet
+    # Console output
     user_logger.info(f"🔎 {label} characteristic UUID-k ({len(entries)} db):")
     for svc_uuid, char_uuid, props in entries:
         prop_str = ", ".join(props) if props else "–"
         user_logger.info(f"    {char_uuid}  [{prop_str}]  (service: {svc_uuid})")
 
-    # Fájl kimenet (csak ha a logging engedélyezett)
+    # File output (only when logging is enabled)
     if not logging_enabled:
         return
     ble_log = _ble_log_path(log_dir)
@@ -242,49 +242,50 @@ def _report_gatt_characteristics(
 
 
 async def send_zone(zone: int, zone_queue: asyncio.Queue[int]) -> None:
-    """Zóna parancsot küld a BLE fan kimenet queue-ba.
+    """Send a zone command into the BLE fan output queue.
 
-    Ha a queue teli (maxsize=1), a régi parancsot elveti és az újat
-    teszi be, hogy mindig a legfrissebb zóna kerüljön küldésre.
-    A get_nowait() után a queue garantáltan üres, ezért put_nowait()
-    nem dobhat QueueFull-t.
+    When the queue is full (maxsize=1) the old command is discarded and
+    the new one inserted, so the freshest zone is always the one sent.
+    After get_nowait() the queue is guaranteed empty, so put_nowait()
+    cannot raise QueueFull.
 
     Args:
-        zone: Ventilátor zóna szintje (0–3).
-        zone_queue: A BLE fan output asyncio.Queue-ja.
+        zone: Fan zone level (0–3).
+        zone_queue: asyncio.Queue of the BLE fan output.
     """
     try:
         zone_queue.get_nowait()
     except asyncio.QueueEmpty:
         pass
-    # get_nowait() után garantáltan szabad hely van
+    # After get_nowait() there is guaranteed free room
     zone_queue.put_nowait(zone)
 
 
 # ============================================================
-# BLE VENTILÁTOR KIMENET VEZÉRLŐ
+# BLE FAN OUTPUT CONTROLLER
 # ============================================================
 
 
 class BLEFanOutputController:
-    """BLE alapú ventilátor kimenet vezérlő (LEVEL:N parancsok küldése).
+    """BLE based fan output controller (sends LEVEL:N commands).
 
-    Asyncio korrutin alapú implementáció. A parancsokat egy
-    asyncio.Queue-n keresztül fogadja, és a BLE GATT karakterisztikára
-    írja ki az ESP32 vezérlőnek. PIN autentikáció is támogatott.
+    Asyncio coroutine based implementation. Commands are received via an
+    asyncio.Queue and written to the BLE GATT characteristic of the ESP32
+    controller. PIN authentication is supported.
 
-    Újracsatlakozás: egy időzített háttér-task (``_reconnect_loop``)
-    ``reconnect_interval`` időközönként próbál újracsatlakozni, ha a kapcsolat
-    áll – a zóna-parancsoktól függetlenül. A zóna-küldés (``_send_zone``)
-    soha nem blokkol reconnect-en: ha a kapcsolat áll vagy épp reconnect
-    zajlik, csak elmenti a kért zónát, amit a háttér-loop sikeres
-    újracsatlakozás után kiküld. A ``_conn_lock`` sorosítja a BLE
-    műveleteket, így a párhuzamos zóna-küldés és reconnect nem ütközik.
+    Reconnect: a timed background task (``_reconnect_loop``) attempts to
+    reconnect every ``reconnect_interval`` while the connection is down –
+    independent of the zone commands. Zone sending (``_send_zone``) never
+    blocks on a reconnect: while the connection is down or a reconnect is
+    in flight, it only records the requested zone, which the background
+    loop sends out after a successful reconnect. ``_conn_lock``
+    serializes the BLE operations, so concurrent zone sends and
+    reconnects do not collide.
 
-    Attribútumok:
-        device_name: A keresett BLE eszköz neve.
-        is_connected: True, ha a BLE kapcsolat aktív.
-        last_sent: Az utoljára sikeresen elküldött zóna szint.
+    Attributes:
+        device_name: Name of the BLE device to look for.
+        is_connected: True while the BLE connection is up.
+        last_sent: The last successfully sent zone level.
     """
 
     RETRY_RESET_SECONDS = 30
@@ -310,14 +311,14 @@ class BLEFanOutputController:
         self._retry_reset_time: float | None = None
         self._auth_failed: bool = False
         self.last_sent_time: float = 0.0
-        # Legutóbb kért zóna – az időzített háttér-újracsatlakozás ezt küldi ki
-        # sikeres reconnect után (akkor is, ha közben nem jött új parancs).
+        # Most recently requested zone – the timed background reconnect
+        # sends it after a successful reconnect (even without a new command).
         self._desired_zone: int | None = None
-        # A BLE kliens műveleteit (connect / write) sorosító lock, hogy a
-        # háttér-reconnect és a zóna-küldés ne fusson egyszerre ugyanazon a
-        # kliensen. (Python ≥3.10: futó loop nélkül is létrehozható.)
+        # Lock serializing the BLE client operations (connect / write) so
+        # the background reconnect and zone sending never run on the same
+        # client concurrently. (Python ≥3.10: constructible without a loop.)
         self._conn_lock: asyncio.Lock = asyncio.Lock()
-        # Az időzített háttér-újracsatlakozó task (a run() indítja/állítja le).
+        # The timed background reconnect task (started/stopped by run()).
         self._reconnect_task: asyncio.Task[None] | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         gs = settings["global_settings"]
@@ -326,7 +327,7 @@ class BLEFanOutputController:
 
     @property
     def auth_failed(self) -> bool:
-        """True ha az authentikáció sikertelen volt (PIN hibás)."""
+        """True when authentication failed (wrong PIN)."""
         return self._auth_failed
 
     def __repr__(self) -> str:
@@ -337,13 +338,13 @@ class BLEFanOutputController:
         )
 
     async def run(self, zone_queue: asyncio.Queue[int]) -> None:
-        """A BLE fan kimenet fő korrutinja – olvassa a zone_queue-t és küldi a parancsokat.
+        """Main coroutine of the BLE fan output – reads zone_queue and sends commands.
 
-        Indításkor megpróbál csatlakozni a BLE eszközhöz, majd folyamatosan
-        olvassa a zone_queue-t és elküldi a zóna parancsokat.
+        Attempts to connect to the BLE device at startup, then keeps
+        reading zone_queue and sending the zone commands.
 
         Args:
-            zone_queue: asyncio.Queue, amelyből a zóna parancsokat olvassa.
+            zone_queue: asyncio.Queue the zone commands are read from.
         """
         self._loop = asyncio.get_running_loop()
         if not _BLEAK_AVAILABLE:
@@ -353,9 +354,9 @@ class BLEFanOutputController:
         user_logger.info("BLE Fan kimenet elindítva")
         await self._initial_connect()
 
-        # Időzített háttér-újracsatlakozás külön task-ban: a zóna-parancsoktól
-        # függetlenül próbál újracsatlakozni, ha a kapcsolat áll. Külön task,
-        # ezért nem blokkolja a zone_queue olvasását.
+        # Timed background reconnect in its own task: attempts to reconnect
+        # while the connection is down, independent of the zone commands.
+        # A separate task, so it never blocks the zone_queue reads.
         self._reconnect_task = asyncio.create_task(self._reconnect_loop())
         try:
             while True:
@@ -372,7 +373,7 @@ class BLEFanOutputController:
                     pass
 
     async def _initial_connect(self) -> None:
-        """Kezdeti BLE csatlakozás indításkor (hiba esetén folytatja)."""
+        """Initial BLE connection at startup (continues on failure)."""
         ok = await self._scan_and_connect()
         if not ok:
             user_logger.warning(
@@ -381,19 +382,19 @@ class BLEFanOutputController:
             )
 
     async def _scan_and_connect(self) -> bool:
-        """BLE eszköz keresése és csatlakozás.
+        """Scan for the BLE device and connect.
 
-        Ha device_name üres vagy None, automatikus felderítés indul:
-        a service_uuid alapján keres megfelelő eszközt, az összes talált
-        eszközt konzolra és ble_devices.log-ba írja.
+        When device_name is empty or None, auto-discovery starts: a
+        matching device is looked up by service_uuid, and every device
+        found is written to the console and ble_devices.log.
 
         Returns:
-            True, ha a csatlakozás sikeres.
+            True when the connection succeeded.
         """
         if not _BLEAK_AVAILABLE:
             return False
 
-        # --- Automatikus felderítés (nincs device_name beállítva) ---
+        # --- Auto-discovery (no device_name configured) ---
         if not self.device_name:
             try:
                 matched, _ = await _scan_ble_with_autodiscovery(
@@ -419,9 +420,9 @@ class BLEFanOutputController:
                 logger.error(f"BLE Fan auto-felderítés hiba: {exc}")
                 return False
 
-        # --- Név alapú keresés (device_name beállítva) ---
-        # find_device_by_name: azonnal visszatér, amint az eszköz felbukkant
-        # (a discover() mindig kivárná a teljes scan_timeout-ot)
+        # --- Name based lookup (device_name configured) ---
+        # find_device_by_name: returns as soon as the device shows up
+        # (discover() would always wait out the full scan_timeout)
         try:
             device = await BleakScanner.find_device_by_name(
                 self.device_name, timeout=self.scan_timeout
@@ -441,10 +442,10 @@ class BLEFanOutputController:
             return False
 
     async def _connect(self) -> bool:
-        """Csatlakozás a korábban megtalált BLE eszközhöz.
+        """Connect to the previously discovered BLE device.
 
         Returns:
-            True, ha a csatlakozás sikeres.
+            True when the connection succeeded.
         """
         if not _BLEAK_AVAILABLE:
             return False
@@ -454,9 +455,9 @@ class BLEFanOutputController:
         try:
             client = self._client
             if client and client.is_connected:
-                # A kliens már kapcsolódva van (pl. egy korábbi, félbeszakadt
-                # próbálkozásból) – az állapot-flaget is szinkronba hozzuk,
-                # különben a zónaküldés örökre kihagyna.
+                # The client is already connected (e.g. from an earlier,
+                # interrupted attempt) – sync the state flag too, otherwise
+                # zone sending would skip forever.
                 self.is_connected = True
                 return True
 
@@ -469,7 +470,8 @@ class BLEFanOutputController:
 
             await client.connect()
 
-            # Csatlakozás után a GATT characteristic UUID-k kiírása (csak így olvashatók)
+            # Print the GATT characteristic UUIDs after connecting (the
+            # only time they are readable)
             _report_gatt_characteristics(
                 client, "BLE Fan", self._log_dir, self._logging_enabled
             )
@@ -477,9 +479,9 @@ class BLEFanOutputController:
             if self.pin_code is not None:
                 ok = await self._authenticate()
                 if not ok:
-                    # A felépült kapcsolatot nem hagyhatjuk nyitva: bontás és
-                    # kliens elengedése, különben a kapcsolat "beragad"
-                    # (fizikailag él, de a vezérlő OFFLINE-nak látja).
+                    # The established link must not stay open: disconnect and
+                    # release the client, otherwise the connection gets
+                    # "stuck" (physically alive but seen as OFFLINE).
                     try:
                         await asyncio.wait_for(
                             client.disconnect(), timeout=self.DISCONNECT_TIMEOUT
@@ -509,10 +511,10 @@ class BLEFanOutputController:
             return False
 
     async def _authenticate(self) -> bool:
-        """Alkalmazás szintű BLE PIN autentikáció.
+        """Application-level BLE PIN authentication.
 
         Returns:
-            True, ha az autentikáció sikeres (vagy timeout esetén is folytatja).
+            True when authentication succeeded (also continues on timeout).
         """
         client = self._client
         if client is None:
@@ -585,10 +587,11 @@ class BLEFanOutputController:
             return False
 
     def _on_disconnect(self, client: Any) -> None:
-        """Callback: BLE kapcsolat váratlan megszakadásakor.
+        """Callback for an unexpected BLE disconnect.
 
-        Bleak nem garantálja, hogy az asyncio event loop szálán hívja ezt,
-        ezért loop.call_soon_threadsafe()-fel delegáljuk az állapotmódosítást.
+        bleak does not guarantee calling this on the asyncio event loop
+        thread, so the state change is delegated via
+        loop.call_soon_threadsafe().
         """
         loop = self._loop
         if loop is not None and loop.is_running():
@@ -597,27 +600,28 @@ class BLEFanOutputController:
             self._handle_disconnect()
 
     def _handle_disconnect(self) -> None:
-        """Disconnect állapotmódosítás – az asyncio event loop-on hívandó.
+        """Disconnect state change – to be called on the asyncio event loop.
 
-        Csak valódi (csatlakozott → megszakadt) átmenetnél riasztunk: a
-        szándékos bontások (leállítás, PIN-hiba, write-timeout utáni cleanup)
-        előbb lenullázzák az is_connected flaget, így azok nem riasztanak."""
+        Only a real (connected → dropped) transition alerts: intentional
+        disconnects (shutdown, PIN failure, post-write-timeout cleanup)
+        clear the is_connected flag first, so they stay silent."""
         if self.is_connected:
             user_logger.warning("⚠ BLE Fan kapcsolat megszakadt")
         self.is_connected = False
         self.last_sent = None
 
     async def _send_zone(self, zone: int) -> None:
-        """Zóna parancs küldése BLE-n – soha nem blokkol újracsatlakozáson.
+        """Send a zone command over BLE – never blocks on a reconnect.
 
-        Az újracsatlakozást az időzített háttér-loop (``_reconnect_loop``)
-        végzi, nem ez a metódus. Itt csak akkor írunk, ha a kapcsolat aktív
-        és épp nincs folyamatban BLE művelet (reconnect). Ha a kapcsolat áll,
-        a kért zónát elmentjük (``_desired_zone``); a háttér-loop sikeres
-        újracsatlakozás után automatikusan kiküldi a legutóbbi kért zónát.
+        Reconnecting is done by the timed background loop
+        (``_reconnect_loop``), not this method. We only write when the
+        connection is up and no BLE operation (reconnect) is in flight.
+        While the connection is down the requested zone is recorded
+        (``_desired_zone``); the background loop sends the latest
+        requested zone automatically after a successful reconnect.
 
         Args:
-            zone: Ventilátor zóna szintje (0–3).
+            zone: Fan zone level (0–3).
         """
         self._desired_zone = zone
 
@@ -630,28 +634,29 @@ class BLEFanOutputController:
         if self.last_sent == zone and self.is_connected:
             return
 
-        # Nincs kapcsolat → nem blokkolunk; a háttér-loop újracsatlakozik és
-        # a _desired_zone-t küldi ki. Ha épp reconnect zajlik (lock foglalt),
-        # szintén kihagyjuk – a reconnect végén úgyis kimegy a friss zóna.
+        # No connection → do not block; the background loop reconnects and
+        # sends _desired_zone. When a reconnect is in flight (lock held),
+        # skip as well – the fresh zone goes out at the end of the reconnect.
         if not self.is_connected or self._conn_lock.locked():
             return
 
-        # A lock itt szabad → az acquire azonnal, await-yield nélkül lefut
-        # (asyncio: foglalatlan lock megszerzése nem ad vissza vezérlést),
-        # így nincs versenyhelyzet a fenti ellenőrzés és az acquire között.
+        # The lock is free here → acquire completes immediately without an
+        # await-yield (asyncio: acquiring an uncontended lock does not
+        # yield control), so there is no race between the check above and
+        # the acquire.
         async with self._conn_lock:
             if not self.is_connected:
                 return
             await self._write_level(zone)
 
     async def _reconnect_once(self) -> bool:
-        """Egyetlen újracsatlakozási kísérlet, sleep nélkül.
+        """A single reconnect attempt, without sleeping.
 
-        A sleep-mentes implementáció biztosítja, hogy a zone_queue olvasása
-        ne blokkolódjon hosszú reconnect várakozás miatt.
+        The sleep-free implementation ensures that reading zone_queue is
+        never blocked by a long reconnect wait.
 
         Returns:
-            True, ha az újracsatlakozás sikeres.
+            True when the reconnect succeeded.
         """
         now = time.monotonic()
 
@@ -682,18 +687,20 @@ class BLEFanOutputController:
         return await self._scan_and_connect()
 
     async def _reconnect_loop(self) -> None:
-        """Időzített háttér-újracsatlakozás – a zóna-parancsoktól függetlenül.
+        """Timed background reconnect – independent of the zone commands.
 
-        ``reconnect_interval`` időközönként ébred, és ha a kapcsolat áll (és
-        nincs AUTH hiba), megpróbál újracsatlakozni. A ``_conn_lock`` sorosítja
-        a BLE műveleteket, így a párhuzamos zóna-küldés (``_send_zone``) nem
-        ütközik a reconnect-tel. Sikeres újracsatlakozás után kiküldi a
-        legutóbb kért zónát (``_desired_zone``), hogy a ventilátor a kívánt
-        állapotba kerüljön akkor is, ha közben nem érkezett új parancs.
+        Wakes every ``reconnect_interval`` and attempts a reconnect while
+        the connection is down (and there is no AUTH failure).
+        ``_conn_lock`` serializes the BLE operations, so a concurrent zone
+        send (``_send_zone``) does not collide with the reconnect. After a
+        successful reconnect the most recently requested zone
+        (``_desired_zone``) is sent, putting the fan into the desired
+        state even when no new command arrived meanwhile.
 
-        A ``_reconnect_once`` kezeli a ``max_retries`` számlálót és az azt
-        követő ``RETRY_RESET_SECONDS`` várakozást; ez a loop csak az időzítést
-        adja. Külön task-ban fut, ezért nem blokkolja a zone_queue olvasását.
+        ``_reconnect_once`` manages the ``max_retries`` counter and the
+        subsequent ``RETRY_RESET_SECONDS`` wait; this loop only provides
+        the timing. Runs in its own task, never blocking the zone_queue
+        reads.
         """
         while True:
             await asyncio.sleep(self.reconnect_interval)
@@ -702,8 +709,8 @@ class BLEFanOutputController:
                 continue
 
             async with self._conn_lock:
-                # Újraellenőrzés a lock megszerzése után (közben már
-                # csatlakozhatott egy zóna-küldés mellékhatásaként).
+                # Re-check after acquiring the lock (a connection may have
+                # been established meanwhile as a zone-send side effect).
                 if self.is_connected or self._auth_failed:
                     continue
                 ok = await self._reconnect_once()
@@ -711,10 +718,10 @@ class BLEFanOutputController:
                     await self._write_level(self._desired_zone)
 
     async def _write_level(self, zone: int) -> None:
-        """LEVEL:N parancs írása a BLE GATT karakterisztikára.
+        """Write a LEVEL:N command to the BLE GATT characteristic.
 
         Args:
-            zone: Ventilátor zóna szintje (0–3).
+            zone: Fan zone level (0–3).
         """
         client = self._client
         if client is None or not client.is_connected:
@@ -754,7 +761,7 @@ class BLEFanOutputController:
             self._client = None
 
     async def _write_raw(self, command: str) -> None:
-        """Tetszőleges parancs küldése a BLE GATT karakterisztikára."""
+        """Send an arbitrary command to the BLE GATT characteristic."""
         client = self._client
         if client is None or not client.is_connected:
             return
@@ -771,11 +778,11 @@ class BLEFanOutputController:
             logger.warning(f"BLE Fan raw parancs küldési hiba ({command}): {exc}")
 
     async def disconnect(self) -> None:
-        """Bontja a BLE kapcsolatot és felszabadítja a klienst."""
+        """Disconnect the BLE link and release the client."""
         client = self._client
         if client is not None:
-            # A flaget MÉG a bontás előtt nullázzuk: a disconnected_callback
-            # így szándékos bontásnak látja, és nem riaszt feleslegesen.
+            # Clear the flag BEFORE disconnecting: the disconnected_callback
+            # then sees an intentional disconnect and does not alert.
             self.is_connected = False
             try:
                 await asyncio.wait_for(
@@ -789,28 +796,29 @@ class BLEFanOutputController:
 
 
 # ============================================================
-# BLE SZENZOR KÖZÖS ŐSOSZTÁLY (DRY)
+# SHARED BLE SENSOR BASE CLASS (DRY)
 # ============================================================
 
 
 class _BLESensorInputHandler(abc.ABC):
-    """Közös ősosztály BLE szenzor handlerekhez (Power, HR).
+    """Shared base class for the BLE sensor handlers (Power, HR).
 
-    Asyncio korrutin alapú implementáció. A scan, csatlakozás, notification
-    subscribe és retry/reconnect logika itt van, az alosztályok csak a
-    szenzor-specifikus konstansokat és az adat-parse-olást definiálják.
+    Asyncio coroutine based implementation. The scan, connect,
+    notification subscribe and retry/reconnect logic lives here; the
+    subclasses only define the sensor-specific constants and the data
+    parsing.
 
-    Alosztályoknak felül kell írniuk:
-        SERVICE_UUID: A BLE service UUID string.
-        MEASUREMENT_UUID: A BLE measurement characteristic UUID string.
-        _sensor_label: Rövid név logokhoz (pl. "BLE Power").
-        _settings_prefix: Settings kulcs prefix (pl. "ble_power").
-        _parse_notification(data): Nyers bájt → szám konverzió.
+    Subclasses must override:
+        SERVICE_UUID: The BLE service UUID string.
+        MEASUREMENT_UUID: The BLE measurement characteristic UUID string.
+        _sensor_label: Short name for the logs (e.g. "BLE Power").
+        _settings_prefix: Settings key prefix (e.g. "ble_power").
+        _parse_notification(data): raw bytes → number conversion.
 
-    Attribútumok:
-        device_name: A keresett BLE eszköz neve (None = auto-discovery).
-        is_connected: True, ha a BLE kapcsolat aktív.
-        lastdata: Utolsó sikeres adat időbélyege (time.monotonic).
+    Attributes:
+        device_name: Name of the BLE device (None = auto-discovery).
+        is_connected: True while the BLE connection is up.
+        lastdata: Timestamp of the last successful data (time.monotonic).
     """
 
     SERVICE_UUID: str
@@ -838,18 +846,19 @@ class _BLESensorInputHandler(abc.ABC):
 
     @abc.abstractmethod
     def _parse_notification(self, data: bytes) -> float | None:
-        """Nyers BLE notification bájtokból kinyeri a mért értéket.
+        """Extract the measured value from the raw BLE notification bytes.
 
         Returns:
-            A kinyert érték (float), vagy None ha az adat érvénytelen/túl rövid.
+            The extracted value (float), or None when the data is
+            invalid / too short.
         """
         ...
 
     async def run(self) -> None:
-        """A BLE szenzor fogadó fő korrutinja – újracsatlakozási logikával.
+        """Main coroutine of the BLE sensor receiver – with reconnect logic.
 
-        Ha nincs device_name, automatikusan keres a SERVICE_UUID alapján
-        hirdető eszközt, és folyamatosan próbálkozik, amíg talál egyet.
+        Without a device_name it looks for a device advertising the
+        SERVICE_UUID automatically and keeps trying until one is found.
         """
         label = self._sensor_label
         if not _BLEAK_AVAILABLE:
@@ -872,8 +881,8 @@ class _BLESensorInputHandler(abc.ABC):
                 )
                 await asyncio.sleep(self.reconnect_interval)
             except asyncio.CancelledError:
-                # A cancellation-t tovább kell engedni (modern asyncio minta);
-                # a leállítási útvonal (gather) kezeli.
+                # Cancellation must be re-raised (modern asyncio pattern);
+                # the shutdown path (gather) handles it.
                 self.is_connected = False
                 raise
             except Exception as exc:
@@ -895,10 +904,10 @@ class _BLESensorInputHandler(abc.ABC):
                     await asyncio.sleep(self.reconnect_interval)
 
     async def _scan_and_subscribe(self) -> None:
-        """BLE eszköz keresése, csatlakozás, notification feliratkozás.
+        """Scan for the BLE device, connect, subscribe to notifications.
 
-        Ha device_name megadva: név alapján keres.
-        Ha device_name üres: auto-discovery a SERVICE_UUID alapján.
+        With a device_name: lookup by name.
+        Without one: auto-discovery based on the SERVICE_UUID.
         """
         if not _BLEAK_AVAILABLE:
             return
@@ -907,9 +916,9 @@ class _BLESensorInputHandler(abc.ABC):
         addr = None
 
         if self.device_name:
-            # --- Név alapú keresés ---
-            # find_device_by_name: azonnal visszatér, amint az eszköz
-            # felbukkant (a discover() a teljes scan_timeout-ot kivárná)
+            # --- Name based lookup ---
+            # find_device_by_name: returns as soon as the device shows up
+            # (discover() would wait out the full scan_timeout)
             logger.debug(f"{label} keresés: {self.device_name}...")
             device = await BleakScanner.find_device_by_name(
                 self.device_name, timeout=self.scan_timeout
@@ -921,7 +930,7 @@ class _BLESensorInputHandler(abc.ABC):
                 f"✓ {label} eszköz megtalálva: {device.name} ({device.address})"
             )
         else:
-            # --- Automatikus felderítés service UUID alapján ---
+            # --- Auto-discovery based on the service UUID ---
             matched, _ = await _scan_ble_with_autodiscovery(
                 self.scan_timeout,
                 self.SERVICE_UUID,
@@ -945,7 +954,8 @@ class _BLESensorInputHandler(abc.ABC):
             self._retry_count = 0
             user_logger.info(f"✓ {label} csatlakozva: {addr}")
 
-            # Csatlakozás után a GATT characteristic UUID-k kiírása (csak így olvashatók)
+            # Print the GATT characteristic UUIDs after connecting (the
+            # only time they are readable)
             _report_gatt_characteristics(
                 client, label, self._log_dir, self._logging_enabled
             )
@@ -971,14 +981,14 @@ class _BLESensorInputHandler(abc.ABC):
 
 
 # ============================================================
-# BLE POWER BEMENŐ ADATKEZELÉS
+# BLE POWER INPUT HANDLING
 # ============================================================
 
 
 class BLEPowerInputHandler(_BLESensorInputHandler):
-    """BLE Cycling Power Service (UUID: 0x1818) fogadó.
+    """BLE Cycling Power Service (UUID: 0x1818) receiver.
 
-    Parse: flags (2 bájt LE) → instantaneous power (2 bájt LE, signed int16).
+    Parse: flags (2 bytes LE) → instantaneous power (2 bytes LE, signed int16).
     """
 
     SERVICE_UUID = "00001818-0000-1000-8000-00805f9b34fb"
@@ -988,7 +998,7 @@ class BLEPowerInputHandler(_BLESensorInputHandler):
 
     @property
     def power_lastdata(self) -> float:
-        """Visszafelé kompatibilis alias a lastdata attribútumhoz."""
+        """Backwards-compatible alias for the lastdata attribute."""
         return self.lastdata
 
     @power_lastdata.setter
@@ -1002,14 +1012,14 @@ class BLEPowerInputHandler(_BLESensorInputHandler):
 
 
 # ============================================================
-# BLE HR BEMENŐ ADATKEZELÉS
+# BLE HR INPUT HANDLING
 # ============================================================
 
 
 class BLEHRInputHandler(_BLESensorInputHandler):
-    """BLE Heart Rate Service (UUID: 0x180D) fogadó.
+    """BLE Heart Rate Service (UUID: 0x180D) receiver.
 
-    Parse: flags byte bit 0 → 0 = 8-bites HR, 1 = 16-bites HR.
+    Parse: flags byte bit 0 → 0 = 8-bit HR, 1 = 16-bit HR.
     """
 
     SERVICE_UUID = "0000180d-0000-1000-8000-00805f9b34fb"
@@ -1019,7 +1029,7 @@ class BLEHRInputHandler(_BLESensorInputHandler):
 
     @property
     def hr_lastdata(self) -> float:
-        """Visszafelé kompatibilis alias a lastdata attribútumhoz."""
+        """Backwards-compatible alias for the lastdata attribute."""
         return self.lastdata
 
     @hr_lastdata.setter
@@ -1030,7 +1040,7 @@ class BLEHRInputHandler(_BLESensorInputHandler):
         if len(data) < 2:
             return None
         flags = data[0]
-        # bit 0: 0 = 8-bites HR, 1 = 16-bites HR
+        # bit 0: 0 = 8-bit HR, 1 = 16-bit HR
         if flags & 0x01:
             if len(data) < 3:
                 return None
@@ -1039,12 +1049,12 @@ class BLEHRInputHandler(_BLESensorInputHandler):
 
 
 # ============================================================
-# BLE KOMBINÁLT SZENZOR
+# BLE COMBINED SENSOR
 # ============================================================
 
 
 class BLECombinedSensor:
-    """Power és HR szenzor aggregátor."""
+    """Power and HR sensor aggregator."""
 
     def __init__(
         self,
@@ -1056,14 +1066,14 @@ class BLECombinedSensor:
 
     @property
     def power_lastdata(self) -> float:
-        """Visszafelé kompatibilis property."""
+        """Backwards-compatible property."""
         if self.power_handler:
             return getattr(self.power_handler, "power_lastdata", 0)
         return 0
 
     @property
     def hr_lastdata(self) -> float:
-        """Visszafelé kompatibilis property."""
+        """Backwards-compatible property."""
         if self.hr_handler:
             return getattr(self.hr_handler, "hr_lastdata", 0)
         return 0

@@ -45,5 +45,9 @@ include = ["smart_fan_controller*"]
 [tool.setuptools.package-data]
 # A config package versiókövetett default sablonja a pip-install csomagba is kerüljön.
 "smart_fan_controller.config" = ["settings.default.json"]
-# Az LCARS Antonio fontok a package-be települjenek (a hud.py innen tölti be).
-"smart_fan_controller" = ["fonts/*.ttf", "fonts/README.txt"]
+# Az LCARS Antonio fontok és hangeffektek a package-be települjenek
+# (a hud.py innen tölti be őket).
+"smart_fan_controller" = [
+    "fonts/*.ttf", "fonts/README.txt",
+    "sounds/*.wav", "sounds/README.txt",
+]

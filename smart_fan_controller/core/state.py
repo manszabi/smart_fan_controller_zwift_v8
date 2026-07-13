@@ -1,8 +1,8 @@
-"""Szálbiztos state snapshot – asyncio és UI szálak közötti adatcsere.
+"""Thread-safe state snapshot – data exchange between asyncio and the UI.
 
-Ez a modul az asyncio event loop és a PySide6 UI szál közötti szálbiztos
-adatcserét, valamint az asyncio task-ok közötti megosztott állapot kezelését
-támogatja. Nincs Qt/BLE/IO függőség, csak asyncio, threading, és typing.
+This module supports thread-safe data exchange between the asyncio event
+loop and the PySide6 UI thread, plus shared state between asyncio tasks.
+No Qt/BLE/IO dependencies, only asyncio, threading and typing.
 """
 from __future__ import annotations
 
@@ -12,25 +12,24 @@ import threading
 
 
 class ControllerState:
-    """A vezérlő megosztott állapota, asyncio.Lock-kal védve.
+    """Shared controller state, guarded by an asyncio.Lock.
 
-    Minden olyan mezőt tartalmaz, amelyet több asyncio korrutin is olvas
-    vagy módosít. A lock biztosítja, hogy az olvasás-módosítás-írás
-    műveletek atomikusak legyenek.
+    Contains every field that multiple asyncio coroutines read or
+    modify. The lock makes the read-modify-write operations atomic.
 
-    Az ui_snapshot külön threading.Lock-kal védett, és kizárólag
-    a PySide6 UI frissítéséhez használatos (szálbiztos olvasás).
+    ui_snapshot is guarded by its own threading.Lock and is used solely
+    for updating the PySide6 UI (thread-safe reads).
 
-    Attribútumok:
-        current_zone: Az aktuálisan aktív ventilátor zóna (None = nincs döntés még).
-        current_power_zone: A legutóbb kiszámított power zóna.
-        current_hr_zone: A legutóbb kiszámított HR zóna.
-        current_avg_power: A legutóbbi átlagolt teljesítmény (W).
-        current_avg_hr: A legutóbbi átlagolt HR (bpm).
-        last_power_time: Utolsó power adat érkezési ideje (monotonic).
-        last_hr_time: Utolsó HR adat érkezési ideje (monotonic), vagy None.
-        lock: asyncio.Lock a párhuzamos módosítások ellen.
-        ui_snapshot: UISnapshot a PySide6 UI szálbiztos frissítéséhez.
+    Attributes:
+        current_zone: The currently active fan zone (None = no decision yet).
+        current_power_zone: The most recently computed power zone.
+        current_hr_zone: The most recently computed HR zone.
+        current_avg_power: The latest averaged power (W).
+        current_avg_hr: The latest averaged HR (bpm).
+        last_power_time: Arrival time of the last power data (monotonic).
+        last_hr_time: Arrival time of the last HR data (monotonic), or None.
+        lock: asyncio.Lock against concurrent modification.
+        ui_snapshot: UISnapshot for thread-safe PySide6 UI updates.
     """
 
     def __init__(self) -> None:
@@ -54,11 +53,10 @@ class ControllerState:
 
 @dataclasses.dataclass(slots=True)
 class UISnapshot:
-    """Szálbiztos snapshot az asyncio loop és a PySide6 UI között.
+    """Thread-safe snapshot between the asyncio loop and the PySide6 UI.
 
-    Az asyncio oldalon update() hívással frissítendő,
-    a PySide6 oldalon read() hívással olvasható.
-    A threading.Lock garantálja a race condition-mentességet.
+    Updated on the asyncio side via update(), read on the PySide6 side
+    via read(). The threading.Lock guarantees freedom from races.
     """
 
     zone: int | None = None
@@ -72,13 +70,13 @@ class UISnapshot:
         avg_power: float | None,
         avg_hr: float | None,
     ) -> None:
-        """Frissíti a snapshot értékeit (asyncio szálból hívandó)."""
+        """Update the snapshot values (to be called from the asyncio thread)."""
         with self._lock:
             self.zone = zone
             self.avg_power = avg_power
             self.avg_hr = avg_hr
 
     def read(self) -> tuple[int | None, float | None, float | None]:
-        """Visszaadja a snapshot értékeit (PySide6 szálból hívandó)."""
+        """Return the snapshot values (to be called from the PySide6 thread)."""
         with self._lock:
             return self.zone, self.avg_power, self.avg_hr

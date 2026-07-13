@@ -1,8 +1,8 @@
-"""Minimál protobuf dekóder a Zwift relay API bináris válaszaihoz.
+"""Minimal protobuf decoder for the binary responses of the Zwift relay API.
 
-A relay/worlds endpoint protobuf-ot ad vissza; ez a dekóder a wire type
-0 (varint), 1 (64-bit fixed), 2 (length-delimited) és 5 (32-bit fixed)
-típusokat kezeli – nincs szükség .proto fordításra.
+The relay/worlds endpoint returns protobuf; this decoder handles wire
+types 0 (varint), 1 (64-bit fixed), 2 (length-delimited) and 5 (32-bit
+fixed) – no .proto compilation needed.
 """
 from __future__ import annotations
 
@@ -36,7 +36,7 @@ class ProtobufDecoder:
         result = 0
         shift = 0
         while self._pos < len(self._data):
-            if shift >= 70:  # max 10 bájt (70 bit) egy varint-ben
+            if shift >= 70:  # max 10 bytes (70 bits) per varint
                 raise ValueError("Varint too long (corrupted data)")
             byte = self._data[self._pos]
             self._pos += 1

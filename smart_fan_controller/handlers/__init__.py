@@ -1,12 +1,12 @@
-"""Input handler abstraktion – asyncio-based adatforrások.
+"""Input handler abstractions – asyncio-based data sources.
 
-Ez a csomag az Input handler-eket tartalmazza, amelyek szenzor-
-adatokat (power, HR, stb.) fogadnak és asyncio Queue-kba helyezik.
+This package contains the input handlers that receive sensor data
+(power, HR, etc.) and place it into asyncio queues.
 
-Modulok:
-- _ant.py: ANT+ power és HR adatforrás
-- _ble.py: BLE ventilátor kimenet és szenzor bemenetek
-- zwift_udp.py: Zwift UDP adatforrás
+Modules:
+- _ant.py: ANT+ power and HR data source
+- _ble.py: BLE fan output and sensor inputs
+- zwift_udp.py: Zwift UDP data source
 """
 from __future__ import annotations
 

@@ -1,10 +1,10 @@
-"""Smart Fan Controller orchestrátora – komponensek szervezése és életciklus-kezelés.
+"""Smart Fan Controller orchestrator – component wiring and lifecycle.
 
-A FanController feladata:
-  1. Beállítások betöltése és validálása
-  2. Asyncio task-ok és ANT+ szál indítása
-  3. BLE fan, power input (BLE/ANT+/UDP), HR input (BLE/ANT+/UDP) kezelése
-  4. Zwift alkalmazás automatikus indítása (Windows-on)
+Responsibilities of FanController:
+  1. Loading and validating the settings
+  2. Starting the asyncio tasks and the ANT+ thread
+  3. Managing the BLE fan, power input (BLE/ANT+/UDP) and HR input
+  4. Auto-launching the Zwift application (on Windows)
   5. Graceful shutdown: task cancel, BLE disconnect, ANT+ stop, process kill
 """
 
@@ -55,30 +55,30 @@ from smart_fan_controller.processors import (
     zone_controller_task,
 )
 
-from smart_fan_controller import __version__  # egyetlen verzió-forrás
+from smart_fan_controller import __version__  # single source of the version
 
 __all__ = ["FanController"]
 
 
 class FanController:
-    """A Smart Fan Controller fő orchestrátora.
+    """The main orchestrator of the Smart Fan Controller.
 
-    Összefogja az összes komponenst, elindítja az asyncio task-okat
-    és a szálakat, és gondoskodik a tiszta leállításról.
+    Wires all the components together, starts the asyncio tasks and
+    threads, and takes care of the clean shutdown.
 
-    Indítási sorrend:
-        1. Beállítások betöltése
-        2. Zóna határok kiszámítása
-        3. Átlagolók, cooldown, printer létrehozása
-        4. BLE fan output asyncio task indítása
-        5. BLE power/HR input asyncio task-ok indítása (ha szükséges)
-        6. Zwift UDP input asyncio task indítása (ha szükséges)
-        7. ANT+ szál indítása (ha szükséges)
-        8. Power/HR processor asyncio task-ok indítása
-        9. Zone controller asyncio task indítása
-        10. Dropout checker asyncio task indítása
-        11. Főciklus: Ctrl+C / SIGTERM megvárása
-        12. Leállítás: minden task és szál leállítása
+    Startup order:
+        1. Load the settings
+        2. Compute the zone boundaries
+        3. Create the averagers, cooldown, printer
+        4. Start the BLE fan output asyncio task
+        5. Start the BLE power/HR input asyncio tasks (when needed)
+        6. Start the Zwift UDP input asyncio task (when needed)
+        7. Start the ANT+ thread (when needed)
+        8. Start the power/HR processor asyncio tasks
+        9. Start the zone controller asyncio task
+        10. Start the dropout checker asyncio task
+        11. Main loop: wait for Ctrl+C / SIGTERM
+        12. Shutdown: stop every task and thread
     """
 
     def __init__(self, settings_file: str = "settings.json") -> None:
@@ -89,7 +89,7 @@ class FanController:
         self._tasks: list[asyncio.Task[Any]] = []
         self._running = True
         self._zwift_proc: subprocess.Popen[Any] | None = None
-        # Handler ref-ek (HUD és leállítás számára)
+        # Handler refs (for the HUD and the shutdown)
         self._ble_fan: BLEFanOutputController | None = None
         self._ble_power: BLEPowerInputHandler | None = None
         self._ble_hr: BLEHRInputHandler | None = None
@@ -97,28 +97,28 @@ class FanController:
         self._state: ControllerState | None = None
         self._cooldown_ctrl: CooldownController | None = None
         self._ble_sensor_handler: BLECombinedSensor | None = None
-        # A run() alatt futó event loop – a stop() másik szálból (Qt fő szál /
-        # signal handler) hívódik, és a Task.cancel() nem thread-safe, ezért
-        # a cancel-eket ezen a loopon kell ütemezni.
+        # The event loop running under run() – stop() is called from another
+        # thread (Qt main thread / signal handler), and Task.cancel() is not
+        # thread-safe, so the cancels must be scheduled onto this loop.
         self._loop: asyncio.AbstractEventLoop | None = None
-        # Leállítási jelzés a blokkoló (to_thread-ben futó) várakozásokhoz:
-        # az executor-szálak NEM daemon szálak, a kilépés megvárná őket –
-        # a wait(...)-ek erre az eseményre azonnal megszakadnak.
+        # Shutdown signal for the blocking waits (running in to_thread):
+        # executor threads are NOT daemon threads, exit would wait for them
+        # – the wait(...) calls break immediately on this event.
         self._shutdown_evt = threading.Event()
 
     @property
     def state(self) -> ControllerState | None:
-        """Aktuális vezérlő állapot (None ha még nem indult el a run())."""
+        """Current controller state (None before run() has started)."""
         return self._state
 
     @property
     def ble_fan(self) -> BLEFanOutputController | None:
-        """BLE ventilátor kimeneti vezérlő (None ha nincs)."""
+        """BLE fan output controller (None when absent)."""
         return self._ble_fan
 
     @property
     def cooldown_ctrl(self) -> CooldownController | None:
-        """Hűtési időkorlát vezérlő (None ha még nem indult el a run())."""
+        """Cooldown controller (None before run() has started)."""
         return self._cooldown_ctrl
 
     def __repr__(self) -> str:
@@ -132,9 +132,9 @@ class FanController:
 
     @staticmethod
     def is_process_running(process_name: str) -> bool:
-        """Ellenőrzi, hogy egy adott nevű Windows process fut-e.
+        """Check whether a Windows process with the given name is running.
 
-        A ``tasklist`` parancsot használja, ``psutil`` nélkül.
+        Uses the ``tasklist`` command, no ``psutil`` required.
         """
         if _platform.system() != "Windows":
             return False
@@ -144,7 +144,7 @@ class FanController:
                 capture_output=True,
                 text=True,
                 timeout=10,
-                # Ablakos (pythonw/noconsole) futtatásnál se villanjon konzol
+                # No console flash even under windowed (pythonw/noconsole) runs
                 creationflags=subprocess.CREATE_NO_WINDOW,
             )
             return process_name.lower() in result.stdout.lower()
@@ -153,16 +153,16 @@ class FanController:
 
     @staticmethod
     def _find_zwift_launcher() -> str | None:
-        """Megkeresi a ZwiftLauncher.exe útvonalát.
+        """Locate the path of ZwiftLauncher.exe.
 
-        Keresési sorrend:
-          1. Windows Registry (Uninstall kulcsok)
-          2. Ismert telepítési útvonalak
+        Search order:
+          1. Windows Registry (Uninstall keys)
+          2. Known install paths
         """
         if _platform.system() != "Windows":
             return None
 
-        # --- 1. Registry keresés ---
+        # --- 1. Registry search ---
         try:
             import winreg
 
@@ -205,9 +205,9 @@ class FanController:
                     except OSError:
                         continue
         except ImportError:
-            pass  # winreg nem elérhető (nem Windows)
+            pass  # winreg unavailable (not Windows)
 
-        # --- 2. Ismert útvonalak ---
+        # --- 2. Known paths ---
         known_paths = [
             os.path.join(
                 os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)"),
@@ -225,14 +225,14 @@ class FanController:
         return None
 
     def _ensure_zwift_running(self) -> None:
-        """Biztosítja, hogy a Zwift alkalmazás fut.
+        """Ensure that the Zwift application is running.
 
-        Ha a ZwiftApp.exe nem fut:
-          1. Megkeresi és elindítja a ZwiftLauncher.exe-t
-          2. pywinauto segítségével megvárja a launcher ablakot
-          3. Kezeli az esetleges frissítést (vár amíg a "Let's Go" gomb megjelenik)
-          4. Rákattint a "Let's Go" gombra
-          5. Megvárja amíg a ZwiftApp.exe elindul
+        When ZwiftApp.exe is not running:
+          1. Locate and start ZwiftLauncher.exe
+          2. Wait for the launcher window via pywinauto
+          3. Handle a potential update (wait for the "Let's Go" button)
+          4. Click the "Let's Go" button
+          5. Wait until ZwiftApp.exe starts
         """
         try:
             from pywinauto import Application as WinAutoApp  # type: ignore[import-untyped]
@@ -250,12 +250,12 @@ class FanController:
             logger.info("Zwift auto-launch csak Windows-on támogatott.")
             return
 
-        # Már fut?
+        # Already running?
         if self.is_process_running("ZwiftApp.exe"):
             logger.info("ZwiftApp.exe már fut, auto-launch kihagyva.")
             return
 
-        # Launcher útvonal meghatározása
+        # Determine the launcher path
         launcher_path: str | None = ds.zwift_launcher_path
         if not launcher_path:
             launcher_path = self._find_zwift_launcher()
@@ -273,7 +273,7 @@ class FanController:
         logger.info(f"Zwift indítása: {launcher_path}")
         user_logger.info(f"🚀 Zwift indítása: {launcher_path}")
 
-        # Launcher indítása
+        # Start the launcher
         try:
             subprocess.Popen(
                 [launcher_path],
@@ -285,17 +285,17 @@ class FanController:
             logger.error(f"ZwiftLauncher.exe indítása sikertelen: {exc}")
             return
 
-        # UI automatizáció (pywinauto)
+        # UI automation (pywinauto)
         if not _PYWINAUTO_AVAILABLE:
             logger.warning(
                 "pywinauto nincs telepítve – a 'Let's Go' gombra manuálisan kell "
                 "kattintani. Telepítés: pip install pywinauto"
             )
-            # Fallback: egyszerűen várunk a ZwiftApp.exe megjelenésére
+            # Fallback: simply wait for ZwiftApp.exe to appear
             user_logger.info("⏳ Várakozás a ZwiftApp.exe indulására (kattints a 'Let's Go' gombra)...")
-            for _ in range(180):  # max 6 perc
+            for _ in range(180):  # max 6 minutes
                 if self._shutdown_evt.wait(2):
-                    return  # leállítás kérve – nem várunk tovább
+                    return  # shutdown requested – stop waiting
                 if self.is_process_running("ZwiftApp.exe"):
                     logger.info("ZwiftApp.exe elindult.")
                     user_logger.info("✅ ZwiftApp.exe elindult!")
@@ -304,20 +304,19 @@ class FanController:
             user_logger.warning("⚠️  ZwiftApp.exe nem indult el 6 perc alatt.")
             return
 
-        # --- pywinauto automatizáció retry loop-pal ---
-        # A launcher frissítés közben bezárhatja és újranyithatja az ablakot,
-        # ezért retry loop-ot használunk ahelyett, hogy egyetlen connect + wait-re
-        # támaszkodnánk.
+        # --- pywinauto automation with a retry loop ---
+        # The launcher may close and reopen its window during an update, so
+        # a retry loop is used instead of relying on a single connect + wait.
         max_attempts = 10
-        attempt_interval = 30  # másodperc próbálkozások között
+        attempt_interval = 30  # seconds between attempts
         for attempt in range(1, max_attempts + 1):
-            # Ha közben elindult a ZwiftApp.exe (pl. már be volt jelentkezve)
+            # ZwiftApp.exe may have started meanwhile (e.g. already logged in)
             if self.is_process_running("ZwiftApp.exe"):
                 logger.info("ZwiftApp.exe elindult (frissítés/auto-login után).")
                 user_logger.info("✅ ZwiftApp.exe elindult!")
                 return
 
-            # Ellenőrizzük, hogy a launcher process még fut-e
+            # Check whether the launcher process is still running
             if not self.is_process_running("ZwiftLauncher.exe"):
                 logger.info(
                     f"ZwiftLauncher.exe nem fut (próba {attempt}/{max_attempts}). "
@@ -325,7 +324,7 @@ class FanController:
                 )
                 if attempt < max_attempts:
                     if self._shutdown_evt.wait(attempt_interval):
-                        return  # leállítás kérve
+                        return  # shutdown requested
                     continue
                 else:
                     logger.warning("ZwiftLauncher.exe nem indult újra.")
@@ -342,7 +341,7 @@ class FanController:
                 window = app.top_window()  # type: ignore[reportOptionalCall]
                 logger.info("Zwift Launcher ablak megtalálva.")
 
-                # Debug: kilistázzuk az ablak összes child control-ját (beleértve webes tartalmat)
+                # Debug: list every child control of the window (incl. web content)
                 try:
                     children = window.descendants()  # type: ignore[reportOptionalCall]
                     child_info = [
@@ -357,7 +356,7 @@ class FanController:
                 except Exception as debug_exc:
                     logger.debug(f"Kontroll lista lekérés sikertelen: {debug_exc}")
 
-                # "LET'S GO" gomb keresése (regex: bármilyen aposztróf-típus)
+                # Find the "LET'S GO" button (regex: any apostrophe variant)
                 user_logger.info("⏳ Várakozás a 'LET'S GO' gombra (frissítés esetén ez eltarthat)...")
                 button = window.child_window(  # type: ignore[reportOptionalCall]
                     title_re="LET.S GO", control_type="Button"
@@ -369,7 +368,7 @@ class FanController:
                 break
 
             except Exception as exc:
-                # Debug: kilistázzuk az összes látható ablak címét
+                # Debug: list the titles of every visible window
                 try:
                     from pywinauto import Desktop  # type: ignore[import-untyped]
                     desktop = Desktop(backend="uia")
@@ -389,7 +388,7 @@ class FanController:
                         f"({attempt}/{max_attempts})..."
                     )
                     if self._shutdown_evt.wait(attempt_interval):
-                        return  # leállítás kérve
+                        return  # shutdown requested
                 else:
                     logger.warning(
                         f"Zwift Launcher UI automatizáció sikertelen {max_attempts} "
@@ -398,12 +397,12 @@ class FanController:
                     user_logger.warning(f"⚠️  Launcher automatizáció sikertelen: {exc}")
                     user_logger.info("    Kattints manuálisan a 'Let's Go' gombra!")
 
-        # Várakozás a ZwiftApp.exe megjelenésére (akár manuális, akár auto kattintás után)
+        # Wait for ZwiftApp.exe to appear (after a manual or auto click)
         if not self.is_process_running("ZwiftApp.exe"):
             user_logger.info("⏳ Várakozás a ZwiftApp.exe indulására...")
-            for _ in range(120):  # max 4 perc
+            for _ in range(120):  # max 4 minutes
                 if self._shutdown_evt.wait(2):
-                    return  # leállítás kérve
+                    return  # shutdown requested
                 if self.is_process_running("ZwiftApp.exe"):
                     logger.info("ZwiftApp.exe sikeresen elindult.")
                     user_logger.info("✅ ZwiftApp.exe elindult!")
@@ -412,28 +411,28 @@ class FanController:
             user_logger.warning("⚠️  ZwiftApp.exe nem indult el 4 perc alatt.")
 
     def _start_zwift_subprocess(self, script_name: str) -> None:
-        """Elindít egy Zwift subprocess-t (zwift_api_polling).
+        """Start a Zwift subprocess (zwift_api_polling).
 
-        Leállítja az esetlegesen még futó előző folyamatot, majd elindítja
-        az újat. Az eredményt self._zwift_proc tartalmazza.
+        Stops a possibly still-running previous process, then starts the
+        new one. The result is kept in self._zwift_proc.
         """
-        # Esetleges előző process leállítása
+        # Stop a possible previous process
         if self._zwift_proc is not None and self._zwift_proc.poll() is None:
             try:
                 self._zwift_proc.terminate()
                 self._zwift_proc.wait(timeout=5.0)
             except subprocess.TimeoutExpired:
                 self._zwift_proc.kill()
-                self._zwift_proc.wait()  # zombie elkerülése
+                self._zwift_proc.wait()  # avoid a zombie
             except OSError:
                 pass
             finally:
                 self._zwift_proc = None
 
-        # A settings.json útvonalát átadjuk – a subprocess a "zwift_api"
-        # szekcióból olvassa a bejelentkezési adatokat és a beállításokat.
+        # Pass the settings.json path – the subprocess reads the credentials
+        # and settings from the "zwift_api" section.
         settings_arg = ["--settings", os.path.abspath(self.settings_file)]
-        # Külön ablak (saját konzol) a zwift_api.separate_window flag szerint.
+        # Separate window (own console) per the zwift_api.separate_window flag.
         zwift_cfg = self.settings.get("zwift_api")
         separate_window = getattr(zwift_cfg, "separate_window", True)
 
@@ -442,8 +441,8 @@ class FanController:
                 exe_dir = os.path.dirname(os.path.abspath(sys.executable))
                 cmd = [os.path.join(exe_dir, f"{script_name}.exe"), *settings_arg]
             else:
-                # -m modul futtatás: nem függ a script útvonalától (a csomag
-                # importálható), a vékony shim (zwift_api_polling.py) helyett.
+                # -m module run: independent of the script path (the package
+                # is importable), instead of the thin shim (zwift_api_polling.py).
                 cmd = [sys.executable, "-m", "smart_fan_controller.zwift_api", *settings_arg]
 
             if _platform.system() == "Windows" and separate_window:
@@ -452,7 +451,7 @@ class FanController:
                 startupinfo.wShowWindow = 4  # SW_SHOWNOACTIVATE
                 creation_flags = subprocess.CREATE_NEW_CONSOLE
             else:
-                # Nincs külön ablak: a subprocess a háttérben fut (vagy nem-Windows).
+                # No separate window: the subprocess runs in the background (or non-Windows).
                 startupinfo = None
                 creation_flags = 0
 
@@ -476,12 +475,12 @@ class FanController:
             logger.error(f"Váratlan hiba {script_name} indításakor: {exc}")
 
     def print_startup_info(self) -> None:
-        """Kiírja az indítási konfigurációs összefoglalót.
+        """Print the startup configuration summary.
 
-        Ha a loggolás ki van kapcsolva (``global_settings.logging`` false),
-        ``print()``-tel ír, hogy a startup info akkor is megjelenjen.
+        When logging is disabled (``global_settings.logging`` false) it
+        writes via ``print()`` so the startup info still appears.
         """
-        # Loggolás kikapcsolva → print(); egyébként user_logger.info
+        # Logging disabled → print(); user_logger.info otherwise
         emit = user_logger.info if is_logging_enabled() else print
 
         s = self.settings
@@ -542,7 +541,7 @@ class FanController:
         if ble_cfg.pin_code:
             emit(f"BLE PIN: {'*' * len(ble_cfg.pin_code)}")
 
-        # BLE szenzor auto-discovery jelzés
+        # BLE sensor auto-discovery notice
         if ds.power_source == DataSource.BLE and not ds.ble_power_device_name:
             emit("BLE Power: (auto-discovery – Cycling Power Service)")
         if ds.hr_source == DataSource.BLE and not ds.ble_hr_device_name:
@@ -552,7 +551,7 @@ class FanController:
         emit("-" * 60)
 
     async def run(self) -> None:
-        """A vezérlő fő asyncio korrutinja – elindít mindent és vár."""
+        """The controller's main asyncio coroutine – starts everything and waits."""
         self._loop = asyncio.get_running_loop()
         self._tasks = []
         s = self.settings
@@ -561,7 +560,7 @@ class FanController:
         hr_enabled = hrz_cfg.enabled
         zone_mode = get_effective_zone_mode(s)
 
-        # --- Zóna határok kiszámítása ---
+        # --- Compute the zone boundaries ---
         pz: PowerZonesConfig = s["power_zones"]
         power_zones = calculate_power_zones(
             pz.ftp, pz.min_watt, pz.max_watt, pz.z1_max_percent, pz.z2_max_percent,
@@ -577,11 +576,11 @@ class FanController:
             else {"resting": 60, "z1_max": 130, "z2_max": 148}
         )
 
-        # --- Zwift alkalmazás automatikus indítása (bármilyen adatforrás esetén) ---
-        # to_thread: nem blokkolja az asyncio event loop-ot (signal kezelés, stb.)
+        # --- Auto-launch the Zwift application (for any data source) ---
+        # to_thread: does not block the asyncio event loop (signal handling, etc.)
         await asyncio.to_thread(self._ensure_zwift_running)
 
-        # --- Komponensek létrehozása ---
+        # --- Create the components ---
         raw_power_queue: asyncio.Queue[float] = asyncio.Queue(maxsize=100)
         raw_hr_queue: asyncio.Queue[float] = asyncio.Queue(maxsize=100)
         zone_cmd_queue: asyncio.Queue[int] = asyncio.Queue(maxsize=1)
@@ -622,7 +621,7 @@ class FanController:
             )
         )
 
-        # --- Bemeneti adatforrások ---
+        # --- Input data sources ---
         power_source = ds.power_source
         hr_source = ds.hr_source
 
@@ -666,10 +665,10 @@ class FanController:
             hr_source == DataSource.ZWIFTUDP and hr_enabled
         )
         if needs_zwift:
-            # Proaktív figyelmeztetés a látható (fő app) logba, ha nincs Zwift
-            # bejelentkezési adat: a subprocess credential nélkül nem tud adatot
-            # lekérni, és külön ablakban/háttérben a hibája könnyen elkerüli a
-            # felhasználó figyelmét. A subprocess maga is tisztán kilép ilyenkor.
+            # Proactive warning into the visible (main app) log when the Zwift
+            # credentials are missing: without them the subprocess cannot fetch
+            # data, and its error in a separate window / background easily
+            # escapes the user's attention. The subprocess itself exits cleanly.
             zcfg = s.get("zwift_api")
             has_cfg_cred = bool(getattr(zcfg, "username", "") and getattr(zcfg, "password", ""))
             has_env_cred = bool(os.environ.get("ZWIFT_USERNAME") and os.environ.get("ZWIFT_PASSWORD"))
@@ -680,10 +679,10 @@ class FanController:
                     "környezeti változó sem) – a Zwift adatlekérés nem fog elindulni."
                 )
 
-            # Zwift API polling subprocess indítása
+            # Start the Zwift API polling subprocess
             self._start_zwift_subprocess("zwift_api_polling")
 
-            # UDP handler a zwift_api_polling.py-tól érkező csomagok fogadásához
+            # UDP handler receiving the packets from zwift_api_polling.py
             zwiftudp = ZwiftUDPInputHandler(s, raw_power_queue, raw_hr_queue)
             self._zwift_udp = zwiftudp
             self._tasks.append(
@@ -713,7 +712,7 @@ class FanController:
                     "ANT+ forrás kérve, de az openant könyvtár nem elérhető!"
                 )
 
-        # --- Feldolgozó és vezérlő korrutinok ---
+        # --- Processing and controller coroutines ---
         if power_source is not None:
             self._tasks.append(
                 asyncio.create_task(
@@ -806,7 +805,7 @@ class FanController:
         finally:
             # Guard against None if setup crashed before ble_fan init
             if self._ble_fan is not None:  # type: ignore[redundant-expr]
-                # Leállítás előtt LEVEL:0 küldése – ventilátor kikapcsolása
+                # Send LEVEL:0 before shutdown – turn the fan off
                 try:
                     await self._ble_fan._write_level(0)
                     user_logger.info("✓ Ventilátor leállítva (LEVEL:0)")
@@ -821,16 +820,16 @@ class FanController:
                 self._ble_fan = None
 
     def stop(self) -> None:
-        """Leállítja az összes task-ot és szálat.
+        """Stop every task and thread.
 
-        Megjegyzés: task.cancel() csak kérést küld az event loop-nak;
-        a tényleges megszakítás az asyncio loop következő iterációján
-        történik. A main() asyncio_thread.join(timeout=3.0) hívása
-        elegendő időt biztosít a tiszta leálláshoz.
+        Note: task.cancel() only sends a request to the event loop; the
+        actual cancellation happens on the next iteration of the asyncio
+        loop. The asyncio_thread.join(timeout=3.0) call in main() gives
+        enough time for a clean shutdown.
         """
         self._running = False
-        # A to_thread-ben futó blokkoló várakozások (Zwift indulás-figyelés)
-        # azonnali megszakítása – különben a kilépés megvárná őket
+        # Break the blocking waits running in to_thread (Zwift launch watch)
+        # immediately – exit would otherwise wait for them
         self._shutdown_evt.set()
         loop = self._loop
         for task in self._tasks:
@@ -838,9 +837,9 @@ class FanController:
                 continue
             try:
                 if loop is not None and loop.is_running():
-                    # A stop() tipikusan a Qt fő szálából hívódik, a taskok
-                    # viszont az asyncio szál loopján élnek – a Task.cancel()
-                    # nem thread-safe, a loopon kell ütemezni.
+                    # stop() is typically called from the Qt main thread while
+                    # the tasks live on the asyncio thread's loop – Task.cancel()
+                    # is not thread-safe, it must be scheduled onto the loop.
                     loop.call_soon_threadsafe(task.cancel)
                 else:
                     task.cancel()
@@ -853,7 +852,7 @@ class FanController:
             if self._antplus_thread.is_alive():
                 logger.warning("ANT+ szál nem állt le 5s alatt!")
 
-        # Fix #17: Zwift UDP transport bezárása
+        # Fix #17: close the Zwift UDP transport
         if self._zwift_udp is not None:
             t = getattr(self._zwift_udp, "_transport", None)
             if t is not None:
@@ -862,9 +861,9 @@ class FanController:
                 except Exception as exc:
                     logger.debug(f"Zwift UDP transport bezárási hiba: {exc}")
 
-        # Zwift subprocess leállítása
+        # Stop the Zwift subprocess
         if self._zwift_proc is not None:
-            if self._zwift_proc.poll() is None:  # csak ha még fut
+            if self._zwift_proc.poll() is None:  # only when still running
                 logger.info(f"zwift_api_polling.py leállítása (PID: {self._zwift_proc.pid})...")
                 try:
                     self._zwift_proc.terminate()

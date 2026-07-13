@@ -1,14 +1,34 @@
-"""Pytest conftest – PySide6 / bleak / openant stub-ok a headless teszteléshez."""
+"""Pytest conftest – PySide6 / bleak / openant stub-ok a headless teszteléshez.
+
+Ha az igazi PySide6 telepítve van, NEM stub-oljuk: a UI tesztek
+(test_hud_ui.py) a valódi Qt-t használják offscreen platformmal. A stub-ok
+csak a Qt nélküli környezetek (pl. minimál CI) core-tesztjeit szolgálják.
+"""
 from __future__ import annotations
 
+import importlib.util
 import sys
 import types
 
 
-def _ensure_fake_module(name: str, attrs: dict | None = None) -> types.ModuleType:
+def _real_module_available(name: str) -> bool:
+    """True, ha a modul ténylegesen telepítve van (import nélkül)."""
+    try:
+        return importlib.util.find_spec(name) is not None
+    except (ImportError, ValueError):
+        return name in sys.modules
+
+
+# A UI tesztek ebből tudják, hogy az igazi Qt fut-e (vagy skip-elnek)
+REAL_PYSIDE6 = _real_module_available("PySide6")
+
+
+def _ensure_fake_module(name: str, attrs: dict | None = None) -> types.ModuleType | None:
     """Csak akkor hoz létre fake modult, ha az eredeti nem elérhető."""
-    if name in sys.modules and not isinstance(sys.modules[name], types.ModuleType):
-        pass  # already there, fine
+    # Ha a valódi csomag telepítve van, nem árnyékoljuk le stubbal
+    root = name.split(".", 1)[0]
+    if _real_module_available(root):
+        return None
     if name not in sys.modules:
         mod = types.ModuleType(name)
         if attrs:

@@ -1,10 +1,10 @@
-"""Típusbiztos beállítás modellek – enumok és dataclass-ek.
+"""Type-safe settings models – enums and dataclasses.
 
-Ez a modul tartalmazza a ``settings.json`` szekcióit leképező, validált
-dataclass-okat (``PowerZonesConfig``, ``GlobalSettingsConfig`` stb.), valamint
-a hozzájuk tartozó enumokat (``DataSource``, ``ZoneMode``).
+This module contains the validated dataclasses mapping the sections of
+``settings.json`` (``PowerZonesConfig``, ``GlobalSettingsConfig``, etc.)
+and their enums (``DataSource``, ``ZoneMode``).
 
-A betöltés/mentés logika a testvér ``loader`` modulban található.
+The load/save logic lives in the sibling ``loader`` module.
 """
 from __future__ import annotations
 
@@ -14,19 +14,19 @@ import logging
 import math
 from typing import Any
 
-# A felhasználói üzeneteket a "user" nevű logger kezeli; a logging konfigurációt
-# a fő alkalmazás állítja be (_setup_logging). Itt csak a már létező loggerre
-# hivatkozunk – névmegegyezés miatt ugyanaz a példány.
+# User-facing messages go through the logger named "user"; logging is
+# configured by the main application (_setup_logging). We only reference
+# the existing logger here – same name, same instance.
 user_logger = logging.getLogger("user")
 
 
 # ============================================================
-# ENUM-OK
+# ENUMS
 # ============================================================
 
-# --- Enum-ok a magic string-ek kiváltásához ---
-# StrEnum (3.11+): JSON-ból jövő string értékekkel is kompatibilis (==),
-# és str()/f-string alatt az értéket adja ("ble"), nem a member nevét.
+# --- Enums replacing the magic strings ---
+# StrEnum (3.11+): compatible (==) with string values coming from JSON,
+# and str()/f-strings yield the value ("ble"), not the member name.
 class DataSource(enum.StrEnum):
     ANTPLUS = "antplus"
     BLE = "ble"
@@ -44,17 +44,17 @@ VALID_ZONE_MODES: tuple[ZoneMode, ...] = tuple(ZoneMode)
 
 
 # ============================================================
-# TÍPUSBIZTOS BEÁLLÍTÁS MODELLEK
+# TYPE-SAFE SETTINGS MODELS
 # ============================================================
 
 
 @dataclasses.dataclass(slots=True)
 class PowerZonesConfig:
-    """Teljesítmény zóna beállítások – típusbiztos, validált.
+    """Power zone settings – type-safe, validated.
 
-    Validáció a __post_init__-ben:
-      - min_watt < max_watt (felcserélés ha szükséges)
-      - z1_max_percent < z2_max_percent (rendezés ha szükséges)
+    Validation in __post_init__:
+      - min_watt < max_watt (swapped when necessary)
+      - z1_max_percent < z2_max_percent (reordered when necessary)
     """
 
     ftp: int = 200
@@ -65,7 +65,7 @@ class PowerZonesConfig:
     zero_power_immediate: bool = False
 
     def __post_init__(self) -> None:
-        # --- ftp tartomány-check: 0–1000 ---
+        # --- ftp range check: 0–1000 ---
         if self.ftp < 0 or self.ftp > 1000:
             user_logger.warning(
                 f"⚠ Érvénytelen 'ftp' érték: {self.ftp} (0–1000 közötti kell). "
@@ -73,7 +73,7 @@ class PowerZonesConfig:
             )
             self.ftp = PowerZonesConfig.__dataclass_fields__['ftp'].default
 
-        # --- min_watt tartomány-check: 0–1000 ---
+        # --- min_watt range check: 0–1000 ---
         if self.min_watt < 0 or self.min_watt > 1000:
             user_logger.warning(
                 f"⚠ Érvénytelen 'min_watt' érték: {self.min_watt} (0–1000 közötti kell). "
@@ -81,7 +81,7 @@ class PowerZonesConfig:
             )
             self.min_watt = 0
 
-        # --- max_watt tartomány-check: 0–1000 ---
+        # --- max_watt range check: 0–1000 ---
         if self.max_watt < 0 or self.max_watt > 1000:
             user_logger.warning(
                 f"⚠ Érvénytelen 'max_watt' érték: {self.max_watt} (0–1000 közötti kell). "
@@ -89,7 +89,7 @@ class PowerZonesConfig:
             )
             self.max_watt = 1000
 
-        # --- min_watt < max_watt logikai check ---
+        # --- min_watt < max_watt logical check ---
         if self.min_watt >= self.max_watt:
             default_min = PowerZonesConfig.__dataclass_fields__['min_watt'].default
             default_max = PowerZonesConfig.__dataclass_fields__['max_watt'].default
@@ -100,7 +100,7 @@ class PowerZonesConfig:
             self.min_watt = default_min
             self.max_watt = default_max
 
-        # --- z1_max_percent / z2_max_percent tartomány-check: 1–100 ---
+        # --- z1_max_percent / z2_max_percent range check: 1–100 ---
         if self.z1_max_percent < 1 or self.z1_max_percent > 100:
             default_z1 = PowerZonesConfig.__dataclass_fields__['z1_max_percent'].default
             user_logger.warning(
@@ -117,7 +117,7 @@ class PowerZonesConfig:
             )
             self.z2_max_percent = default_z2
 
-        # --- z1_max_percent < z2_max_percent logikai check ---
+        # --- z1_max_percent < z2_max_percent logical check ---
         if self.z1_max_percent >= self.z2_max_percent:
             default_z1 = PowerZonesConfig.__dataclass_fields__['z1_max_percent'].default
             default_z2 = PowerZonesConfig.__dataclass_fields__['z2_max_percent'].default
@@ -130,12 +130,12 @@ class PowerZonesConfig:
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> "PowerZonesConfig":
-        """Dict-ből (JSON) hoz létre validált PowerZonesConfig példányt.
+        """Create a validated PowerZonesConfig instance from a (JSON) dict.
 
-        Érvénytelen értékeket figyelmen kívül hagyja (az alapértelmezés marad).
+        Invalid values are ignored (the defaults remain).
 
         Args:
-            raw: A JSON-ból betöltött dict.
+            raw: The dict loaded from JSON.
         """
         kwargs: dict[str, Any] = dataclasses.asdict(cls())
         _from_dict_int(raw, kwargs, "ftp", 0, 1000)
@@ -147,16 +147,16 @@ class PowerZonesConfig:
         return cls(**kwargs)
 
     def to_dict(self) -> dict[str, Any]:
-        """Visszaadja dict formában (JSON serializáláshoz)."""
+        """Return the dict form (for JSON serialization)."""
         return dataclasses.asdict(self)
 
 
 @dataclasses.dataclass(slots=True)
 class GlobalSettingsConfig:
-    """Globális beállítások – típusbiztos, validált.
+    """Global settings – type-safe, validated.
 
-    Validáció a __post_init__-ben:
-      - minimum_samples <= buffer_seconds * buffer_rate_hz (kereszt-validáció)
+    Validation in __post_init__:
+      - minimum_samples <= buffer_seconds * buffer_rate_hz (cross-validation)
     """
 
     cooldown_seconds: int = 120
@@ -185,20 +185,20 @@ class GlobalSettingsConfig:
         d = cls()
         kwargs: dict[str, Any] = dataclasses.asdict(d)
 
-        # cooldown_seconds: 0–600 (0 = azonnali váltás, nincs cooldown)
+        # cooldown_seconds: 0–600 (0 = immediate switching, no cooldown)
         _from_dict_int(raw, kwargs, "cooldown_seconds", 0, 600)
-        # Domain-alapú tartományok (fitness szenzor jellemzők szerint)
+        # Domain-based ranges (per fitness sensor characteristics)
         _from_dict_int(raw, kwargs, "buffer_seconds", 1, 60)
         _from_dict_int(raw, kwargs, "minimum_samples", 1, 600)
         _from_dict_int(raw, kwargs, "buffer_rate_hz", 1, 60)
-        # dropout_timeout: 1–300 (egységes a forrás-specifikus *_dropout_timeout-tal)
+        # dropout_timeout: 1–300 (consistent with the source-specific *_dropout_timeout)
         _from_dict_int(raw, kwargs, "dropout_timeout", 1, 300)
 
-        # logging: bool – globális loggolás be/ki
+        # logging: bool – global logging on/off
         _from_dict_bool(raw, kwargs, "logging")
 
-        # log_directory: null vagy nem-üres string.
-        # null, "null" string, vagy hiányzó kulcs → None (program könyvtár), csendben.
+        # log_directory: null or non-empty string.
+        # null, the string "null", or a missing key → None (program dir), silently.
         if "log_directory" in raw:
             ld = raw["log_directory"]
             if ld is None:
@@ -206,7 +206,7 @@ class GlobalSettingsConfig:
             elif isinstance(ld, str):
                 stripped = ld.strip()
                 if stripped.lower() == "null":
-                    # "null" string → None (program könyvtár), csendben
+                    # the string "null" → None (program dir), silently
                     kwargs["log_directory"] = None
                 elif not stripped:
                     user_logger.warning(
@@ -227,10 +227,10 @@ class GlobalSettingsConfig:
 
 @dataclasses.dataclass(slots=True)
 class HeartRateZonesConfig:
-    """Szívfrekvencia zóna beállítások – típusbiztos, validált.
+    """Heart-rate zone settings – type-safe, validated.
 
-    Validáció a __post_init__-ben:
-      - z1_max_percent < z2_max_percent (érvénytelen sorrend → default visszaállítás)
+    Validation in __post_init__:
+      - z1_max_percent < z2_max_percent (invalid order → defaults restored)
       - resting_hr < max_hr
       - valid_min_hr < valid_max_hr
     """
@@ -246,8 +246,8 @@ class HeartRateZonesConfig:
     zero_hr_immediate: bool = False
 
     def __post_init__(self) -> None:
-        # z1_max_percent < z2_max_percent logikai check
-        # (PowerZonesConfig-gal konzisztens: érvénytelen sorrend → default visszaállítás)
+        # z1_max_percent < z2_max_percent logical check
+        # (consistent with PowerZonesConfig: invalid order → defaults restored)
         if self.z1_max_percent >= self.z2_max_percent:
             default_z1 = HeartRateZonesConfig.__dataclass_fields__["z1_max_percent"].default
             default_z2 = HeartRateZonesConfig.__dataclass_fields__["z2_max_percent"].default
@@ -310,11 +310,11 @@ class HeartRateZonesConfig:
 
 @dataclasses.dataclass(slots=True)
 class BleConfig:
-    """BLE kimeneti (ventilátor) beállítások – típusbiztos.
+    """BLE output (fan) settings – type-safe.
 
-    Megjegyzés: ez a settings.json ``"ble_fan"`` szekciójához tartozik (a BLE
-    ventilátor kimenet). Az osztály neve történeti okból maradt ``BleConfig``.
-    A loader visszafelé kompatibilisen a régi ``"ble"`` kulcsot is elfogadja.
+    Note: this maps the ``"ble_fan"`` section of settings.json (the BLE fan
+    output). The class kept the name ``BleConfig`` for historical reasons.
+    The loader also accepts the legacy ``"ble"`` key for compatibility.
     """
 
     device_name: str | None = None
@@ -332,8 +332,8 @@ class BleConfig:
         d = cls()
         kwargs: dict[str, Any] = dataclasses.asdict(d)
 
-        # device_name: null / "" / "null" / "none" → auto-discovery (csendes);
-        # nem-üres string → használt név; bármi más típus → figyelmeztetés.
+        # device_name: null / "" / "null" / "none" → auto-discovery (silent);
+        # non-empty string → the name to use; any other type → warning.
         _from_dict_nullable_str(raw, kwargs, "device_name")
 
         # Int fields with ranges
@@ -343,7 +343,7 @@ class BleConfig:
         _from_dict_int(raw, kwargs, "max_retries", 1, 100)
         _from_dict_int(raw, kwargs, "command_timeout", 1, 30)
 
-        # UUID-k: nem-üres string kell, különben figyelmeztetés + default marad.
+        # UUIDs: non-empty string required, otherwise warn + keep the default.
         for uuid_key in ("service_uuid", "characteristic_uuid"):
             if uuid_key in raw:
                 v = raw[uuid_key]
@@ -375,7 +375,7 @@ class BleConfig:
 
 @dataclasses.dataclass(slots=True)
 class DatasourceConfig:
-    """Adatforrás beállítások – típusbiztos."""
+    """Data source settings – type-safe."""
 
     power_source: DataSource | None = DataSource.ZWIFTUDP
     hr_source: DataSource | None = DataSource.ZWIFTUDP
@@ -432,8 +432,8 @@ class DatasourceConfig:
         d = cls()
         kwargs: dict[str, Any] = dataclasses.asdict(d)
 
-        # power_source / hr_source: érvényes adatforrás (antplus/ble/zwiftudp)
-        # vagy null (kikapcsolva). Bármi más → figyelmeztetés + default marad.
+        # power_source / hr_source: a valid data source (antplus/ble/zwiftudp)
+        # or null (disabled). Anything else → warn + keep the default.
         for key in ("power_source", "hr_source"):
             if key not in raw:
                 continue
@@ -456,8 +456,8 @@ class DatasourceConfig:
         for key in ("ant_power_max_retries", "ant_hr_max_retries"):
             _from_dict_int(raw, kwargs, key, 1, 100)
 
-        # BLE sensor device names: null/""/"null"/"none" → auto-discovery (csendes);
-        # nem-üres string → trimmed név; rossz típus → figyelmeztetés.
+        # BLE sensor device names: null/""/"null"/"none" → auto-discovery
+        # (silent); non-empty string → trimmed name; wrong type → warning.
         for key in ("ble_power_device_name", "ble_hr_device_name"):
             _from_dict_nullable_str(raw, kwargs, key)
         for key in ("ble_power_scan_timeout", "ble_power_reconnect_interval",
@@ -466,7 +466,7 @@ class DatasourceConfig:
         for key in ("ble_power_max_retries", "ble_hr_max_retries"):
             _from_dict_int(raw, kwargs, key, 1, 100)
 
-        # Zwift UDP host: nem-üres string kell (whitespace levágva).
+        # Zwift UDP host: non-empty string required (whitespace trimmed).
         if "zwift_udp_host" in raw:
             v = raw["zwift_udp_host"]
             if isinstance(v, str) and v.strip():
@@ -482,8 +482,8 @@ class DatasourceConfig:
             else:
                 user_logger.warning(f"⚠ Érvénytelen 'zwift_auto_launch' érték: {v!r} (true/false kell)")
 
-        # zwift_launcher_path: null/""/"null"/"none"/whitespace → None (automatikus
-        # keresés); nem-üres string → trimmed útvonal; rossz típus → figyelmeztetés.
+        # zwift_launcher_path: null/""/"null"/"none"/whitespace → None (auto
+        # detection); non-empty string → trimmed path; wrong type → warning.
         _from_dict_nullable_str(raw, kwargs, "zwift_launcher_path")
 
         # Per-source buffer settings
@@ -498,14 +498,14 @@ class DatasourceConfig:
 
 @dataclasses.dataclass(slots=True)
 class HudConfig:
-    """HUD beállítások – típusbiztos."""
+    """HUD settings – type-safe."""
 
     save_hud_settings: bool = False
     sound_enabled: bool = True
     sound_volume: float = 0.5
     close_at_zwiftapp_exe: bool = True
     opacity: int = 92
-    # Per-monitor ablak geometria: {"<screen_name>": {"x": .., "y": .., "w": .., "h": ..}}
+    # Per-monitor window geometry: {"<screen_name>": {"x": .., "y": .., "w": .., "h": ..}}
     window_geometry: dict[str, dict[str, int]] = dataclasses.field(default_factory=dict)
 
     @classmethod
@@ -514,8 +514,8 @@ class HudConfig:
         _from_dict_bool(raw, kwargs, "save_hud_settings")
         _from_dict_bool(raw, kwargs, "sound_enabled")
         _from_dict_float(raw, kwargs, "sound_volume", 0.0, 1.0)
-        # close_at_zwiftapp_exe: az új kulcs elsőbbséget élvez; a régi
-        # "close_at_zwiftapp.exe" kulcsot visszafelé kompatibilisen elfogadjuk.
+        # close_at_zwiftapp_exe: the new key takes precedence; the legacy
+        # "close_at_zwiftapp.exe" key is accepted for backwards compatibility.
         if "close_at_zwiftapp_exe" in raw:
             _from_dict_bool(raw, kwargs, "close_at_zwiftapp_exe")
         elif "close_at_zwiftapp.exe" in raw:
@@ -528,9 +528,9 @@ class HudConfig:
         if "window_geometry" in raw and isinstance(raw["window_geometry"], dict):
             geo: dict[str, dict[str, int]] = {}
             for screen_name, rect in raw["window_geometry"].items():
-                # bool kizárva (a bool az int alosztálya!), és csak véges szám
-                # fogadható el – a json.loads a NaN-t is beengedi, amire az
-                # int() ValueError-ral az egész betöltést bedöntené.
+                # bool excluded (bool is a subclass of int!) and only finite
+                # numbers accepted – json.loads lets NaN through, on which
+                # int() would take down the whole load with a ValueError.
                 if isinstance(rect, dict) and all(
                     k in rect
                     and isinstance(rect[k], (int, float))
@@ -551,7 +551,7 @@ class HudConfig:
         return cls(**kwargs)
 
     def to_dict(self) -> dict[str, Any]:
-        """JSON-kompatibilis dict (régi kulcsnévvel a kompatibilitásért)."""
+        """JSON-compatible dict (with the legacy key name for compatibility)."""
         return {
             "save_hud_settings": self.save_hud_settings,
             "sound_enabled": self.sound_enabled,
@@ -563,7 +563,7 @@ class HudConfig:
 
 
 def _from_dict_int(src: dict[str, Any], dst: dict[str, Any], key: str, lo: int, hi: int) -> None:
-    """Helper: int mezőt olvas raw dict-ből dst dict-be validálva."""
+    """Helper: read an int field from the raw dict into dst, validated."""
     if key not in src:
         return
     v = src[key]
@@ -580,7 +580,7 @@ def _from_dict_int(src: dict[str, Any], dst: dict[str, Any], key: str, lo: int, 
 
 
 def _from_dict_bool(src: dict[str, Any], dst: dict[str, Any], key: str) -> None:
-    """Helper: bool mezőt olvas validálva. Rossz típus → figyelmeztetés, default marad."""
+    """Helper: read a bool field, validated. Wrong type → warn, keep default."""
     if key not in src:
         return
     v = src[key]
@@ -591,7 +591,7 @@ def _from_dict_bool(src: dict[str, Any], dst: dict[str, Any], key: str) -> None:
 
 
 def _from_dict_float(src: dict[str, Any], dst: dict[str, Any], key: str, lo: float, hi: float) -> None:
-    """Helper: float mezőt olvas tartomány-validálva (bool kizárva)."""
+    """Helper: read a float field, range-validated (bool excluded)."""
     if key not in src:
         return
     v = src[key]
@@ -602,12 +602,12 @@ def _from_dict_float(src: dict[str, Any], dst: dict[str, Any], key: str, lo: flo
 
 
 def _from_dict_nullable_str(src: dict[str, Any], dst: dict[str, Any], key: str) -> None:
-    """Helper: nullable string mező normalizálás (eszköznév, útvonal stb.).
+    """Helper: normalize a nullable string field (device name, path, etc.).
 
-    null / "" / "null" / "none" (kis-nagybetű érzéketlen) → None, csendben
-    (az adott mezőnél ez auto-discovery / automatikus keresés jelentésű).
-    Egyéb nem-üres string → trimmed érték. Rossz típus → figyelmeztetés,
-    a default (None) marad.
+    null / "" / "null" / "none" (case-insensitive) → None, silently (for
+    these fields it means auto-discovery / automatic detection). Any other
+    non-empty string → trimmed value. Wrong type → warn, keep the default
+    (None).
     """
     if key not in src:
         return
@@ -623,26 +623,27 @@ def _from_dict_nullable_str(src: dict[str, Any], dst: dict[str, Any], key: str) 
 
 @dataclasses.dataclass(slots=True)
 class ZwiftApiConfig:
-    """Zwift API polling beállítások – típusbiztos.
+    """Zwift API polling settings – type-safe.
 
-    A settings.json ``"zwift_api"`` szekciójához tartozik. A
-    ``zwift_api_polling`` segédprocessz konfigurációja: bejelentkezési adatok,
-    lekérdezési gyakoriság és a külön-ablak (saját konzol) opció.
+    Maps the ``"zwift_api"`` section of settings.json: configuration of the
+    ``zwift_api_polling`` helper process – credentials, polling interval and
+    the separate-window (own console) option.
 
-    A broadcast cél (host/port) NEM itt van: a ``datasource.zwift_udp_host`` /
-    ``datasource.zwift_udp_port`` értékekből jön, hogy ne duplikálódjon. A
-    loggolást a ``global_settings.logging`` / ``log_directory`` vezérli.
+    The broadcast target (host/port) is NOT here: it comes from
+    ``datasource.zwift_udp_host`` / ``datasource.zwift_udp_port`` to avoid
+    duplication. Logging is driven by ``global_settings.logging`` /
+    ``log_directory``.
 
-    Biztonsági figyelmeztetés: a jelszó titkosítatlanul (plaintext) kerül a
-    settings.json-ba. A CLI ``--password`` és a ``ZWIFT_PASSWORD`` környezeti
-    változó elsőbbséget élvez, ha biztonságosabb tárolást szeretnél.
+    Security warning: the password is stored in plaintext in settings.json.
+    The CLI ``--password`` and the ``ZWIFT_PASSWORD`` environment variable
+    take precedence when safer storage is preferred.
     """
 
     username: str = ""
     password: str = ""
     poll_interval: float = 3.0
-    # Külön konzol ablak (Windows: CREATE_NEW_CONSOLE). Ha False, a subprocess
-    # a fő program ablakában/háttérben fut.
+    # Separate console window (Windows: CREATE_NEW_CONSOLE). When False the
+    # subprocess runs in the main program window / in the background.
     separate_window: bool = True
 
     @classmethod
@@ -660,7 +661,7 @@ class ZwiftApiConfig:
         return cls(**kwargs)
 
     def to_dict(self) -> dict[str, Any]:
-        """JSON-kompatibilis dict."""
+        """JSON-compatible dict."""
         return {
             "username": self.username,
             "password": self.password,
@@ -670,7 +671,7 @@ class ZwiftApiConfig:
 
 
 # ============================================================
-# ALAPÉRTELMEZETT BEÁLLÍTÁSOK
+# DEFAULT SETTINGS
 # ============================================================
 
 DEFAULT_SETTINGS: dict[str, Any] = {

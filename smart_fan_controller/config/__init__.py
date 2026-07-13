@@ -1,7 +1,7 @@
-"""Beállítás-kezelő al-package.
+"""Settings sub-package.
 
-Egységes belépési pont a beállítás-modellekhez (``schemas``) és a betöltő /
-származtatott logikához (``loader``).
+Unified entry point for the settings models (``schemas``) and the
+loading / derived logic (``loader``).
 """
 from __future__ import annotations
 
@@ -26,12 +26,12 @@ from .loader import (
 )
 
 __all__ = [
-    # Enumok
+    # Enums
     "DataSource",
     "ZoneMode",
     "VALID_DATA_SOURCES",
     "VALID_ZONE_MODES",
-    # Beállítás dataclass-ek
+    # Settings dataclasses
     "GlobalSettingsConfig",
     "PowerZonesConfig",
     "HeartRateZonesConfig",
@@ -39,7 +39,7 @@ __all__ = [
     "DatasourceConfig",
     "HudConfig",
     "ZwiftApiConfig",
-    # Betöltés és lekérdezések
+    # Loading and queries
     "DEFAULT_SETTINGS",
     "load_settings",
     "get_effective_zone_mode",

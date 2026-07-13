@@ -1,16 +1,17 @@
-"""Beállítások betöltése, mentése és származtatott lekérdezések.
+"""Settings loading, saving and derived queries.
 
-Ez a modul felel a ``settings.json`` beolvasásáért és validálásáért
-(``load_settings``), valamint néhány származtatott segédfüggvényért
+This module is responsible for reading and validating ``settings.json``
+(``load_settings``) plus a few derived helpers
 (``get_effective_zone_mode``, ``_resolve_buffer_settings``).
 
-**Default settings:** a ``settings.default.json`` (verziókövetett sablonfájl)
-tartalmazza az összes mező alapértelmezett értékét. Ha a felhasználó
-``settings.json`` még nem létezik, a program automatikusan mássolja a
-``settings.default.json``-t, így a felhasználó egyből a default-okból indulhat.
+**Default settings:** ``settings.default.json`` (a version-controlled
+template file) contains the default value of every field. When the
+user's ``settings.json`` does not exist yet, the program copies
+``settings.default.json`` automatically, so the user starts from the
+defaults right away.
 
-A beállítás-modellek (dataclass-ek, enumok) a testvér ``schemas`` modulban
-találhatók.
+The settings models (dataclasses, enums) live in the sibling ``schemas``
+module.
 """
 from __future__ import annotations
 
@@ -35,10 +36,10 @@ from .schemas import (
     ZwiftApiConfig,
 )
 
-# A felhasználói üzeneteket a "user" nevű logger kezeli; lásd schemas.py.
+# User-facing messages go through the logger named "user"; see schemas.py.
 user_logger = logging.getLogger("user")
 
-# A settings.json érvényes felső szintű szekciói ("ble": elavult alias)
+# Valid top-level sections of settings.json ("ble" is a deprecated alias)
 _KNOWN_SECTIONS = frozenset((
     "global_settings", "power_zones", "heart_rate_zones",
     "ble_fan", "ble", "datasource", "hud", "zwift_api",
@@ -46,31 +47,32 @@ _KNOWN_SECTIONS = frozenset((
 
 
 # ============================================================
-# BEÁLLÍTÁSOK BETÖLTÉSE
+# SETTINGS LOADING
 # ============================================================
 
 
 def load_settings(settings_file: str = "settings.json") -> dict[str, Any]:
-    """Betölti és validálja a JSON beállítási fájlt.
+    """Load and validate the JSON settings file.
 
-    Logika:
-      1. Ha ``settings_file`` nem létezik, de ``settings.default.json``
-         (a szokásos helyén az aktuális könyvtárban) van, mássolja azt
-         az ``settings_file`` helyére.
-      2. Beolvassa az ``settings_file``-t, az értékeket validálja a dataclass-ek
-         ``from_dict()`` metódusaival. Hibás mező → az alapértelmezett marad (warning).
-      3. Ha még mindig nincs ``settings_file``, fallback a ``DEFAULT_SETTINGS``
-         hardcoded dict-re.
+    Logic:
+      1. When ``settings_file`` does not exist but ``settings.default.json``
+         (in its usual place in the current directory) does, copy it to
+         ``settings_file``.
+      2. Read ``settings_file`` and validate the values with the
+         dataclasses' ``from_dict()`` methods. Invalid field → the
+         default remains (with a warning).
+      3. When there is still no ``settings_file``, fall back to the
+         hardcoded ``DEFAULT_SETTINGS`` dict.
 
     Args:
-        settings_file: A JSON beállítások fájl elérési útja.
+        settings_file: Path of the JSON settings file.
 
     Returns:
-        Validált beállítások dict-je.
+        Dict of validated settings.
     """
     settings = copy.deepcopy(DEFAULT_SETTINGS)
 
-    # Ha nincs settings.json, de van settings.default.json → másold
+    # No settings.json but settings.default.json exists → copy it
     _ensure_default_settings_file(settings_file)
 
     try:
@@ -82,10 +84,10 @@ def load_settings(settings_file: str = "settings.json") -> dict[str, Any]:
         )
         return settings
     except json.JSONDecodeError as exc:
-        # Szintaxis-hiba: a fájl értelmezhetetlen → teljes default. Mentés előtt
-        # a hibás fájlt félretesszük '.incorrect' néven, hogy a kézi szerkesztések
-        # (amiket egy apró elgépelés tett olvashatatlanná) ne vesszenek el, amikor
-        # a program később felülírja a settings.json-t a default értékekkel.
+        # Syntax error: the file is unreadable → full defaults. Before any
+        # save the broken file is set aside as '.incorrect' so the manual
+        # edits (made unreadable by a small typo) are not lost when the
+        # program later overwrites settings.json with the default values.
         backup = _backup_incorrect_settings(settings_file)
         msg = f"⚠ '{settings_file}' JSON szintaxis hiba: {exc}. Alapértelmezés használata."
         if backup:
@@ -99,8 +101,8 @@ def load_settings(settings_file: str = "settings.json") -> dict[str, Any]:
         user_logger.warning(f"⚠ '{settings_file}' beolvasási hiba: {exc}. Alapértelmezés használata.")
         return settings
 
-    # Érvényes JSON, de nem objektum (pl. lista vagy string a fájl tetején) →
-    # ugyanúgy kezeljük, mint a szintaxis-hibát: backup + teljes default.
+    # Valid JSON but not an object (e.g. a list or string at the top) →
+    # treated the same as a syntax error: backup + full defaults.
     if not isinstance(loaded, dict):
         backup = _backup_incorrect_settings(settings_file)
         msg = (
@@ -112,8 +114,8 @@ def load_settings(settings_file: str = "settings.json") -> dict[str, Any]:
         user_logger.warning(msg)
         return settings
 
-    # Elgépelt / ismeretlen szekciónevek jelzése (pl. "power_zone" a
-    # "power_zones" helyett csendben elveszne)
+    # Report mistyped / unknown section names (e.g. "power_zone" instead
+    # of "power_zones" would be lost silently)
     unknown_sections = set(loaded) - _KNOWN_SECTIONS
     if unknown_sections:
         user_logger.warning(
@@ -121,16 +123,16 @@ def load_settings(settings_file: str = "settings.json") -> dict[str, Any]:
             f"{', '.join(sorted(unknown_sections))} – figyelmen kívül hagyva."
         )
 
-    # --- Szekciók betöltése dataclass from_dict()-tel ---
+    # --- Load the sections via the dataclass from_dict() methods ---
     if isinstance(loaded.get("global_settings"), dict):
         settings["global_settings"] = GlobalSettingsConfig.from_dict(loaded["global_settings"])
     if isinstance(loaded.get("power_zones"), dict):
         settings["power_zones"] = PowerZonesConfig.from_dict(loaded["power_zones"])
     if isinstance(loaded.get("heart_rate_zones"), dict):
         settings["heart_rate_zones"] = HeartRateZonesConfig.from_dict(loaded["heart_rate_zones"])
-    # "ble_fan": a BLE ventilátor kimenet szekciója. Visszafelé kompatibilitás:
-    # ha "ble_fan" hiányzik, de a régi "ble" kulcs jelen van, azt használjuk
-    # (deprecation figyelmeztetéssel) – így a régi settings.json-ok tovább működnek.
+    # "ble_fan": the BLE fan output section. Backwards compatibility: when
+    # "ble_fan" is missing but the legacy "ble" key is present, use that
+    # (with a deprecation warning) – old settings.json files keep working.
     if isinstance(loaded.get("ble_fan"), dict):
         settings["ble_fan"] = BleConfig.from_dict(loaded["ble_fan"])
     elif isinstance(loaded.get("ble"), dict):
@@ -146,7 +148,7 @@ def load_settings(settings_file: str = "settings.json") -> dict[str, Any]:
     if isinstance(loaded.get("zwift_api"), dict):
         settings["zwift_api"] = ZwiftApiConfig.from_dict(loaded["zwift_api"])
 
-    # --- Kereszt-validáció: zone_mode + null forrás ---
+    # --- Cross-validation: zone_mode + null source ---
     try:
         ds_cfg: DatasourceConfig = settings["datasource"]
         hrz_cfg: HeartRateZonesConfig = settings["heart_rate_zones"]
@@ -188,7 +190,7 @@ def load_settings(settings_file: str = "settings.json") -> dict[str, Any]:
 
 
 def _settings_to_serializable(settings: dict[str, Any]) -> dict[str, Any]:
-    """Settings dict-et JSON-serializálható formára alakít (dataclass → dict)."""
+    """Convert a settings dict to a JSON-serializable form (dataclass → dict)."""
     out = {}
     for k, v in settings.items():
         if dataclasses.is_dataclass(v) and not isinstance(v, type):
@@ -198,31 +200,33 @@ def _settings_to_serializable(settings: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-# A versiókövetett default sablonfájl a config package-en belül van
-# (package data) – a kódhoz tartozik, ami használja.
+# The version-controlled default template lives inside the config package
+# (package data) – it belongs with the code that uses it.
 DEFAULT_SETTINGS_FILENAME = "settings.default.json"
 DEFAULT_SETTINGS_PATH = os.path.join(os.path.dirname(__file__), DEFAULT_SETTINGS_FILENAME)
 
 
 def _ensure_default_settings_file(settings_path: str) -> None:
-    """Ha ``settings_path`` nem létezik, de a ``settings.default.json`` sablon
-    elérhető, mássolja azt ``settings_path`` helyére.
+    """When ``settings_path`` does not exist but the ``settings.default.json``
+    template is available, copy it to ``settings_path``.
 
-    A ``settings.default.json`` keresési sorrendje:
-      1. A felhasználó aktuális munkakönyvtára (CWD) – ide tehet saját sablont.
-      2. A config package data (``smart_fan_controller/config/settings.default.json``)
-         – a verziókövetett, beépített alapértelmezés.
+    Search order for ``settings.default.json``:
+      1. The user's current working directory (CWD) – a custom template
+         can be placed here.
+      2. The config package data
+         (``smart_fan_controller/config/settings.default.json``) – the
+         version-controlled, built-in default.
 
-    Akkor hasznos, ha a felhasználó még nem készített ``settings.json`` fájlt,
-    de szeretne egy érvényes alapértelmezésből indulni.
+    Useful when the user has not created a ``settings.json`` yet but
+    wants to start from a valid default.
     """
     if os.path.exists(settings_path):
-        # Már van settings.json → nincs mit csinálni
+        # settings.json already exists → nothing to do
         return
 
     default_candidates = [
-        os.path.join(os.getcwd(), DEFAULT_SETTINGS_FILENAME),  # CWD-beli felülíró sablon
-        DEFAULT_SETTINGS_PATH,                                  # beépített package data
+        os.path.join(os.getcwd(), DEFAULT_SETTINGS_FILENAME),  # CWD override template
+        DEFAULT_SETTINGS_PATH,                                  # built-in package data
     ]
 
     for default_path in default_candidates:
@@ -238,22 +242,24 @@ def _ensure_default_settings_file(settings_path: str) -> None:
                 user_logger.warning(f"⚠ Nem sikerült másolni '{default_path}' → '{settings_path}': {exc}")
                 return
 
-    # Ha nincs settings.default.json, nincs mit tennünk
-    # (a fallback a DEFAULT_SETTINGS hardcoded dict lesz)
+    # Without a settings.default.json there is nothing to do
+    # (the fallback is the hardcoded DEFAULT_SETTINGS dict)
 
 
 def _backup_incorrect_settings(settings_path: str) -> str | None:
-    """A szintaktikailag hibás ``settings_path``-ról biztonsági másolatot készít.
+    """Create a backup copy of the syntactically broken ``settings_path``.
 
-    A másolat neve ``<settings_path>.incorrect`` (pl. ``settings.json.incorrect``).
-    Ezzel megőrizzük a felhasználó kézi szerkesztéseit akkor is, ha egy apró
-    elgépelés (hiányzó vessző, zárójel) miatt a fájl olvashatatlanná vált, és a
-    program később a default értékekkel felülírná az eredeti ``settings.json``-t.
+    The copy is named ``<settings_path>.incorrect`` (e.g.
+    ``settings.json.incorrect``). This preserves the user's manual edits
+    even when a small typo (missing comma, bracket) made the file
+    unreadable and the program would later overwrite the original
+    ``settings.json`` with the defaults.
 
-    Egy meglévő ``.incorrect`` fájlt felülír (mindig a legutóbbi hibás verziót őrzi).
+    An existing ``.incorrect`` file is overwritten (always keeps the most
+    recent broken version).
 
     Returns:
-        A biztonsági másolat útvonala siker esetén, különben ``None``.
+        The backup path on success, ``None`` otherwise.
     """
     backup_path = settings_path + ".incorrect"
     try:
@@ -268,18 +274,18 @@ def _backup_incorrect_settings(settings_path: str) -> str | None:
 
 
 def _write_json_atomic(path: str, data: dict[str, Any]) -> None:
-    """JSON kiírása atomikusan: temp fájl + os.replace (Windows-on is atomikus).
+    """Write JSON atomically: temp file + os.replace (atomic on Windows too).
 
-    Közvetlen felülírásnál egy írás közbeni leállás (áramszünet, kill)
-    csonka settings.json-t hagyna hátra – az összes felhasználói beállítás
-    elveszne. Így vagy a régi, vagy az új teljes tartalom marad meg."""
+    With a direct overwrite, dying mid-write (power loss, kill) would
+    leave a truncated settings.json behind – all user settings lost.
+    This way either the old or the new full content survives."""
     tmp_path = path + ".tmp"
     try:
         with open(tmp_path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
         os.replace(tmp_path, path)
     finally:
-        # Hibás írás után ne maradjon szemét temp fájl
+        # Leave no stray temp file behind after a failed write
         if os.path.exists(tmp_path):
             try:
                 os.remove(tmp_path)
@@ -288,19 +294,20 @@ def _write_json_atomic(path: str, data: dict[str, Any]) -> None:
 
 
 def save_zwift_api_credentials(settings_file: str, username: str, password: str) -> bool:
-    """Csak a "zwift_api" szekció username/password mezőit frissíti a settings.json-ban.
+    """Update only the username/password fields of the "zwift_api" section.
 
-    A zwift_api segédprocessz használja, ha a bejelentkezési adatokat interaktívan
-    kérte be (a többi mezőt – poll_interval, separate_window – és a többi szekciót
-    érintetlenül hagyja). Ha a "zwift_api" szekció még nem létezik, létrehozza.
+    Used by the zwift_api helper process when it prompted for the
+    credentials interactively (the other fields – poll_interval,
+    separate_window – and the other sections are left untouched). The
+    "zwift_api" section is created when it does not exist yet.
 
     Args:
-        settings_file: A settings.json fájl elérési útja.
-        username: A mentendő Zwift felhasználónév.
-        password: A mentendő Zwift jelszó (figyelem: plaintext).
+        settings_file: Path of the settings.json file.
+        username: The Zwift username to save.
+        password: The Zwift password to save (careful: plaintext).
 
     Returns:
-        True ha sikeres, False ha hiba történt.
+        True on success, False on error.
     """
     try:
         with open(settings_file, "r", encoding="utf-8") as f:
@@ -327,22 +334,22 @@ def save_zwift_api_credentials(settings_file: str, username: str, password: str)
 
 
 def save_hud_settings_only(settings_file: str, hud_config: HudConfig) -> bool:
-    """Csak a "hud" szekciót frissíti a settings.json-ban (teljes felülírás nélkül).
+    """Update only the "hud" section of settings.json (no full overwrite).
 
-    Ez a funkció arra szolgál, hogy a HUD beállítások (opacity, sound_volume,
-    window_geometry) csak akkor kerüljenek mentésre, ha ``save_hud_settings=True``.
-    Így a felhasználó kézi szerkesztéseit (ftp, device_name stb.) a program
-    nem írja felül egy HUD-pozíció-mentéssel.
+    Ensures the HUD settings (opacity, sound_volume, window_geometry) are
+    only persisted when ``save_hud_settings=True``. This way the user's
+    manual edits (ftp, device_name, etc.) are never clobbered by a HUD
+    position save.
 
     Args:
-        settings_file: A settings.json fájl elérési útja.
-        hud_config: Az aktuálisan használt HudConfig objektum.
+        settings_file: Path of the settings.json file.
+        hud_config: The HudConfig object currently in use.
 
     Returns:
-        True ha sikeres, False ha hiba történt.
+        True on success, False on error.
     """
     if not hud_config.save_hud_settings:
-        # A felhasználó letiltotta a HUD mentést
+        # The user disabled HUD saving
         return False
 
     try:
@@ -352,7 +359,7 @@ def save_hud_settings_only(settings_file: str, hud_config: HudConfig) -> bool:
         user_logger.warning(f"⚠ HUD beállítások mentési hiba (olvasás): {exc}")
         return False
 
-    # Csak a "hud" szekciót frissítjük
+    # Update only the "hud" section
     data["hud"] = hud_config.to_dict()
 
     try:
@@ -364,21 +371,21 @@ def save_hud_settings_only(settings_file: str, hud_config: HudConfig) -> bool:
 
 
 # ============================================================
-# SZÁRMAZTATOTT LEKÉRDEZÉSEK
+# DERIVED QUERIES
 # ============================================================
 
 
 def get_effective_zone_mode(settings: dict[str, Any]) -> ZoneMode:
-    """Meghatározza az effektív zóna módot a beállítások alapján.
+    """Determine the effective zone mode from the settings.
 
-    Ha a HR nincs engedélyezve (enabled=False), mindig POWER_ONLY-t ad vissza,
-    függetlenül a zone_mode beállítástól.
+    When HR is disabled (enabled=False) it always returns POWER_ONLY,
+    regardless of the zone_mode setting.
 
     Args:
-        settings: Betöltött beállítások dict-je.
+        settings: Dict of loaded settings.
 
     Returns:
-        Az effektív ZoneMode.
+        The effective ZoneMode.
     """
     hrz: HeartRateZonesConfig = settings["heart_rate_zones"]
     if not hrz.enabled:
@@ -388,17 +395,18 @@ def get_effective_zone_mode(settings: dict[str, Any]) -> ZoneMode:
 
 def _resolve_buffer_settings(settings: dict[str, Any], role: str) -> dict[str, Any]:
     """
-    Visszaadja a megfelelő buffer/dropout paramétereket a megadott szerephez.
+    Return the buffer/dropout parameters appropriate for the given role.
 
-    A role ("power" vagy "hr") alapján meghatározza az aktív adatforrást
-    (datasource.power_source ill. datasource.hr_source mezőkből), majd
-    visszaadja a forrás-specifikus buffer beállításokat.
-    Fallback: globális buffer_seconds / minimum_samples / buffer_rate_hz / dropout_timeout.
+    Based on the role ("power" or "hr") it determines the active data
+    source (from datasource.power_source / datasource.hr_source) and
+    returns the source-specific buffer settings.
+    Fallback: global buffer_seconds / minimum_samples / buffer_rate_hz /
+    dropout_timeout.
 
     Args:
-        settings: Betöltött beállítások dict-je.
-        role:     "power" – a power_source alapján,
-                  "hr"    – a hr_source alapján.
+        settings: Dict of loaded settings.
+        role:     "power" – based on power_source,
+                  "hr"    – based on hr_source.
     Returns:
         Dict: buffer_seconds, minimum_samples, buffer_rate_hz, dropout_timeout
     """
@@ -406,7 +414,7 @@ def _resolve_buffer_settings(settings: dict[str, Any], role: str) -> dict[str, A
     source = ds.power_source if role == "power" else ds.hr_source
 
     if source is None:
-        # Null forrás: globális fallback értékek
+        # Null source: global fallback values
         gs: GlobalSettingsConfig = settings["global_settings"]
         return {
             "buffer_seconds": gs.buffer_seconds,

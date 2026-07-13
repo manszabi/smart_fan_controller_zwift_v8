@@ -1,13 +1,13 @@
-"""Aszinkron processzorok – zóna-számítás, cooldown és dropout detektálás.
+"""Async processors – zone calculation, cooldown and dropout detection.
 
-Ez a csomag az asyncio task-okat tartalmazza, amelyek:
-- Power adatok feldolgozása (validálás, átlagolás, zóna számítás)
-- HR adatok feldolgozása (validálás, átlagolás, zóna számítás)
-- Zóna kombinálás (power + HR), cooldown alkalmazása
-- Dropout detektálás és Z0 küldése
+This package contains the asyncio tasks that:
+- process power data (validation, averaging, zone calculation)
+- process HR data (validation, averaging, zone calculation)
+- combine zones (power + HR) and apply the cooldown
+- detect dropouts and send Z0
 
-Modulok:
-- processors.py: Az 5 async task (power, HR, zóna, dropout) + guarded task wrapper
+Modules:
+- processors.py: the async tasks (power, HR, zone, dropout) + guarded task wrapper
 """
 from __future__ import annotations
 

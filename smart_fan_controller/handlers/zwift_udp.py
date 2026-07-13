@@ -1,8 +1,8 @@
-"""Zwift UDP Input handler – asyncio DatagramProtocol alapú.
+"""Zwift UDP input handler – based on an asyncio DatagramProtocol.
 
-A zwift_api_polling programból érkező JSON csomagokat fogadja UDP-n.
-Asyncio DatagramProtocol alapú implementáció, teljesen non-blocking.
-Érvényes power és HR értékeket az asyncio queue-kba teszi.
+Receives the JSON packets sent over UDP by the zwift_api_polling helper
+process. Fully non-blocking; valid power and HR values are placed into
+the asyncio queues.
 """
 from __future__ import annotations
 
@@ -19,19 +19,19 @@ logger = logging.getLogger("zwift_fan_controller_new")
 
 
 class ZwiftUDPInputHandler:
-    """Zwift UDP adatforrás fogadó – asyncio DatagramProtocol alapú.
+    """Zwift UDP data source receiver – based on an asyncio DatagramProtocol.
 
-    A zwift_api_polling programból érkező JSON csomagokat fogadja UDP-n.
-    Asyncio DatagramProtocol alapú implementáció, teljesen non-blocking.
-    Érvényes power és HR értékeket az asyncio queue-kba teszi.
+    Receives the JSON packets sent over UDP by the zwift_api_polling
+    helper process. Fully non-blocking; valid power and HR values are
+    placed into the asyncio queues.
 
-    JSON formátum:
+    JSON format:
         {"power": int, "heartrate": int}
 
-    Attribútumok:
-        process_power: True, ha a power adatokat kell feldolgozni.
-        process_hr: True, ha a HR adatokat kell feldolgozni.
-        last_packet_time: utolsó érvényes ZwiftUDP csomag ideje (monotonic).
+    Attributes:
+        process_power: True when power data should be processed.
+        process_hr: True when HR data should be processed.
+        last_packet_time: time of the last valid packet (monotonic).
     """
 
     def __init__(
@@ -53,8 +53,8 @@ class ZwiftUDPInputHandler:
         hr_enabled: bool = settings["heart_rate_zones"].enabled
         self.process_hr: bool = ds.hr_source == DataSource.ZWIFTUDP and hr_enabled
 
-        # Validációs határok cache-elve (a settings futás közben nem változik;
-        # konzisztens a processzorokkal, amik szintén induláskor olvassák)
+        # Validation bounds cached (settings never change at runtime;
+        # consistent with the processors, which also read them at startup)
         self._min_watt: int = settings["power_zones"].min_watt
         self._max_watt: int = settings["power_zones"].max_watt
         hrz: HeartRateZonesConfig = settings["heart_rate_zones"]
@@ -63,11 +63,15 @@ class ZwiftUDPInputHandler:
 
         self._transport: Any = None
 
-        # HUD számára: utolsó érvényes csomag ideje
+        # For the HUD: time of the last valid packet
         self.last_packet_time: float = 0.0
+        # Per-metric timestamps – the HUD reads them for the P:OK/FAIL and
+        # HR:OK/FAIL display consistent with the BLE/ANT handlers
+        self.power_lastdata: float = 0.0
+        self.hr_lastdata: float = 0.0
 
     async def run(self) -> None:
-        """A Zwift UDP fogadó fő korrutinja – asyncio DatagramProtocol-t indít."""
+        """Main coroutine of the receiver – starts an asyncio DatagramProtocol."""
         loop = asyncio.get_running_loop()
         logger.info(f"Zwift UDP fogadó elindítva: {self.host}:{self.port}")
 
@@ -93,8 +97,8 @@ class ZwiftUDPInputHandler:
                 local_addr=(self.host, self.port),
             )
             try:
-                # Soha be nem következő esemény: a task cancellation-ig alszik
-                # (nincs óránkénti felesleges ébredés, mint a sleep-ciklusnál)
+                # An event that never fires: sleeps until task cancellation
+                # (no pointless hourly wakeups like a sleep loop would have)
                 await asyncio.Event().wait()
             finally:
                 transport.close()
@@ -104,10 +108,10 @@ class ZwiftUDPInputHandler:
             logger.error(f"Zwift UDP bind hiba: {exc}")
 
     def _process_packet(self, raw: bytes) -> None:
-        """JSON csomag feldolgozása – validáció és queue-ba helyezés.
+        """Process one JSON packet – validation and queueing.
 
-        A power validációhoz a settings-ből olvassa a max_watt értéket,
-        így konzisztens marad a power_processor_task szűrőjével.
+        Power validation reads max_watt from the settings, staying
+        consistent with the power_processor_task filter.
         """
         try:
             data = json.loads(raw.decode("utf-8"))
@@ -116,7 +120,7 @@ class ZwiftUDPInputHandler:
 
         if not isinstance(data, dict):
             return
-        # Pylance szűkíti dict[str, Unknown]-ra; cast → dict[str, Any]
+        # Pylance narrows to dict[str, Unknown]; cast → dict[str, Any]
         pkt = cast(dict[str, Any], data)
 
         valid_any = False
@@ -127,6 +131,7 @@ class ZwiftUDPInputHandler:
                 try:
                     self.power_queue.put_nowait(round(p))
                     valid_any = True
+                    self.power_lastdata = time.monotonic()
                 except asyncio.QueueFull:
                     logger.debug("Zwift UDP: power queue teli, adat elvetve")
             else:
@@ -138,11 +143,12 @@ class ZwiftUDPInputHandler:
                 try:
                     self.hr_queue.put_nowait(round(h))
                     valid_any = True
+                    self.hr_lastdata = time.monotonic()
                 except asyncio.QueueFull:
                     logger.debug("Zwift UDP: hr queue teli, adat elvetve")
             else:
                 logger.debug("Zwift UDP: érvénytelen heartrate: %s", h)
 
-        # Ha bármilyen érvényes adatot elfogadtunk, frissítjük az időbélyeget
+        # Refresh the timestamp whenever any valid data was accepted
         if valid_any:
             self.last_packet_time = time.monotonic()

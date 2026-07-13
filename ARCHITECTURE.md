@@ -226,7 +226,7 @@ smart_fan_controller/
 │   ├── cooldown.py      # CooldownController allapotgep
 │   ├── printers.py      # ConsolePrinter (throttle-olt)
 │   ├── state.py         # ControllerState, UISnapshot (szalbiztos HUD-csere)
-│   ├── helpers.py       # resolve_log_dir, generate_tone (LCARS hangok)
+│   ├── helpers.py       # resolve_log_dir, generate_tone (hang-ujrageneralas)
 │   └── logging_setup.py # logger/user_logger, setup_logging, korai pufferelo
 │
 ├── handlers/            # Be- es kimeneti adatkezelok
@@ -237,8 +237,14 @@ smart_fan_controller/
 ├── processors/
 │   └── processors.py    # power/hr_processor_task, zone_controller_task, dropout_checker_task
 │
+├── sounds/              # LCARS hangeffektek (WAV; tools/generate_lcars_sounds.py)
+│
 ├── ui/
-│   └── hud.py           # HUDWindow (PySide6 LCARS HUD + hangeffektek)
+│   ├── theme.py         # LCARS szinpaletta + cache-elt QColor/QBrush helperek
+│   ├── widgets.py       # QPainter-rel rajzolt LCARS widgetek (header, footer, meterek)
+│   ├── sound.py         # LCARSSoundManager (fajl alapu hangeffektek)
+│   ├── window.py        # HUDWindow (fo lebego ablak)
+│   └── hud.py           # visszafele kompatibilis aggregator (re-export)
 │
 ├── zwift_api/           # Zwift HTTPS API polling segedprocessz (kulon processz)
 │   ├── __main__.py      # belepo: settings.json betoltes, CLI, credential feloldas

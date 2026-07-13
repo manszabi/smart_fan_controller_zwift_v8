@@ -1,4 +1,4 @@
-"""Zwift HTTPS API – OAuth2 token-életciklus és REST hívások."""
+"""Zwift HTTPS API – OAuth2 token lifecycle and REST calls."""
 from __future__ import annotations
 
 import json
@@ -36,8 +36,8 @@ class ZwiftAuth:
         self._access_token: str = ""
         self._refresh_token: str = ""
         self._expires_at: float = 0.0  # Unix timestamp when access_token expires
-        # Session: TLS-kapcsolat újrahasznosítás login + token-refresh között
-        # (konzisztensen a ZwiftAPIClient-tel)
+        # Session: TLS connection reuse between login + token refresh
+        # (consistent with ZwiftAPIClient)
         self._session = requests.Session()
 
     def login(self) -> None:
@@ -79,8 +79,8 @@ class ZwiftAuth:
             self._store_tokens(resp.json())
             log.debug("Token frissítve / Token refreshed")
         except (requests.RequestException, ValueError) as exc:
-            # ValueError: token nélküli refresh-válasz (_store_tokens) – erre
-            # is újra-bejelentkezés a helyes út, nem végtelen refresh-próba
+            # ValueError: token-less refresh response (_store_tokens) – the
+            # right move is re-login here too, not endless refresh attempts
             log.warning(
                 f"⚠️  Token frissítés sikertelen, újra bejelentkezés / "
                 f"Token refresh failed, re-logging in: {exc}"
@@ -90,8 +90,8 @@ class ZwiftAuth:
     def _store_tokens(self, payload: dict[str, Any]) -> None:
         token = payload.get("access_token")
         if not token:
-            # Pl. Keycloak hibaválasz ({"error": "invalid_grant"}) – tiszta,
-            # értelmezhető hibát adunk a nyers KeyError helyett
+            # E.g. a Keycloak error response ({"error": "invalid_grant"}) –
+            # raise a clean, readable error instead of a raw KeyError
             detail = payload.get("error_description") or payload.get("error") or "?"
             raise ValueError(f"Zwift auth válaszból hiányzik az access_token ({detail})")
         self._access_token = token

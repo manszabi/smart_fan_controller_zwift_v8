@@ -1,9 +1,9 @@
-"""Throttle-olt konzol kiírás – szálbiztos, nincs Qt/BLE/IO függőség.
+"""Throttled console output – thread-safe, no Qt/BLE/IO dependencies.
 
-A ConsolePrinter kezeli az üzeneteket: ugyanaz az üzenet nem jelenhet meg
-túl sűrűn. Üzenetkulcsonként külön időzítőt tart, és csak akkor ír ki, ha
-az interval eltelt az utolsó kiírás óta. A threading.Lock védi a _last_times
-dict-et az egyidejű hozzáférés ellen.
+ConsolePrinter manages the messages: the same message must not appear
+too frequently. It keeps a timer per message key and only prints when
+the interval has elapsed since the last print. A threading.Lock guards
+the _last_times dict against concurrent access.
 """
 from __future__ import annotations
 
@@ -15,16 +15,16 @@ user_logger = logging.getLogger("user")
 
 
 class ConsolePrinter:
-    """Throttle-olt konzol kiírás – ugyanaz az üzenet nem jelenhet meg túl sűrűn.
+    """Throttled console output – the same message must not repeat too often.
 
-    Minden üzenettípushoz (key) külön időzítőt tart. Az üzenet csak
-    akkor kerül kiírásra, ha az utolsó kiírás óta legalább interval
-    másodperc telt el.
+    Keeps a separate timer per message type (key). A message is only
+    printed when at least interval seconds elapsed since its last print.
 
-    Megjegyzés: a metódus neve 'emit', hogy ne fedje el a beépített print()-et.
+    Note: the method is named 'emit' so it does not shadow the built-in
+    print().
 
-    Attribútumok:
-        _last_times: Utolsó kiírás ideje üzenetkulcsonként.
+    Attributes:
+        _last_times: Time of the last print per message key.
     """
 
     def __init__(self) -> None:
@@ -32,15 +32,15 @@ class ConsolePrinter:
         self._last_times: dict[str, float] = {}
 
     def emit(self, key: str, message: str, interval: float = 1.0) -> bool:
-        """Kiírja az üzenetet, ha az interval eltelt.
+        """Print the message when the interval has elapsed.
 
         Args:
-            key: Egyedi kulcs az üzenet azonosításához (pl. "power_raw").
-            message: A kiírandó szöveg.
-            interval: Minimális másodpercek száma két azonos kulcsú kiírás között.
+            key: Unique key identifying the message (e.g. "power_raw").
+            message: The text to print.
+            interval: Minimum seconds between two prints of the same key.
 
         Returns:
-            True, ha az üzenet kiírásra kerül; False, ha throttle-olt.
+            True when the message was printed; False when throttled.
         """
         now = time.monotonic()
         with self._lock:

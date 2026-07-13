@@ -1,12 +1,14 @@
-"""Smart Fan Controller – moduláris package.
+"""Smart Fan Controller – modular package.
 
-A korábbi monolitikus belépő (``swift_fan_controller.py``) teljes logikája
-ebbe a package-be szerveződött. Al-package-ek: ``config`` (beállítás-modellek
-és -betöltő), ``core`` (tiszta domain-logika), ``handlers`` (ANT+/BLE/Zwift UDP
-adatkezelők), ``processors`` (async feldolgozó task-ok), ``ui`` (PySide6 HUD),
-``zwift_api`` (Zwift HTTPS API polling), valamint a ``controller`` (orchestrátor)
-és az ``app`` (belépőpont) modulok. A ``swift_fan_controller.py`` már csak egy
-vékony belépő, ami az ``app.main()``-t hívja.
+The full logic of the former monolithic entry point
+(``swift_fan_controller.py``) was organized into this package.
+Sub-packages: ``config`` (settings models and loader), ``core`` (pure
+domain logic), ``handlers`` (ANT+/BLE/Zwift UDP data handlers),
+``processors`` (async processing tasks), ``ui`` (PySide6 HUD),
+``zwift_api`` (Zwift HTTPS API polling), plus the ``controller``
+(orchestrator) and ``app`` (entry point) modules.
+``swift_fan_controller.py`` is now only a thin entry calling
+``app.main()``.
 """
 from __future__ import annotations
 
