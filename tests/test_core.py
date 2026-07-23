@@ -1790,6 +1790,40 @@ class TestCorePackage:
 
 
 # ============================================================
+# Gördülő átlag – futó összeg regressziós tesztek
+# ============================================================
+
+class TestRollingAveragerRunningSum:
+    """A futó összegű (O(1)) átlagolás pontosan azt adja, amit a teljes
+    buffer újraösszegzése adna – evikció (kieső minta) után is."""
+
+    def test_average_exact_after_evictions(self):
+        from smart_fan_controller.core import PowerAverager, compute_average
+        # buffersize = 1s * 4Hz = 4 → az 5. mintától evikció történik
+        avg = PowerAverager(buffer_seconds=1, minimum_samples=1, buffer_rate_hz=4)
+        for value in (100, 150, 200, 250, 300, 0, 50, 400, 123, 7):
+            result = avg.add_sample(float(value))
+            assert result == compute_average(avg.buffer)
+
+    def test_clear_resets_running_sum(self):
+        from smart_fan_controller.core import HRAverager
+        avg = HRAverager(buffer_seconds=1, minimum_samples=1, buffer_rate_hz=4)
+        avg.add_sample(180.0)
+        avg.add_sample(120.0)
+        avg.clear()
+        assert len(avg.buffer) == 0
+        # A clear() utáni első minta átlaga csak az új mintát tükrözi
+        assert avg.add_sample(60.0) == 60.0
+
+    def test_long_run_no_drift_with_int_samples(self):
+        from smart_fan_controller.core import PowerAverager, compute_average
+        avg = PowerAverager(buffer_seconds=3, minimum_samples=1, buffer_rate_hz=4)
+        for i in range(1000):
+            result = avg.add_sample(float((i * 37) % 500))
+            assert result == compute_average(avg.buffer)
+
+
+# ============================================================
 # Headless import (PySide6 nélkül)
 # ============================================================
 

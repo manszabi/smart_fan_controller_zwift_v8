@@ -57,10 +57,17 @@ class _RollingAverager:
         # Guard: effective_minimum never exceeds half of the buffer
         self.effective_minimum = min(self.minimum_samples, max(1, self.buffersize // 2))
         self._label = label
+        # Running sum: O(1) averaging per sample instead of summing the
+        # whole buffer each time. Exact for the integer samples the
+        # processors feed in (no float drift).
+        self._sum: float = 0.0
 
     def add_sample(self, value: float) -> float | None:
         """Add a sample and return the average once enough samples exist."""
+        if len(self.buffer) == self.buffersize:
+            self._sum -= self.buffer[0]  # the append below evicts this sample
         self.buffer.append(value)
+        self._sum += value
         if len(self.buffer) < self.effective_minimum:
             logger.debug(
                 "%s adatok gyűjtése: %d/%d (effective min)",
@@ -69,11 +76,12 @@ class _RollingAverager:
                 self.effective_minimum,
             )
             return None
-        return compute_average(self.buffer)
+        return self._sum / len(self.buffer)
 
     def clear(self) -> None:
         """Clear all buffered samples."""
         self.buffer.clear()
+        self._sum = 0.0
 
 
 class PowerAverager(_RollingAverager):

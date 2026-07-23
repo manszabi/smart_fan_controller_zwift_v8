@@ -146,7 +146,7 @@ async def hr_processor_task(
     zone_mode = get_effective_zone_mode(settings)
     valid_min_hr: int = hrz.valid_min_hr
     valid_max_hr: int = hrz.valid_max_hr
-    hr_enabled: bool = settings["heart_rate_zones"].enabled
+    hr_enabled: bool = hrz.enabled
     logger.info("HR processor korrutin elindítva")
 
     while True:

@@ -197,7 +197,7 @@ AKTIV (idozito fut)
 |------|-----|
 | `zwift_fan_controller.py` | Fo belepo (vekony): az `smart_fan_controller` csomag `app.main()`-jet hivja |
 | `zwift_api_polling.py` | Vekony belepo a Zwift API polling segedprocesszhez (logika: `smart_fan_controller/zwift_api/`) |
-| `tests/` | Tesztkeszlet (343 teszt): `test_core.py` (domain/config/logging/BLE), `test_pipeline.py` (async adatsik, UDP fogado, protobuf dekoder) |
+| `tests/` | Tesztkeszlet (346 teszt): `test_core.py` (domain/config/logging/BLE), `test_pipeline.py` (async adatsik, UDP fogado, protobuf dekoder) |
 | `settings.json` | Felhasznaloi konfiguracio (automatikusan letrejon alapertelmezettekkel) |
 | `settings.example.json` / `.jsonc` | Konfiguracios sablonok |
 | `CONFIGURATION.md` | Beallitasok dokumentacioja |
