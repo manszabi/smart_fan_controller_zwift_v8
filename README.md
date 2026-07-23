@@ -219,6 +219,11 @@ main()
 | `ble_devices.log` | Talált BLE eszközök (automatikusan generált) |
 | `ant_devices.log` | Talált ANT+ eszközök (automatikusan generált) |
 | `CONFIGURATION.md` | Részletes konfigurációs dokumentáció |
+| `DEVELOPMENT.md` | Fejlesztői útmutató (környezet, tesztek, konvenciók, bővítési receptek) |
+| `CHANGELOG.md` | Verziónkénti változáslista |
+| `docs/` | Sphinx API-referencia forrása (`sphinx-build -b html docs docs/_build/html`) |
+| `mukodes.odt` | Részletes működési leírás (magyar, felhasználóbarát) |
+| `manual.odt` | Felhasználói kézikönyv (telepítés, beállítás, hibaelhárítás) |
 
 ## ESP32 firmware
 
