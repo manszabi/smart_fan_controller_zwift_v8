@@ -112,12 +112,11 @@ class HUDWindow(QWidget):
         self._prev_last_sent_time: float = 0.0
 
         # ───────── ZWIFT PROCESS MONITOR ─────────
-        self._zwift_was_running = False
         self._zwift_seen = False           # True once we saw it running
         self._zwift_check_counter = 0
         self._ZWIFT_CHECK_INTERVAL = 20    # every 20th _update call ≈ 10 s
         self._zwift_check_running = False  # race-condition guard
-        self._zwift_grace_start: float = time.time()
+        self._zwift_grace_start: float = time.monotonic()
         self._ZWIFT_GRACE_PERIOD: float = 300.0  # wait 5 minutes for launch
 
         # "Live data" window for BLE/ANT sensors. Deliberately generous:
@@ -1032,14 +1031,13 @@ class HUDWindow(QWidget):
                 # Zwift was running before but is gone now → close the HUD
                 logger.info("ZwiftApp.exe kilépett, HUD leállítása...")
                 should_close = True
-            elif time.time() - self._zwift_grace_start >= self._ZWIFT_GRACE_PERIOD:
+            elif time.monotonic() - self._zwift_grace_start >= self._ZWIFT_GRACE_PERIOD:
                 # Grace period expired, Zwift never launched → exit
                 logger.info(
                     "ZwiftApp.exe nem indult el %.0f másodperc alatt, kilépés...",
                     self._ZWIFT_GRACE_PERIOD,
                 )
                 should_close = True
-            self._zwift_was_running = running
             if should_close:
                 # QTimer.singleShot does NOT work from a background thread
                 # (no Qt event loop there). QMetaObject.invokeMethod is

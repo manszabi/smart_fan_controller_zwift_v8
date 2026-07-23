@@ -209,7 +209,7 @@ main()
 | `zwift_fan_controller.py` | Fő program belépő (vékony – a logika a `smart_fan_controller/` csomagban) |
 | `zwift_api_polling.py` | Vékony belépő a Zwift API polling segédprocesszhez (a logika a `smart_fan_controller/zwift_api/` csomagban) |
 | `smart_fan_controller/zwift_api/` | Zwift HTTPS API polling csomag (automatikusan indul, ha power/hr forrás `"zwiftudp"`) |
-| `tests/` | Tesztkészlet (343 teszt): domain-logika, config, logging, BLE reconnect, async adatsík – `pytest tests/` |
+| `tests/` | Tesztkészlet (346 teszt): domain-logika, config, logging, BLE reconnect, async adatsík – `pytest tests/` |
 | `run.bat` / `setup_windows.bat` / `build_exe.bat` | Indítás / venv-telepítés / PyInstaller exe build (Windows) |
 | `settings.json` | Aktív beállítások (a Zwift fiók is itt, a `zwift_api` szekcióban) |
 | `settings.example.json` | Példa beállítások (alapértelmezett értékek) |
@@ -268,4 +268,4 @@ pip install pytest
 pytest tests/
 ```
 
-A készlet 343 tesztet tartalmaz: tiszta domain-logika (zónák, cooldown, átlagolás), config-validáció, logging, BLE reconnect forgatókönyvek, valamint a teljes async adatsík (power minta → zóna parancs → dropout) és a Zwift protobuf dekóder.
+A készlet 346 tesztet tartalmaz: tiszta domain-logika (zónák, cooldown, átlagolás), config-validáció, logging, BLE reconnect forgatókönyvek, valamint a teljes async adatsík (power minta → zóna parancs → dropout) és a Zwift protobuf dekóder.

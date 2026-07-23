@@ -949,7 +949,14 @@ class _BLESensorInputHandler(abc.ABC):
                 f"{matched.name or '(névtelen)'} ({matched.address})"
             )
 
-        async with BleakClient(addr) as client:
+        # Event-driven disconnect watch (official bleak pattern): the
+        # disconnected_callback is scheduled on the event loop, so setting
+        # the asyncio.Event directly is safe. No 1 Hz polling wakeups.
+        disconnected = asyncio.Event()
+
+        async with BleakClient(
+            addr, disconnected_callback=lambda _c: disconnected.set()
+        ) as client:
             self.is_connected = True
             self._retry_count = 0
             user_logger.info(f"✓ {label} csatlakozva: {addr}")
@@ -974,8 +981,14 @@ class _BLESensorInputHandler(abc.ABC):
                     logger.warning(f"{label} notification hiba: {exc}")
 
             await client.start_notify(self.MEASUREMENT_UUID, _handler)
+            # Safety net: re-check is_connected every 10 s in case a backend
+            # ever fails to fire the disconnect callback.
             while client.is_connected:
-                await asyncio.sleep(1)
+                try:
+                    await asyncio.wait_for(disconnected.wait(), timeout=10)
+                    break
+                except TimeoutError:
+                    continue
 
         self.is_connected = False
 

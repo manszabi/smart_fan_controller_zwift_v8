@@ -160,13 +160,13 @@ def run_polling_loop(
             f"⏳ ZwiftApp.exe nem fut, várakozás max {_ZWIFT_GRACE_PERIOD:.0f}s / "
             f"ZwiftApp.exe not running, waiting up to {_ZWIFT_GRACE_PERIOD:.0f}s …"
         )
-        grace_start = time.time()
+        grace_start = time.monotonic()
         while not stop_event.is_set():
             if _is_zwift_running():
                 log.info("✅ ZwiftApp.exe elindult / ZwiftApp.exe started!")
                 _zwift_seen = True
                 break
-            if time.time() - grace_start >= _ZWIFT_GRACE_PERIOD:
+            if time.monotonic() - grace_start >= _ZWIFT_GRACE_PERIOD:
                 log.error(
                     "❌ ZwiftApp.exe nem indult el időben, kilépés / "
                     "ZwiftApp.exe did not start in time, exiting."
@@ -178,7 +178,7 @@ def run_polling_loop(
         _zwift_seen = _is_zwift_running()
 
     while not stop_event.is_set():
-        loop_start = time.time()
+        loop_start = time.monotonic()
 
         # Periodic ZwiftApp.exe process check (only after we've seen it running)
         if _zwift_seen and loop_start - _last_zwift_check >= _ZWIFT_CHECK_INTERVAL:
@@ -257,8 +257,8 @@ def run_polling_loop(
 
 
 def _sleep_remainder(loop_start: float, interval: float, stop_event: threading.Event) -> None:
-    """Sleep for the remaining time in the polling interval."""
-    elapsed = time.time() - loop_start
+    """Sleep for the remaining time in the polling interval (monotonic base)."""
+    elapsed = time.monotonic() - loop_start
     remaining = interval - elapsed
     if remaining > 0:
         stop_event.wait(remaining)
