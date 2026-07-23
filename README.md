@@ -224,12 +224,13 @@ main()
 | `docs/` | Sphinx API-referencia forrása (`sphinx-build -b html docs docs/_build/html`) |
 | `mukodes.odt` | Részletes működési leírás (magyar, felhasználóbarát) |
 | `manual.odt` | Felhasználói kézikönyv (telepítés, beállítás, hibaelhárítás) |
+| `esp32_firmware/` | Az ESP32 ventilátor-vezérlő firmware másolata + OTA/diagnosztikai eszközök (kanonikus forrás: a FanController_OTA_debug repó; lásd `esp32_firmware/BEVEZETO.md`) |
 
 ## ESP32 firmware
 
-A BLE ventilátor vezérlő firmware-je (`esp32_fan_controller.ino`, **Seeed Studio Xiao ESP32-C3**) külön projekt – **nem része ennek a repónak**. A Python program ezzel kommunikál BLE-n keresztül; az alábbi paraméterek a kompatibilitáshoz szükségesek.
+A BLE ventilátor vezérlő firmware-je (`FanController_OTA_debug.ino`, **Seeed Studio Xiao ESP32-C3/C6**) az [`esp32_firmware/`](esp32_firmware/) könyvtárban található – a kanonikus forrása a külön [manszabi/FanController_OTA_debug](https://github.com/manszabi/FanController_OTA_debug) repó (a két példányt szinkronban kell tartani; magyarázat: `esp32_firmware/BEVEZETO.md`). A Python program ezzel kommunikál BLE-n keresztül; az alábbi paraméterek a kompatibilitáshoz szükségesek.
 
-**Firmware v5.2.0** – főbb jellemzők:
+**Firmware v7.14.7** – főbb jellemzők:
 
 | Paraméter | Érték |
 |-----------|-------|
@@ -237,20 +238,21 @@ A BLE ventilátor vezérlő firmware-je (`esp32_fan_controller.ino`, **Seeed Stu
 | Service UUID | `0000ffe0-0000-1000-8000-00805f9b34fb` |
 | Characteristic UUID | `0000ffe1-0000-1000-8000-00805f9b34fb` |
 | Alapértelmezett PIN | `123456` |
-| Parancsformátum | `LEVEL:0` – `LEVEL:3` |
-| Deep sleep timeout | 30 perc inaktivitás után |
-| BLE zóna timeout | 10 perc BLE kapcsolat nélkül → LEVEL:0 |
+| Parancsformátum | `AUTH:<pin>`, `ROLLER:0/1`, `LEVEL:0` – `LEVEL:3`, `DIAG?`, `DIAGCLR` |
+| Deep sleep timeout | 1 óra inaktivitás után |
+| BLE zóna timeout | 12 perc BLE kapcsolat nélkül → minden lekapcsol (biztonsági) |
+| OTA frissítés | BLE-n, CRC32-vel + health-checkkel (`esp32_firmware/sender/ota.py`) |
 
-**Zóna–relé megfeleltetés:**
+**Zóna–relé megfeleltetés** (egyszerre mindig csak egy fan-relé aktív):
 
-| Zóna | Ventilátor | Relék aktív |
+| Zóna | Ventilátor | Aktív relé |
 |------|------------|-------------|
 | 0 | Ki | – |
 | 1 | 33% | FAN1 |
-| 2 | 66% | FAN1 + FAN2 |
-| 3 | 100% | FAN1 + FAN2 + FAN3 |
+| 2 | 66% | FAN2 |
+| 3 | 100% | FAN3 |
 
-**Szükséges Arduino könyvtárak:** OneButton, AsyncTCP, ESPAsyncWebServer, WebSerial, ArduinoJson, ElegantOTA.
+**Szükséges Arduino könyvtár:** OneButton (a többi: ESP32 Arduino core 3.1.3 beépített részei). Fordítás: `esp32_firmware/build.sh`.
 
 ## Leállítás
 
