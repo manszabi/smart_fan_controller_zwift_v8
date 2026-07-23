@@ -52,6 +52,11 @@ A program működése és kinézete változatlan.
 - Dokumentációs csomag: `mukodes.odt` (részletes működési leírás),
   `manual.odt` (felhasználói kézikönyv), `CHANGELOG.md`, `DEVELOPMENT.md`
   (fejlesztői útmutató), Sphinx API-referencia (`docs/`).
+- `esp32_firmware/`: az ESP32 firmware-projekt (FanController_OTA_debug,
+  v7.14.7) beillesztve magyarázó `BEVEZETO.md`-vel; a firmware átvilágítása
+  során talált javítások ([FIX-ESP-49] wrap-safe zónaváltás-időzítés,
+  [MOD-14..16]) a kanonikus firmware-repóba is bekerültek. A README elavult
+  firmware-szekciója (v5.2.0 → v7.14.7) frissítve.
 
 ---
 
