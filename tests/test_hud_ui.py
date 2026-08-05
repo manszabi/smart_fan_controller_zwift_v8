@@ -262,6 +262,86 @@ def test_resize_applies_scale(hud, app):
     win.hide()
 
 
+def test_min_size_update_never_grows_window(hud, app):
+    """A tartalom-minimum frissítése nem nagyíthatja az ablakot.
+
+    Regresszió: a minimum a pillanatnyi ablakméretnél nagyobb hintre
+    emelve visszacsatolási hurkot indított (nagyobb ablak → nagyobb scale
+    → nagyobb hint → megint nagyobb minimum), ami húzás után 200 ms-onként
+    lépcsőzve, magától növelte az ablakot."""
+    win, _ctrl = hud
+    win.show()
+    app.processEvents()
+    # A húzás kezdetének emulálása: padló minimum, majd kis méret
+    win.setMinimumSize(win.MIN_W, win.MIN_H)
+    win.resize(win.MIN_W, win.MIN_H)
+    app.processEvents()
+    size_before = win.size()
+
+    win._update_min_size()
+    app.processEvents()
+
+    assert win.size() == size_before  # nem nőhet magától
+    assert win.minimumWidth() <= size_before.width()
+    assert win.minimumHeight() <= size_before.height()
+    win.hide()
+
+
+def test_min_size_update_deferred_while_button_down(hud, monkeypatch):
+    """Lenyomott bal gombnál (natív resize közben) a minimum nem emelkedik,
+    a debounce timer újra-élesíti magát."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QGuiApplication
+
+    win, _ctrl = hud
+    monkeypatch.setattr(
+        QGuiApplication, "mouseButtons",
+        staticmethod(lambda: Qt.MouseButton.LeftButton),
+    )
+    win.setMinimumSize(win.MIN_W, win.MIN_H)
+    win._min_size_timer.stop()
+
+    win._update_min_size()
+
+    assert win.minimumSize().width() == win.MIN_W
+    assert win.minimumSize().height() == win.MIN_H
+    assert win._min_size_timer.isActive()  # később újrapróbálkozik
+    win._min_size_timer.stop()
+
+
+def test_grip_press_does_not_arm_min_size_timer(hud, app):
+    """A sarok megfogása önmagában (mozgatás nélkül) nem indítja a
+    minimum-frissítő debounce-t – 200 ms-nál hosszabb nyomva tartás alatt
+    sem ugorhat vissza a tartalom-minimum a húzás megkezdése előtt."""
+    from PySide6.QtCore import QPointF, Qt
+    from PySide6.QtGui import QMouseEvent
+
+    win, _ctrl = hud
+    win.show()
+    app.processEvents()
+    win._min_size_timer.stop()
+
+    pos = QPointF(win.width() - 5, win.height() - 5)  # a grip sarokban
+    press = QMouseEvent(
+        QMouseEvent.Type.MouseButtonPress, pos,
+        win.mapToGlobal(pos.toPoint()),
+        Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+    win.mousePressEvent(press)
+
+    assert not win._min_size_timer.isActive()
+    assert win.minimumSize().width() == win.MIN_W
+    assert win.minimumSize().height() == win.MIN_H
+    win.mouseReleaseEvent(QMouseEvent(
+        QMouseEvent.Type.MouseButtonRelease, pos,
+        win.mapToGlobal(pos.toPoint()),
+        Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton,
+        Qt.KeyboardModifier.NoModifier,
+    ))
+    win.hide()
+
+
 # ──────────────────────────────── hangrendszer ───────────────────────────────
 
 
