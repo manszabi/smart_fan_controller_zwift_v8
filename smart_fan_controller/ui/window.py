@@ -20,7 +20,8 @@ from typing import TYPE_CHECKING, Any
 
 from PySide6.QtCore import Qt, QTimer, QPoint, QSize, QRectF, QMetaObject
 from PySide6.QtGui import (
-    QFont, QFontDatabase, QMouseEvent, QPainter, QPainterPath, QPalette,
+    QFont, QFontDatabase, QGuiApplication, QMouseEvent, QPainter,
+    QPainterPath, QPalette,
 )
 from PySide6.QtWidgets import (
     QApplication, QWidget, QLabel, QHBoxLayout, QVBoxLayout,
@@ -532,9 +533,10 @@ class HUDWindow(QWidget):
             if (self.width() - pos.x() < grip) and (self.height() - pos.y() < grip):
                 # For the duration of the drag allow the absolute minimum
                 # size so the window can be shrunk in one motion; the
-                # content-based minimum returns via the debounce timer
+                # content-based minimum returns via the debounce timer that
+                # resizeEvent starts once actual resizing happens (starting
+                # it here would fire mid-hold, before any movement)
                 self.setMinimumSize(self.MIN_W, self.MIN_H)
-                self._min_size_timer.start()
                 # Native (system) resize; manual fallback when the platform
                 # does not support it
                 if wh is None or not wh.startSystemResize(
@@ -1105,13 +1107,28 @@ class HUDWindow(QWidget):
     def _update_min_size(self) -> None:
         """Compute the minimum window size from the natural (readable) size
         of the content, so rows/tiles cannot be squashed by mouse resizing.
-        Runs only at rest (debounced), never during a live drag."""
+        Runs only at rest (debounced), never during a live drag.
+
+        A native (startSystemResize) drag delivers no mouseReleaseEvent,
+        so "at rest" is detected from the global mouse button state: while
+        the left button is still down the timer re-arms itself instead of
+        raising the minimum (a mid-drag raise would block shrinking).
+
+        The minimum is also capped at the current window size, so this
+        call can never grow the window: growing would trigger a new
+        resizeEvent → larger scale → larger content hint feedback loop
+        that ratchets the window upwards in visible steps."""
+        if QGuiApplication.mouseButtons() & Qt.MouseButton.LeftButton:
+            self._min_size_timer.start()
+            return
         lay = self.layout()
         if lay is not None:
             lay.activate()
         hint = self.minimumSizeHint()
-        self.setMinimumSize(max(self.MIN_W, hint.width()),
-                            max(self.MIN_H, hint.height()))
+        self.setMinimumSize(
+            max(self.MIN_W, min(hint.width(), self.width())),
+            max(self.MIN_H, min(hint.height(), self.height())),
+        )
 
     def cleanup_sound(self) -> None:
         """Public interface for releasing the sound system."""

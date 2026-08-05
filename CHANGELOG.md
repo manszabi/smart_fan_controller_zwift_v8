@@ -12,6 +12,27 @@ a verziószámozás a [Semantic Versioning](https://semver.org/) sémát
 
 ---
 
+## [Unreleased]
+
+### Javítva
+
+- **HUD egeres átméretezés ugrálása** (`ui/window.py`): a tartalom-alapú
+  minimumméret frissítése visszacsatolási hurkot indíthatott – a
+  pillanatnyi ablakméretnél nagyobb minimum megnövelte az ablakot, amitől
+  nőtt a skála és vele a tartalom minimuma is, így az ablak húzás után
+  200 ms-onként, lépcsőzve magától tovább nőtt. Három javítás:
+  1. `_update_min_size` a minimumot az aktuális ablakméretnél nagyobbra
+     nem emeli, így sosem nagyíthatja az ablakot (a hurok megszakad);
+  2. amíg a bal egérgomb le van nyomva (natív átméretezés közben a
+     debounce a húzás szünetében is elsülhet), a minimum-emelés helyett a
+     timer újra-élesíti magát – kicsinyítés közben nem "ragad be" az ablak;
+  3. a sarok megfogása önmagában már nem indítja a debounce-t, csak a
+     tényleges méretváltozás – 200 ms-nál hosszabb nyomva tartásnál sem
+     ugrik vissza a tartalom-minimum a húzás megkezdése előtt.
+  Új regressziós tesztek: `tests/test_hud_ui.py` (összesen 365 teszt).
+
+---
+
 ## [8.1.1] – 2026-07-23
 
 Teljes projekt-átvilágítás utáni karbantartó kiadás: kis hibajavítások,
