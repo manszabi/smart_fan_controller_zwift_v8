@@ -117,11 +117,15 @@ def main() -> None:
     # Explicit loop instantiation (not an event loop policy): the policy
     # API is deprecated (removed in Python 3.16), and the policy-based
     # solution no longer took effect on 3.14+ anyway.
+    #
+    # asyncio.set_event_loop() is NOT called either: it is deprecated in
+    # 3.14 and removed in 3.16. There is no need for a "current loop"
+    # here – the loop object is passed around explicitly, and everything
+    # running inside it uses asyncio.get_running_loop().
     if _platform.system() == "Windows":
         loop: asyncio.AbstractEventLoop = asyncio.SelectorEventLoop()
     else:
         loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
     cleaned_up = False
     # Shutdown event: stops the asyncio loop reliably
     shutdown_event = asyncio.Event()
@@ -192,7 +196,6 @@ def main() -> None:
                 pass
 
     def run_asyncio() -> None:
-        asyncio.set_event_loop(loop)
         # Signal that the event loop runs and is ready to accept work
         loop.call_soon(loop_ready.set)
         try:

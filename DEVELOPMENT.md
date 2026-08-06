@@ -31,8 +31,8 @@ source .venv/bin/activate          # Windows: .venv\Scripts\activate
 # 2. A csomag telepítése fejlesztői (editable) módban, minden extrával
 pip install -e ".[all]"
 
-# 3. Teszt-függőségek
-pip install pytest
+# 3. Teszt-függőségek (a pyproject "dev" extrájából)
+pip install -e ".[dev]"
 ```
 
 Minimál környezet (pl. CI, Raspberry Pi): a futtatáshoz **egyetlen külső

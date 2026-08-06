@@ -1181,11 +1181,26 @@ class TestHudConfig:
         cfg = HudConfig.from_dict({"close_at_zwiftapp_exe": False})
         assert cfg.close_at_zwiftapp_exe is False
 
-    def test_to_dict_old_key(self):
-        """to_dict() a régi kulcsnévvel adja vissza a kompatibilitásért."""
+    def test_to_dict_uses_current_key(self):
+        """to_dict() az AKTUÁLIS kulcsnevet írja (nem a régi pontosat).
+
+        Regresszió: a régi kulcsnév kiírása minden HUD-mentésnél átnevezte
+        a felhasználó `close_at_zwiftapp_exe` kulcsát a legacy nevére –
+        miközben a from_dict() épp az aláhúzásosat preferálja."""
         d = HudConfig().to_dict()
-        assert "close_at_zwiftapp.exe" in d
-        assert d["close_at_zwiftapp.exe"] is True
+        assert "close_at_zwiftapp_exe" in d
+        assert d["close_at_zwiftapp_exe"] is True
+        assert "close_at_zwiftapp.exe" not in d
+
+    def test_from_dict_still_reads_legacy_key(self):
+        """A régi (pontos) kulcsnevet továbbra is beolvassa – régi settings.json."""
+        cfg = HudConfig.from_dict({"close_at_zwiftapp.exe": False})
+        assert cfg.close_at_zwiftapp_exe is False
+
+    def test_to_dict_round_trip_keeps_value(self):
+        """to_dict() → from_dict() körben a beállítás megmarad."""
+        cfg = HudConfig(close_at_zwiftapp_exe=False)
+        assert HudConfig.from_dict(cfg.to_dict()).close_at_zwiftapp_exe is False
 
     def test_from_dict_volume(self):
         cfg = HudConfig.from_dict({"sound_volume": 0.8})
@@ -1386,6 +1401,165 @@ class TestSaveHudSettingsOnly:
 # ============================================================
 # _resolve_log_dir
 # ============================================================
+
+class TestBluetoothUnavailableHint:
+    """Kikapcsolt Bluetooth: célzott, cselekvésre váltható üzenet.
+
+    A bleak 2.0 külön kivételt dob (BleakBluetoothNotAvailableError), a
+    régebbi csak általános hibát – mindkettőt felismerjük, és az ANT+
+    libusb-tipphez hasonló egyszeri útmutatót adunk a nyers hibaszöveg
+    helyett."""
+
+    def _reset_hint(self, monkeypatch):
+        import smart_fan_controller.handlers._ble as ble
+        monkeypatch.setattr(ble, "_bt_hint_shown", False)
+        return ble
+
+    def test_message_text_recognized(self, monkeypatch, caplog):
+        ble = self._reset_hint(monkeypatch)
+        with caplog.at_level("WARNING", logger="user"):
+            handled = ble._warn_if_bluetooth_unavailable(
+                RuntimeError("No powered Bluetooth adapters found"), "BLE Fan"
+            )
+        assert handled is True
+        assert any("Bluetooth" in rec.message for rec in caplog.records)
+
+    def test_hint_shown_only_once(self, monkeypatch, caplog):
+        ble = self._reset_hint(monkeypatch)
+        with caplog.at_level("WARNING", logger="user"):
+            ble._warn_if_bluetooth_unavailable(RuntimeError("bluetooth off"), "BLE Fan")
+            ble._warn_if_bluetooth_unavailable(RuntimeError("bluetooth off"), "BLE HR")
+        hints = [r for r in caplog.records if "kapcsold be" in r.message]
+        assert len(hints) == 1
+
+    def test_unrelated_error_not_swallowed(self, monkeypatch):
+        ble = self._reset_hint(monkeypatch)
+        assert ble._warn_if_bluetooth_unavailable(
+            RuntimeError("write timeout"), "BLE Fan"
+        ) is False
+
+
+class TestAntNodeReleaseOnInitFailure:
+    """Node-init hiba esetén a félkész ANT+ node is leáll.
+
+    Regresszió: a Node() már lefoglalta az USB sticket, de ha a
+    set_network_key()/eszköz-regisztráció elhasalt, a node sosem került a
+    lock alá – így a _stop_node() már None-t talált, és a nyitott USB
+    handle bennragadt. Ez maga okozza a következő próba "could not claim
+    interface (resource busy)" hibáját: a hiba önmagát táplálta."""
+
+    def _handler(self, monkeypatch, node_cls):
+        import asyncio
+        import smart_fan_controller.handlers._ant as ant
+        from smart_fan_controller.config.schemas import DEFAULT_SETTINGS, DataSource
+        import copy
+
+        class _FakeDevice:
+            def __init__(self, _node, device_id=0):
+                self.device_id = device_id
+                self.name = "fake"
+                self.closed = False
+
+            def close_channel(self):
+                self.closed = True
+
+        monkeypatch.setattr(ant, "_ANTPLUS_AVAILABLE", True)
+        monkeypatch.setattr(ant, "Node", node_cls)
+        monkeypatch.setattr(ant, "ANTPLUS_NETWORK_KEY", b"\x00" * 8)
+        monkeypatch.setattr(ant, "PowerMeter", _FakeDevice)
+        monkeypatch.setattr(ant, "HeartRate", _FakeDevice)
+
+        settings = copy.deepcopy(DEFAULT_SETTINGS)
+        settings["datasource"].power_source = DataSource.ANTPLUS
+        return ant.ANTPlusInputHandler(
+            settings, asyncio.Queue(), asyncio.Queue(), asyncio.new_event_loop()
+        )
+
+    def test_failed_init_stops_the_half_built_node(self, monkeypatch):
+        created, stopped = [], []
+
+        class FailingNode:
+            def __init__(self):
+                created.append(self)
+
+            def set_network_key(self, *_a):
+                raise RuntimeError("could not claim interface (resource busy)")
+
+            def stop(self):
+                stopped.append(self)
+
+        handler = self._handler(monkeypatch, FailingNode)
+        for _ in range(3):
+            with pytest.raises(RuntimeError):
+                handler._init_node()
+            handler._stop_node()   # amit a _thread_loop is hív a ciklus végén
+
+        assert len(created) == 3
+        assert len(stopped) == 3, "a hibás node-ok USB handle-je bennragadt"
+
+    def test_successful_init_publishes_node(self, monkeypatch):
+        class OkNode:
+            def __init__(self):
+                self.stopped = False
+
+            def set_network_key(self, *_a):
+                pass
+
+            def stop(self):
+                self.stopped = True
+
+        handler = self._handler(monkeypatch, OkNode)
+        handler._init_node()
+        assert handler._node is not None       # sikeres init → publikálva
+        node = handler._node
+        handler._stop_node()
+        assert node.stopped is True
+        assert handler._node is None
+
+
+class TestSaveHudSettingsOnlyRobustness:
+    """A HUD-mentés nem dobhat kivételt hibás settings.json-re.
+
+    Regresszió: a nem-objektum (pl. lista) tartalmú fájlnál a
+    data["hud"] = ... TypeError-t dobott – és ez a HUD debounce-olt
+    automata mentéséből, azaz a Qt eseményhurokból csapódott ki."""
+
+    def test_non_object_settings_file_returns_false(self, tmp_path):
+        import json
+        from smart_fan_controller.config import loader
+        from smart_fan_controller.config.schemas import HudConfig
+
+        target = tmp_path / "settings.json"
+        target.write_text(json.dumps(["nem", "objektum"]), encoding="utf-8")
+
+        assert loader.save_hud_settings_only(
+            str(target), HudConfig(save_hud_settings=True)
+        ) is False
+        # A fájl érintetlen marad
+        assert json.loads(target.read_text(encoding="utf-8")) == ["nem", "objektum"]
+
+
+class TestWrongTypedSectionWarns:
+    """Rossz TÍPUSÚ szekció (pl. "power_zones": 42) figyelmeztetést kap.
+
+    Az elgépelt szekció-NÉV eddig is figyelmeztetett, a rossz típusú érték
+    viszont némán az alapértelmezésre esett vissza – a felhasználó teljes
+    szekciója veszett el szó nélkül."""
+
+    def test_non_dict_section_logs_warning(self, tmp_path, caplog):
+        import json
+        from smart_fan_controller.config.loader import load_settings
+
+        target = tmp_path / "settings.json"
+        target.write_text(json.dumps({"power_zones": 42}), encoding="utf-8")
+
+        with caplog.at_level("WARNING", logger="user"):
+            settings = load_settings(str(target))
+
+        assert settings["power_zones"].ftp == 200        # default marad
+        assert any("power_zones" in rec.message and "nem beállítás-objektum" in rec.message
+                   for rec in caplog.records)
+
 
 class TestResolveLogDir:
     """Log könyvtár feloldás és validálás."""
@@ -1672,6 +1846,23 @@ class TestZwiftApiConfig:
             shutil.rmtree(tmp, ignore_errors=True)
 
 
+class TestZwiftPollIntervalFloor:
+    """A poll_interval alsó határa 3s – a Zwift API ennél sűrűbben nem szolgál ki."""
+
+    def test_below_floor_rejected(self, caplog):
+        from smart_fan_controller.config.schemas import ZwiftApiConfig
+
+        with caplog.at_level("WARNING", logger="user"):
+            cfg = ZwiftApiConfig.from_dict({"poll_interval": 1.0})
+        assert cfg.poll_interval == 3.0            # default marad
+        assert any("poll_interval" in rec.message for rec in caplog.records)
+
+    def test_floor_value_accepted(self):
+        from smart_fan_controller.config.schemas import ZwiftApiConfig
+        assert ZwiftApiConfig.from_dict({"poll_interval": 3.0}).poll_interval == 3.0
+        assert ZwiftApiConfig.from_dict({"poll_interval": 8.5}).poll_interval == 8.5
+
+
 class TestZwiftApiPollingLogging:
     """A zwift_api segédprocessz saját loggolása (zwift_api_polling.log)."""
 
@@ -1826,6 +2017,70 @@ class TestRollingAveragerRunningSum:
 # ============================================================
 # Headless import (PySide6 nélkül)
 # ============================================================
+
+class TestRollingAveragerTimeWindow:
+    """Az átlagolási ablak IDŐALAPÚ – a buffer_seconds valós másodperc.
+
+    Regresszió: a puffer csak mintaszámra vágott (buffer_seconds ×
+    buffer_rate_hz), így a beállított rátánál lassabb forrásnál az ablak
+    sokkal hosszabb lett a beállítottnál. A Zwift HTTPS API 3 mp-nél
+    sűrűbben nem kérdezhető le (~0.33 Hz), a 10s × 3Hz = 30 mintás puffer
+    tehát 90 másodpercnyi adatot tartott – a ventilátor másfél perces
+    átlagot követett."""
+
+    def _feed(self, avg, real_rate_hz, seconds):
+        """Mintaadás rögzített (szimulált) órával."""
+        dt = 1.0 / real_rate_hz
+        t = 0.0
+        for i in range(int(seconds * real_rate_hz)):
+            avg.add_sample(float(i % 300), now=t)
+            t += dt
+        return dt
+
+    def test_slow_source_window_matches_buffer_seconds(self):
+        from smart_fan_controller.core import PowerAverager
+
+        # Zwift alapértelmezés, valós 0.33 Hz adatráta
+        avg = PowerAverager(buffer_seconds=10, minimum_samples=2, buffer_rate_hz=3)
+        dt = self._feed(avg, real_rate_hz=1 / 3, seconds=180)
+
+        span = avg._times[-1] - avg._times[0] + dt
+        assert span <= 10 + dt, f"az ablak {span:.0f}s, a beállított 10s helyett"
+        assert len(avg.buffer) < avg.buffersize   # nem a mintaszám a korlát
+
+    def test_fast_source_unchanged(self):
+        """BLE/ANT+ (4 Hz, a beállított rátával egyező): változatlan viselkedés."""
+        from smart_fan_controller.core import PowerAverager
+
+        avg = PowerAverager(buffer_seconds=3, minimum_samples=6, buffer_rate_hz=4)
+        dt = self._feed(avg, real_rate_hz=4, seconds=60)
+
+        assert len(avg.buffer) == 12          # 3s × 4Hz, mint korábban
+        assert avg._times[-1] - avg._times[0] + dt == pytest.approx(3.0, abs=0.3)
+
+    def test_very_slow_source_still_averages(self):
+        """A vártnál sokkal lassabb forrásnál sem marad átlag nélkül.
+
+        Az effective_minimum mintát mindig megtartjuk, különben egy nagyon
+        lassú forrásnál az ablak kiürülne és a ventilátor vezérlés nélkül
+        maradna."""
+        from smart_fan_controller.core import PowerAverager
+
+        avg = PowerAverager(buffer_seconds=10, minimum_samples=2, buffer_rate_hz=3)
+        # 30 másodpercenként egy minta – jóval ritkább, mint az ablak
+        assert avg.add_sample(100.0, now=0.0) is None      # még gyűjt
+        assert avg.add_sample(200.0, now=30.0) == 150.0    # de átlagot ad
+        assert avg.add_sample(300.0, now=60.0) == 250.0    # a legfrissebb kettő
+
+    def test_capacity_cap_still_applies(self):
+        """A mintaszám-plafon (memóriavédelem) megmarad."""
+        from smart_fan_controller.core import PowerAverager
+
+        avg = PowerAverager(buffer_seconds=1, minimum_samples=1, buffer_rate_hz=4)
+        for i in range(50):
+            avg.add_sample(float(i), now=0.0)   # azonos időbélyeg → csak a plafon vág
+        assert len(avg.buffer) == 4
+
 
 class TestHeadlessImport:
     """A modulnak importálhatónak kell lennie PySide6 nélkül is.

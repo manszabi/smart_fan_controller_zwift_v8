@@ -30,6 +30,49 @@ try:
 except ImportError:
     _BLEAK_AVAILABLE = False
 
+# bleak >= 2.0 raises a dedicated error when the adapter is missing, turned
+# off, or permission is denied. Without it (older bleak) the same situation
+# surfaces as a generic BleakError, so _is_bluetooth_unavailable() falls
+# back to matching the message text.
+try:
+    from bleak.exc import BleakBluetoothNotAvailableError  # type: ignore[attr-defined]
+except (ImportError, AttributeError):
+    BleakBluetoothNotAvailableError = ()  # type: ignore[assignment, misc]
+
+# Printed only once per process: the fix is the same for every handler
+_bt_hint_shown = False
+
+
+def _warn_if_bluetooth_unavailable(exc: BaseException, label: str) -> bool:
+    """Emit one targeted hint when Bluetooth itself is unavailable.
+
+    A turned-off adapter is the single most common BLE failure, and the
+    raw library message ("No powered Bluetooth adapters found") does not
+    tell the user what to do. Mirrors the ANT+ libusb hint.
+
+    Returns:
+        True when the exception was a Bluetooth-unavailable error.
+    """
+    global _bt_hint_shown
+    is_bt = bool(BleakBluetoothNotAvailableError) and isinstance(
+        exc, BleakBluetoothNotAvailableError
+    )
+    if not is_bt:
+        # Older bleak (< 2.0): no dedicated exception type
+        text = str(exc).lower()
+        is_bt = any(
+            s in text
+            for s in ("bluetooth", "no powered", "adapter not found", "access denied")
+        )
+    if is_bt and not _bt_hint_shown:
+        _bt_hint_shown = True
+        user_logger.warning(
+            f"⚠ {label}: a Bluetooth nem érhető el – kapcsold be a Bluetooth-t "
+            f"(Windows: Gépházban vagy a repülő mód kikapcsolásával), és "
+            f"ellenőrizd, hogy a program megkapta-e a Bluetooth engedélyt."
+        )
+    return is_bt
+
 from smart_fan_controller.config.schemas import BleConfig, DatasourceConfig
 from smart_fan_controller.core.helpers import resolve_log_dir
 
@@ -169,7 +212,8 @@ async def _scan_ble_with_autodiscovery(
                     matched = device
 
     except Exception as exc:
-        logger.error(f"BLE scan hiba ({scan_context}): {exc}")
+        if not _warn_if_bluetooth_unavailable(exc, scan_context):
+            logger.error(f"BLE scan hiba ({scan_context}): {exc}")
         return None, []
 
     matched_addr: str | None = matched.address if matched else None
@@ -438,7 +482,8 @@ class BLEFanOutputController:
             return False
 
         except Exception as exc:
-            user_logger.warning(f"⚠ BLE Fan keresési hiba: {exc}")
+            if not _warn_if_bluetooth_unavailable(exc, "BLE Fan"):
+                user_logger.warning(f"⚠ BLE Fan keresési hiba: {exc}")
             return False
 
     async def _connect(self) -> bool:
@@ -888,10 +933,11 @@ class _BLESensorInputHandler(abc.ABC):
             except Exception as exc:
                 self._retry_count += 1
                 self.is_connected = False
-                user_logger.warning(
-                    f"⚠ {label} hiba "
-                    f"({self._retry_count}/{self.max_retries}): {exc}"
-                )
+                if not _warn_if_bluetooth_unavailable(exc, label):
+                    user_logger.warning(
+                        f"⚠ {label} hiba "
+                        f"({self._retry_count}/{self.max_retries}): {exc}"
+                    )
                 if self._retry_count >= self.max_retries:
                     user_logger.warning(
                         f"⚠ {label}: {self.max_retries} sikertelen próbálkozás, "

@@ -27,6 +27,7 @@ import requests
 
 from smart_fan_controller.config import ZwiftApiConfig, load_settings
 from smart_fan_controller.config.loader import save_zwift_api_credentials
+from smart_fan_controller.config.schemas import MIN_ZWIFT_POLL_INTERVAL
 
 from . import logsetup
 from .api import ZwiftAPIClient, ZwiftAuth
@@ -186,6 +187,15 @@ def main(argv: list[str] | None = None) -> int:
         args.poll_interval if args.poll_interval is not None
         else (cfg.poll_interval or DEFAULT_POLL_INTERVAL)
     )
+    # The CLI bypasses the settings validation – the Zwift API floor holds
+    # for it too (a faster cadence only earns 429 answers).
+    if poll_interval < MIN_ZWIFT_POLL_INTERVAL:
+        log.warning(
+            f"⚠️  poll_interval {poll_interval}s túl alacsony – a Zwift API "
+            f"nem szolgál ki {MIN_ZWIFT_POLL_INTERVAL:.0f}s-nál sűrűbb "
+            f"lekérdezést; {MIN_ZWIFT_POLL_INTERVAL:.0f}s lesz használva."
+        )
+        poll_interval = MIN_ZWIFT_POLL_INTERVAL
 
     # Broadcast target: the datasource UDP host/port (no duplication).
     broadcast_host = ds.zwift_udp_host
@@ -202,6 +212,7 @@ def main(argv: list[str] | None = None) -> int:
         auth.login()
     except requests.exceptions.HTTPError as exc:
         log.error(f"❌ Bejelentkezés sikertelen / Login failed: {exc}")
+        auth.close()
         return 1
     except (requests.RequestException, ValueError) as exc:
         # RequestException also covers the ConnectionError/Timeout/
@@ -209,6 +220,7 @@ def main(argv: list[str] | None = None) -> int:
         # 200); ValueError is the token-less auth response. A clean error
         # message instead of a traceback.
         log.error(f"❌ Bejelentkezési hiba / Login error: {exc}")
+        auth.close()
         return 1
 
     client = ZwiftAPIClient(auth, debug=args.debug)
@@ -218,12 +230,14 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as exc:  # noqa: BLE001
         log.error(f"❌ Profil lekérése sikertelen / Failed to fetch profile: {exc}")
         client.close()
+        auth.close()
         return 1
 
     rider_id: int = int(profile.get("id", 0))
     if not rider_id:
         log.error("❌ Rider ID nem található a profilban / Rider ID not found in profile")
         client.close()
+        auth.close()
         return 1
 
     log.info(f"✅ Rider ID: {rider_id}")

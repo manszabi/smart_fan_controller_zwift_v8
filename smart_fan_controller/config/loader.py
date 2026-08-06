@@ -123,6 +123,19 @@ def load_settings(settings_file: str = "settings.json") -> dict[str, Any]:
             f"{', '.join(sorted(unknown_sections))} – figyelmen kívül hagyva."
         )
 
+    # A known section whose VALUE is not an object (e.g. "power_zones": 42,
+    # or a stray quote turning it into a string). The from_dict() calls
+    # below are all guarded by isinstance(), so such a section would fall
+    # back to the defaults completely silently – losing every setting in
+    # it. A mistyped section NAME warns (above), so this must too.
+    for name in sorted(set(loaded) & _KNOWN_SECTIONS):
+        if not isinstance(loaded[name], dict):
+            user_logger.warning(
+                f"⚠ A '{name}' szekció nem beállítás-objektum (hanem "
+                f"{type(loaded[name]).__name__}) – a teljes szekció figyelmen "
+                f"kívül hagyva, az alapértelmezett értékek maradnak."
+            )
+
     # --- Load the sections via the dataclass from_dict() methods ---
     if isinstance(loaded.get("global_settings"), dict):
         settings["global_settings"] = GlobalSettingsConfig.from_dict(loaded["global_settings"])
@@ -278,11 +291,18 @@ def _write_json_atomic(path: str, data: dict[str, Any]) -> None:
 
     With a direct overwrite, dying mid-write (power loss, kill) would
     leave a truncated settings.json behind – all user settings lost.
-    This way either the old or the new full content survives."""
+    This way either the old or the new full content survives.
+
+    flush + fsync before the replace: without them the data may still sit
+    in the OS write cache while the rename is already committed, so a
+    power loss could leave an EMPTY settings.json – exactly the case this
+    function is meant to protect against."""
     tmp_path = path + ".tmp"
     try:
         with open(tmp_path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
+            f.flush()
+            os.fsync(f.fileno())
         os.replace(tmp_path, path)
     finally:
         # Leave no stray temp file behind after a failed write
@@ -357,6 +377,16 @@ def save_hud_settings_only(settings_file: str, hud_config: HudConfig) -> bool:
             data = json.load(f)
     except (FileNotFoundError, json.JSONDecodeError, OSError) as exc:
         user_logger.warning(f"⚠ HUD beállítások mentési hiba (olvasás): {exc}")
+        return False
+
+    # Valid JSON but not a settings object (e.g. a list at the top level):
+    # data["hud"] = … would raise a TypeError, and this runs from the HUD's
+    # debounced auto-save, i.e. inside the Qt event loop.
+    if not isinstance(data, dict):
+        user_logger.warning(
+            f"⚠ HUD beállítások mentése kihagyva: a '{settings_file}' tartalma "
+            f"nem beállítás-objektum (hanem {type(data).__name__})."
+        )
         return False
 
     # Update only the "hud" section

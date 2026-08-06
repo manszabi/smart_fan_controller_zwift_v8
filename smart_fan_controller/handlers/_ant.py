@@ -315,30 +315,53 @@ class ANTPlusInputHandler:
         if not _ANTPLUS_AVAILABLE:
             raise RuntimeError("openant könyvtár nem elérhető")
         node = Node()
-        node.set_network_key(0x00, ANTPLUS_NETWORK_KEY)
         devices: list[Any] = []
+        try:
+            node.set_network_key(0x00, ANTPLUS_NETWORK_KEY)
 
-        if self.ds.power_source == DataSource.ANTPLUS:
-            pid = self._power_device_id
-            meter = PowerMeter(node, device_id=pid)
-            meter.on_found = self._make_on_found("ANT+ Power", "PowerMeter", meter)
-            meter.on_device_data = self._on_data
-            meter.on_update = self._on_any_broadcast
-            devices.append(meter)
+            if self.ds.power_source == DataSource.ANTPLUS:
+                pid = self._power_device_id
+                meter = PowerMeter(node, device_id=pid)
+                meter.on_found = self._make_on_found("ANT+ Power", "PowerMeter", meter)
+                meter.on_device_data = self._on_data
+                meter.on_update = self._on_any_broadcast
+                devices.append(meter)
 
-        if self.ds.hr_source == DataSource.ANTPLUS and self.hr_enabled:
-            hid = self._hr_device_id
-            hr_monitor = HeartRate(node, device_id=hid)
-            hr_monitor.on_found = self._make_on_found("ANT+ HR", "HeartRate", hr_monitor)
-            hr_monitor.on_device_data = self._on_data
-            hr_monitor.on_update = self._on_any_broadcast
-            devices.append(hr_monitor)
+            if self.ds.hr_source == DataSource.ANTPLUS and self.hr_enabled:
+                hid = self._hr_device_id
+                hr_monitor = HeartRate(node, device_id=hid)
+                hr_monitor.on_found = self._make_on_found("ANT+ HR", "HeartRate", hr_monitor)
+                hr_monitor.on_device_data = self._on_data
+                hr_monitor.on_update = self._on_any_broadcast
+                devices.append(hr_monitor)
+        except BaseException:
+            # Node() has ALREADY claimed the USB stick, so a half-built node
+            # has to be released here: _stop_node() only ever sees the node
+            # published below, and the leaked USB handle is exactly what
+            # causes the next attempt's "could not claim interface (resource
+            # busy)" – the failure would keep feeding itself.
+            self._release_node(node, devices)
+            raise
 
         # Publish only the fully built node (under the lock) so that
         # stop()/watchdog never sees a half-initialized state.
         with self._node_lock:
             self._node = node
             self._devices = devices
+
+    @staticmethod
+    def _release_node(node: Any, devices: list[Any]) -> None:
+        """Close the channels and stop the node (never raises)."""
+        for d in devices:
+            try:
+                d.close_channel()
+            except Exception as exc:
+                logger.debug(f"ANT+ csatorna bezárási hiba: {exc}")
+        if node is not None:
+            try:
+                node.stop()
+            except Exception as exc:
+                logger.debug(f"ANT+ node leállítási hiba: {exc}")
 
     def _stop_node(self) -> None:
         """Stop and release the ANT+ node (thread-safe, idempotent).
@@ -355,16 +378,7 @@ class ANTPlusInputHandler:
             devices = self._devices
             self._node = None
             self._devices = []
-        try:
-            for d in devices:
-                try:
-                    d.close_channel()
-                except Exception as exc:
-                    logger.debug(f"ANT+ csatorna bezárási hiba: {exc}")
-            if node:
-                node.stop()
-        except Exception as exc:
-            logger.debug(f"ANT+ cleanup hiba: {exc}")
+        self._release_node(node, devices)
 
     def _log_retry(self, detail: str, retry_count: int) -> None:
         """Log a retry message at a level depending on the attempt count.
@@ -424,7 +438,11 @@ class ANTPlusInputHandler:
         # _stop_event instead, which is only set at shutdown.
         stop_event = self._stop_event
         while not stop_event.wait(timeout=5):
-            node = self._node
+            # Read the ref under the lock: _stop_node() may be swapping it
+            # out on another thread right now, and stopping an already
+            # released node is at best a no-op, at worst a double free.
+            with self._node_lock:
+                node = self._node
             if node is None:
                 continue
 

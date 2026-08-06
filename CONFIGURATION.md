@@ -39,7 +39,7 @@ A program kétféleképpen reagál a hibákra, attól függően, hogy **érték-
 
 > 💾 **Automatikus mentés szintaxis-hibánál:** ha a `settings.json` JSON szintaxisa hibás – vagy érvényes JSON ugyan, de nem beállítás-objektum (pl. lista került a fájl tetejére) –, a program a default-okra váltás **előtt** félreteszi a hibás fájlt `settings.json.incorrect` néven. Így a sok kézi szerkesztésed **nem vész el** akkor sem, ha a program később (pl. HUD ablakpozíció mentésekor) felülírná a `settings.json`-t a default értékekkel. Teendő: nyisd meg a `settings.json.incorrect` fájlt, javítsd ki a hibát (a logban jelzett sor/oszlop alapján), majd nevezd vissza `settings.json`-ra. Megjegyzés: a `.incorrect` mindig a legutóbbi hibás verziót őrzi (felülíródik).
 
-> 🔤 **Elgépelt szekciónevek:** ha a fájl felső szintjén ismeretlen szekció szerepel (pl. `"power_zone"` a `"power_zones"` helyett), a program ⚠ figyelmeztetéssel nevesíti a logban – így az elgépelés nem veszik el csendben.
+> 🔤 **Elgépelt szekciónevek:** ha a fájl felső szintjén ismeretlen szekció szerepel (pl. `"power_zone"` a `"power_zones"` helyett), a program ⚠ figyelmeztetéssel nevesíti a logban – így az elgépelés nem veszik el csendben. Ugyanígy figyelmeztet, ha egy létező szekció **értéke** nem objektum (pl. `"power_zones": 42`, vagy egy elcsúszott idézőjel miatt szöveg lett): ilyenkor az egész szekció figyelmen kívül marad, és minden mezője az alapértelmezettre esik vissza.
 
 > 🔒 **Atomikus mentés:** amikor a program ír a `settings.json`-ba (HUD beállítások, Zwift belépési adatok), azt temp fájl + átnevezés párossal, atomikusan teszi. Írás közbeni leállás (áramszünet, kill) így nem hagyhat csonka fájlt – vagy a régi, vagy az új teljes tartalom marad meg.
 
@@ -60,9 +60,9 @@ A program kétféleképpen reagál a hibákra, attól függően, hogy **érték-
 | Mező | Típus | Tartomány | Alapértelmezett | Leírás |
 |------|-------|-----------|-----------------|--------|
 | `cooldown_seconds` | int | 0–600 | 120 | Cooldown idő zóna csökkentésnél (másodperc). 0 = azonnali váltás (nincs cooldown). |
-| `buffer_seconds` | int | 1–60 | 3 | Gördülő átlag ablak (fallback ha forrás-specifikus nincs). |
+| `buffer_seconds` | int | 1–60 | 3 | Gördülő átlag ablak **másodpercben** (fallback ha forrás-specifikus nincs). |
 | `minimum_samples` | int | 1–600 | 6 | Minimum minta érvényes átlaghoz (fallback). |
-| `buffer_rate_hz` | int | 1–60 | 4 | Várt mintavételi frekvencia Hz-ben (fallback). |
+| `buffer_rate_hz` | int | 1–60 | 4 | Várt mintavételi frekvencia Hz-ben – a puffer méretkorlátját adja (`buffer_seconds × buffer_rate_hz`), az ablak hosszát nem (fallback). |
 | `dropout_timeout` | int | 1–300 | 5 | Adatforrás kiesés timeout másodpercben (fallback). |
 | `logging` | bool | – | true | Globális loggolás be/ki. Ha `false`, nincs sem fájl-, sem konzol-loggolás (teljes némaság) – csak az indítási összefoglaló jelenik meg. |
 | `log_directory` | string\|null | – | null | Log fájlok könyvtára. `null` = a program könyvtára. Fájlok: `smart_fan_controller.log`, `ble_devices.log`, `ant_devices.log`. Ha a megadott könyvtár nem létezik vagy nem írható, automatikusan a program könyvtárát használja. |
@@ -221,6 +221,25 @@ Minden forrásnak saját buffer paraméterei vannak. Ha nincs megadva, a globál
 | `zwiftUDP_` | Zwift UDP | `zwiftUDP_buffer_seconds`, `zwiftUDP_minimum_samples`, `zwiftUDP_buffer_rate_hz`, `zwiftUDP_dropout_timeout` |
 
 **Validáció:** `minimum_samples` nem lehet nagyobb mint `buffer_seconds × buffer_rate_hz`.
+Tartományok forrásonként: `buffer_seconds` 1–60, `minimum_samples` 1–600,
+`buffer_rate_hz` 1–60, `dropout_timeout` 1–300 (azonosak a globális
+fallback mezőkével).
+
+**Az átlagolási ablak időalapú.** A `buffer_seconds` valós másodperceket
+jelent: egy minta akkor esik ki, ha ennél régebbi – függetlenül attól,
+milyen sűrűn érkezik az adat. A `buffer_rate_hz` csak a puffer
+méretkorlátját (`buffer_seconds × buffer_rate_hz` minta) adja.
+
+Ez a különböző sebességű források miatt fontos. A Zwift HTTPS API 3
+másodpercenként kérdezhető le (~0.33 Hz), így a 10 s × 3 Hz = 30 mintás
+puffer korábban **90 másodpercnyi** adatot tartott – a ventilátor másfél
+perces átlagot követett. A BLE/ANT+ forrásoknál (4 Hz, egyezik a
+beállítottal) a viselkedés változatlan: ott a 3 s × 4 Hz = 12 minta
+tényleg 3 másodpercnyi adat.
+
+Ha egy forrás a vártnál is lassabb, a program mindig megtartja az
+`minimum_samples`-nek megfelelő legfrissebb mintát, hogy soha ne maradjon
+átlag – és így a ventilátor vezérlés – nélkül.
 
 ### ANT+ eszköz beállítások
 
@@ -275,7 +294,7 @@ A segédprocessz a fő `settings.json` **`zwift_api`** szekciójából olvas (ni
 |------|-------|-----------|-----------------|--------|
 | `username` | string | – | `""` | Zwift felhasználónév / e-mail. |
 | `password` | string | – | `""` | Zwift jelszó (titkosítatlanul mentve!). |
-| `poll_interval` | szám | 1.0–60.0 | 3.0 | Lekérdezési intervallum másodpercben. |
+| `poll_interval` | szám | 3.0–60.0 | 3.0 | Lekérdezési intervallum másodpercben. **A Zwift API 3 másodpercnél sűrűbben nem szolgál ki** – kisebb érték csak rate-limit (429) válaszokat eredményezne, ezért a program 3.0-ra korlátoz (a `--poll-interval` CLI kapcsolóra is). |
 | `separate_window` | bool | – | true | Ha `true`, a segédprocessz saját konzol-ablakban fut (Windows: `CREATE_NEW_CONSOLE`); ha `false`, a háttérben. |
 
 **A broadcast cél (UDP host/port) nem itt van**, hanem a `datasource.zwift_udp_host` / `zwift_udp_port` mezőkből jön – így nem duplikálódik. A **loggolást** a fő app `global_settings.logging` / `log_directory` vezérli (egységesen): `logging: false` → nem jön létre `zwift_api_polling.log`; `logging: true` → konzol + rotált log fájl (500 KB, 2 backup) a `log_directory`-ban. A `--debug` CLI kapcsoló DEBUG szintre állítja a részletes diagnosztikai logokat.
@@ -333,7 +352,7 @@ A LCARS stílusú HUD ablak viselkedését szabályozó beállítások.
 | `save_hud_settings` | bool | true/false | false | Ha true, az ablak pozíciója, mérete, átlátszósága és hangerő mentésre kerül a fájlba (ez a flag engedélyezi az automatikus mentést). Ha false, a HUD-on végzett módosítások a memóriában maradnak, fájl nem íródik – a kézi szerkesztések nem lesznek felülírva egy ablak-elhúzással. |
 | `sound_enabled` | bool | true/false | true | LCARS hangeffektek be/kikapcsolása. |
 | `sound_volume` | float | 0.0–1.0 | 0.5 | Hangeffektek hangereje. Csak akkor mentésre kerül, ha `save_hud_settings=true`. |
-| `close_at_zwiftapp.exe` | bool | true/false | true | Ha true, a program automatikusan leáll amikor a ZwiftApp.exe kilép. (Az aláhúzásos `close_at_zwiftapp_exe` kulcsnevet is elfogadja; ha mindkettő szerepel, az aláhúzásos élvez elsőbbséget.) |
+| `close_at_zwiftapp_exe` | bool | true/false | true | Ha true, a program automatikusan leáll amikor a ZwiftApp.exe kilép. (A régi, pontos `close_at_zwiftapp.exe` kulcsnevet is elfogadja; ha mindkettő szerepel, az aláhúzásos élvez elsőbbséget. Mentéskor a program az aláhúzásos nevet írja ki.) |
 | `opacity` | int | 20–100 | 92 | HUD ablak átlátszósága %-ban. A slider/menüből is módosítható. Csak akkor mentésre kerül, ha `save_hud_settings=true`. |
 | `window_geometry` | object | – | `{}` | Per-monitor ablak pozíció/méret. Csak akkor kerül mentésre, ha `save_hud_settings=true`. |
 
@@ -381,7 +400,7 @@ A hangerő és ki/bekapcsolás a jobb egérgombos menüből is elérhető, és a
 
 ### ZwiftApp.exe figyelés
 
-Ha `close_at_zwiftapp.exe` értéke `true`, a program ~10 másodpercenként ellenőrzi, hogy a `ZwiftApp.exe` fut-e. Ha a Zwift futott és kilép, a program automatikusan leáll (tricorder becsukás hanggal).
+Ha `close_at_zwiftapp_exe` értéke `true`, a program ~10 másodpercenként ellenőrzi, hogy a `ZwiftApp.exe` fut-e. Ha a Zwift futott és kilép, a program automatikusan leáll (tricorder becsukás hanggal).
 
 ---
 

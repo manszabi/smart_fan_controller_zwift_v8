@@ -7,26 +7,36 @@ name = "smart-fan-controller-zwift"
 # A verzió egyetlen forrása: smart_fan_controller/__init__.py __version__
 dynamic = ["version"]
 description = "Zwift-integrált okos ventilátor vezérlő – BLE, ANT+, Zwift UDP adatforrásokkal"
-# 3.11+: enum.StrEnum, beépített TimeoutError-alias, modern asyncio
+# 3.11+: enum.StrEnum, beépített TimeoutError-alias, modern asyncio.
+# Gyakorlati felső határ jelenleg a 3.14: a HUD-hoz kellő PySide6 6.11 még
+# nem támogatja a 3.15-öt (a program 3.15-ön is elindul, de HUD nélkül).
 requires-python = ">=3.11"
 license = {text = "MIT"}
+classifiers = [
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+]
 
 dependencies = [
-    "bleak>=0.21.0",
+    "bleak>=1.0.0",
 ]
 
 [project.optional-dependencies]
-ant = ["openant>=1.0.0"]
-zwift = ["requests>=2.28.0"]
-ui = ["PySide6>=6.5.0"]
-autolaunch = ["pywinauto>=0.6.8"]
+ant = ["openant>=1.3.0"]
+zwift = ["requests>=2.32.0"]
+ui = ["PySide6>=6.7.0"]
+autolaunch = ["pywinauto>=0.6.9"]
 all = [
-    "bleak>=0.21.0",
-    "openant>=1.0.0",
-    "requests>=2.28.0",
-    "PySide6>=6.5.0",
-    "pywinauto>=0.6.8",
+    "bleak>=1.0.0",
+    "openant>=1.3.0",
+    "requests>=2.32.0",
+    "PySide6>=6.7.0",
+    "pywinauto>=0.6.9",
 ]
+# Fejlesztői/teszt függőségek: pip install -e ".[dev]"
+dev = ["pytest>=8.0"]
 
 [project.scripts]
 smart-fan-controller = "zwift_fan_controller:main"
@@ -50,4 +60,15 @@ include = ["smart_fan_controller*"]
 "smart_fan_controller" = [
     "fonts/*.ttf", "fonts/README.txt",
     "sounds/*.wav", "sounds/README.txt",
+]
+
+[tool.pytest.ini_options]
+# A tesztkészlet nem használ pytest-asyncio-t: az aszinkron forgatókönyveket
+# közvetlenül az asyncio.run() hajtja (lásd tests/test_pipeline.py).
+testpaths = ["tests"]
+addopts = "-q"
+filterwarnings = [
+    # A saját kódból jövő elavulás-figyelmeztetés hiba legyen, hogy időben
+    # kiderüljön (pl. asyncio.set_event_loop a 3.14+ alatt)
+    "error::DeprecationWarning:smart_fan_controller.*",
 ]

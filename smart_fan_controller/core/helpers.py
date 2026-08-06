@@ -51,7 +51,13 @@ def resolve_log_dir(
         test_file = os.path.join(log_directory, ".log_write_test")
         with open(test_file, "w") as f:
             f.write("test")
-        os.remove(test_file)
+        # Removing the probe is best effort: a failed cleanup (e.g. a
+        # locking AV scanner) does not mean the directory is unwritable –
+        # it must not send us to the fallback
+        try:
+            os.remove(test_file)
+        except OSError:
+            pass
         return log_directory
     except OSError:
         # Could not create / write – fall back

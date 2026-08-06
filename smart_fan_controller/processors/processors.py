@@ -152,12 +152,13 @@ async def hr_processor_task(
     while True:
         hr = await raw_hr_queue.get()
 
-        try:
-            hr = int(hr)
-        except (TypeError, ValueError):
-            continue
+        # Validate FIRST, convert after – consistent with the power branch.
+        # The other way round int() truncated first, so e.g. 220.9 bpm
+        # slipped through as 220 while a power of 1000.9 W was rejected.
         if not is_valid_hr(hr, valid_min_hr, valid_max_hr):
+            printer.emit("invalid_hr", "⚠ FIGYELMEZTETÉS: Érvénytelen HR adat!")
             continue
+        hr = int(hr)
 
         # A single now at the top of the loop – consistent timestamp per iteration
         now = time.monotonic()

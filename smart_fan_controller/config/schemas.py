@@ -42,6 +42,12 @@ class ZoneMode(enum.StrEnum):
 VALID_DATA_SOURCES: tuple[DataSource, ...] = tuple(DataSource)
 VALID_ZONE_MODES: tuple[ZoneMode, ...] = tuple(ZoneMode)
 
+# The Zwift HTTPS API serves no faster than one poll every 3 seconds, so a
+# smaller value only buys rate-limit (429) answers – that is the floor for
+# zwift_api.poll_interval.
+MIN_ZWIFT_POLL_INTERVAL: float = 3.0
+MAX_ZWIFT_POLL_INTERVAL: float = 60.0
+
 
 # ============================================================
 # TYPE-SAFE SETTINGS MODELS
@@ -486,10 +492,13 @@ class DatasourceConfig:
         # detection); non-empty string → trimmed path; wrong type → warning.
         _from_dict_nullable_str(raw, kwargs, "zwift_launcher_path")
 
-        # Per-source buffer settings
+        # Per-source buffer settings. The minimum_samples range matches the
+        # global one (GlobalSettingsConfig: 1–600); the per-source fields
+        # used to cap at 100 for no reason, so a valid larger value was
+        # rejected here but accepted globally.
         for prefix in ("BLE", "ANT", "zwiftUDP"):
             _from_dict_int(raw, kwargs, f"{prefix}_buffer_seconds", 1, 60)
-            _from_dict_int(raw, kwargs, f"{prefix}_minimum_samples", 1, 100)
+            _from_dict_int(raw, kwargs, f"{prefix}_minimum_samples", 1, 600)
             _from_dict_int(raw, kwargs, f"{prefix}_buffer_rate_hz", 1, 60)
             _from_dict_int(raw, kwargs, f"{prefix}_dropout_timeout", 1, 300)
 
@@ -551,12 +560,19 @@ class HudConfig:
         return cls(**kwargs)
 
     def to_dict(self) -> dict[str, Any]:
-        """JSON-compatible dict (with the legacy key name for compatibility)."""
+        """JSON-compatible dict.
+
+        Writes the CURRENT key name (``close_at_zwiftapp_exe``) – the one
+        from_dict() prefers. Emitting the legacy ``close_at_zwiftapp.exe``
+        here silently renamed the user's key on every HUD save. Reading
+        stays backwards compatible: from_dict() still accepts the legacy
+        name, so a settings.json written by an older version keeps working.
+        """
         return {
             "save_hud_settings": self.save_hud_settings,
             "sound_enabled": self.sound_enabled,
             "sound_volume": self.sound_volume,
-            "close_at_zwiftapp.exe": self.close_at_zwiftapp_exe,
+            "close_at_zwiftapp_exe": self.close_at_zwiftapp_exe,
             "opacity": self.opacity,
             "window_geometry": self.window_geometry,
         }
@@ -656,7 +672,10 @@ class ZwiftApiConfig:
                     kwargs[key] = v
                 else:
                     user_logger.warning(f"⚠ Érvénytelen '{key}' érték: {v!r} (string kell)")
-        _from_dict_float(raw, kwargs, "poll_interval", 1.0, 60.0)
+        _from_dict_float(
+            raw, kwargs, "poll_interval",
+            MIN_ZWIFT_POLL_INTERVAL, MAX_ZWIFT_POLL_INTERVAL,
+        )
         _from_dict_bool(raw, kwargs, "separate_window")
         return cls(**kwargs)
 
