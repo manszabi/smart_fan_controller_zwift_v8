@@ -353,6 +353,13 @@ A `window_geometry` mező automatikusan kezelődik: a program **mozgatás/átmé
 }
 ```
 
+A HUD induláskor bemér egy **legkisebb olvasható ablakméretet** (a betűtípus
+tényleges méreteiből), és ez alá az egérrel sem lehet húzni – így egyetlen
+felirat vagy érték sem takaródhat ki. Ha a mentett méret ennél kisebb (pl.
+korábbi verzióból vagy másik betűtípussal mentve), a visszaállítás felfelé
+igazít rá. Az ablak tartalma a mérettel arányosan skálázódik: minél nagyobbra
+húzod, annál nagyobb a betű.
+
 ### LCARS hangeffektek
 
 A HUD Star Trek-szerű hangeffekteket használ az események jelzésére:

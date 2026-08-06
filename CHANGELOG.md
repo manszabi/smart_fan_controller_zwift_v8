@@ -16,6 +16,41 @@ a verziószámozás a [Semantic Versioning](https://semver.org/) sémát
 
 ### Javítva
 
+- **HUD: kitakart feliratok átméretezéskor** (`ui/window.py`, `ui/widgets.py`):
+  bizonyos ablakméreteknél a ZONE, a POWER, a HEART RATE és a STARFLEET
+  CYCLING DIV felirat (és a hozzájuk tartozó értékek) nem látszottak
+  teljesen – a sorok magassága a szöveg alá szorult. Négy ok volt:
+  1. **A panelek minimuma beragadt.** A Qt alapértelmezett
+     `SetDefaultConstraint`-je a layout minimumát a widget *explicit*
+     `minimumSize`-ába írja, amit utána már csak emelni lehet. Így minden
+     panel a valaha volt legnagyobb skálán mért minimumán maradt: az
+     ablak kicsinyítésekor a sorok nem tudtak összébb menni, csak a
+     szövegük szorult ki. A belső layoutok mostantól `SetNoConstraint`-tel
+     dolgoznak, az ablak minimumát pedig a HUD maga tartja karban.
+  2. **A dobozméretek nem skálázódtak.** Csak a betűméret követte a
+     skálát, a padding, a margó, a sorköz, az osztóvonal és a csúszka
+     mérete fix pixelben állt. Kis ablakban ez az állandó overhead
+     kiszorította a szöveget, nagyban pedig aránytalanul vékony volt.
+     Mostantól minden dobozméret a skálával megy.
+  3. **A minimum a pillanatnyi ablakmérethez volt kötve** (az előző
+     javítás a visszacsatolási hurok ellen), így az ablak a tartalom
+     olvasható mérete alá is mehetett. Az új `_calibrate_sizing()`
+     induláskor bemért egy alapméretet és egy legkisebb skálát – a
+     minimum ettől kezdve állandó, csak a tartalomtól függ, tehát
+     átméretezés nem hathat rá vissza (nincs ugrálás, nincs kitakarás).
+     A mérés a lehető legszélesebb értékekkel (`WIDEST_TEXTS`) fut, így
+     egy később megjelenő hosszabb szöveg (pl. `P:FAIL  HR:FAIL`) sem
+     tud kilógni.
+  4. **A fix szélességű címkék a pillanatnyi szövegükre méreteződtek**,
+     ezért pl. a `100%` kilógott a `92%`-ra szabott dobozból.
+  A skála ezentúl 5%-os létrán mozog (`SCALE_STEP`): a betűméret és a
+  kerekített padding úgyis egész pixel, így a tartalom csak olyan
+  méreteket vehet fel, amiket a kalibráció ténylegesen bemért.
+  Következmény: az eddigi 340×460-as ablakban a HUD kb. 0.90-es skálán
+  áll (a tartalom teljes egészében ennyinél fér el az Antonio fonttal) –
+  a régi betűmérethez az ablakot kb. 10%-kal nagyobbra kell húzni.
+  Új regressziós tesztek: `tests/test_hud_ui.py` (összesen 368 teszt).
+
 - **HUD egeres átméretezés ugrálása** (`ui/window.py`): a tartalom-alapú
   minimumméret frissítése visszacsatolási hurkot indíthatott – a
   pillanatnyi ablakméretnél nagyobb minimum megnövelte az ablakot, amitől
