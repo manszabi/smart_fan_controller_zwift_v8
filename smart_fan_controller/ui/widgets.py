@@ -123,7 +123,6 @@ class LCARSFooterWidget(QWidget):
         self.setStyleSheet("background-color: transparent;")
         # The opacity controls live in the upper strip between the elbows
         self._overlay = QHBoxLayout(self)
-        self._overlay.setSpacing(4)
         self._update_overlay_margins()
 
     def _bar_metrics(self) -> tuple[int, int, int]:
@@ -141,6 +140,7 @@ class LCARSFooterWidget(QWidget):
         box_top, box_bottom, box_right = self._opacity_box()
         fh = self.height()
         gap_s = max(6, int(8 * self._scale))
+        self._overlay.setSpacing(max(2, int(4 * self._scale)))
         self._overlay.setContentsMargins(
             box_right + gap_s, box_top, sw + R, fh - box_bottom
         )

@@ -11,21 +11,22 @@ live in :mod:`smart_fan_controller.ui.widgets` and the sound effects in
 from __future__ import annotations
 
 import logging
+import math
 import os
 import platform as _platform
 import sys
 import threading
 import time
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from PySide6.QtCore import Qt, QTimer, QPoint, QSize, QRectF, QMetaObject
 from PySide6.QtGui import (
-    QFont, QFontDatabase, QGuiApplication, QMouseEvent, QPainter,
-    QPainterPath, QPalette,
+    QFont, QFontDatabase, QMouseEvent, QPainter, QPainterPath, QPalette,
 )
 from PySide6.QtWidgets import (
-    QApplication, QWidget, QLabel, QHBoxLayout, QVBoxLayout,
-    QSlider, QMenu, QFrame, QSizePolicy,
+    QApplication, QWidget, QLabel, QHBoxLayout, QVBoxLayout, QLayout,
+    QSlider, QMenu, QFrame, QSizePolicy, QSpacerItem,
 )
 
 from smart_fan_controller.config import DataSource, ZoneMode
@@ -47,6 +48,9 @@ if TYPE_CHECKING:
     FanController = Any
 
 logger = logging.getLogger("zwift_fan_controller_new")
+
+# Qt's "no maximum" sentinel (QWIDGETSIZE_MAX is not exported by PySide6)
+QWIDGETSIZE_MAX = (1 << 24) - 1
 
 
 class HUDWindow(QWidget):
@@ -74,16 +78,43 @@ class HUDWindow(QWidget):
 
     UPDATE_INTERVAL_MS = 500
 
-    # Absolute minimum window size (applies during interactive resizing;
-    # the content-based minimum is restored after the drag settles)
+    # Absolute floor for the window size – the effective minimum is the
+    # measured readable minimum (see _calibrate_sizing), never less than this
     MIN_W = 220
     MIN_H = 300
+
+    # The scale runs on a fixed ladder (…, 0.95, 1.00, 1.05, …) instead of
+    # continuously. Font point sizes and rounded paddings are integers, so
+    # the content grows in jumps anyway – on a fixed ladder those jumps
+    # land on scales that _calibrate_sizing has actually measured, so no
+    # in-between size can clip. A 5% step is visually seamless and it also
+    # spares a relayout on most resize events.
+    SCALE_STEP = 0.05
+    SCALE_MAX = 3.0
+    MIN_SCALE_FLOOR = 0.5
+
+    # Widest text every value label can ever show. The readable minimum is
+    # measured with these in place, so a later value change (a longer
+    # string) can never end up clipped at the minimum window size.
+    WIDEST_TEXTS: dict[str, str] = {
+        "_lbl_zone": "STANDBY",
+        "_lbl_power": "8888 W",
+        "_lbl_hr": "888 BPM",
+        "_lbl_ble": "DISABLED",
+        "_lbl_ble_sens": "P:FAIL  HR:FAIL",
+        "_lbl_ant": "P:FAIL  HR:FAIL",
+        "_lbl_zwift_udp": "P:FAIL  HR:FAIL",
+        "_lbl_last_sent": "8888s AGO",
+        "_lbl_cool": "INACTIVE",
+        "_alpha_value": "100%",
+    }
 
     def __init__(self, controller: "FanController", app: "QApplication") -> None:
         super().__init__()
         self._base_width = 340
         self._base_height = 460
         self._scale = 1.0
+        self._min_scale = 1.0
         self._ctrl = controller
         self._app = app
         self._drag_pos: QPoint | None = None
@@ -93,6 +124,13 @@ class HUDWindow(QWidget):
 
         # Scalable text labels: (label, base pt size, fixed width or None, bold)
         self._scalable_texts: list[tuple[QLabel, int, int | None, bool]] = []
+        # Scalable box metrics – everything that occupies pixels has to
+        # follow the scale, otherwise the constant padding/margin overhead
+        # squeezes the text out of the rows on a shrinking window
+        self._scalable_styles: list[tuple[QWidget, Callable[[], str]]] = []
+        self._scalable_layouts: list[tuple[QLayout, tuple[int, int, int, int], int]] = []
+        self._scalable_spacers: list[tuple[QSpacerItem, int]] = []
+        self._scalable_heights: list[tuple[QWidget, int]] = []
 
         # Flash effect: previous values and flash counters
         self._prev_power: float | None = None
@@ -148,8 +186,7 @@ class HUDWindow(QWidget):
 
         # ───────── LAYOUT ─────────
         main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(0, 0, 0, 0)
-        main_layout.setSpacing(0)
+        self._register_layout(main_layout, (0, 0, 0, 0), 0)
 
         # Header
         self._header = LCARSHeaderWidget(self, self._font_family, self._scale)
@@ -159,8 +196,7 @@ class HUDWindow(QWidget):
         body = QWidget(self)
         body.setStyleSheet("background-color: transparent;")
         body_layout = QHBoxLayout(body)
-        body_layout.setContentsMargins(0, 0, 0, 0)
-        body_layout.setSpacing(0)
+        self._register_layout(body_layout, (0, 0, 0, 0), 0)
 
         self._sidebar = LCARSSidebarWidget(body, self._scale)
         body_layout.addWidget(self._sidebar)
@@ -169,16 +205,16 @@ class HUDWindow(QWidget):
         content = QWidget(body)
         content.setStyleSheet(f"background-color: {self.PANEL_BG};")
         content_layout = QVBoxLayout(content)
-        content_layout.setContentsMargins(6, 8, 6, 0)
-        content_layout.setSpacing(0)
+        self._register_layout(content_layout, (6, 8, 6, 0), 0)
         body_layout.addWidget(content, 1)
 
         # ───────── ZONE DISPLAY ─────────
         self._lbl_zone_label = QLabel("FAN ZONE")
-        self._lbl_zone_label.setStyleSheet(
+        self._register_styled(self._lbl_zone_label, lambda: (
             f"background-color: {self.LCARS_CYAN}; color: #000a14; "
-            f"padding: 2px 4px; border-radius: 4px;"
-        )
+            f"padding: {self._px(2)}px {self._px(4)}px; "
+            f"border-radius: {self._px(4)}px;"
+        ))
         self._lbl_zone_label.setSizePolicy(
             QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed
         )
@@ -189,11 +225,12 @@ class HUDWindow(QWidget):
         self._lbl_zone.setAlignment(Qt.AlignmentFlag.AlignCenter)
         # Text color comes from QPalette (dynamic); the stylesheet only
         # carries the static part
-        self._lbl_zone.setStyleSheet(
-            f"background-color: {self._VAL_BG}; "
-            f"padding: 3px 6px; border-radius: 4px;"
-        )
         self._set_label_color(self._lbl_zone, self.LCARS_CYAN)
+        self._register_styled(self._lbl_zone, lambda: (
+            f"background-color: {self._VAL_BG}; "
+            f"padding: {self._px(3)}px {self._px(6)}px; "
+            f"border-radius: {self._px(4)}px;"
+        ))
         self._lbl_zone.setSizePolicy(
             QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed
         )
@@ -201,17 +238,16 @@ class HUDWindow(QWidget):
         content_layout.addWidget(self._lbl_zone)
 
         # Zone segment bar below the zone display
-        content_layout.addSpacing(3)
+        self._add_spacing(content_layout, 3)
         self._zone_bar = LCARSZoneBarWidget(content, self._scale)
         content_layout.addWidget(self._zone_bar)
-        content_layout.addSpacing(3)
+        self._add_spacing(content_layout, 3)
 
         # ───────── STATUS STRIP (tiles) ─────────
         tile_frame = QWidget(content)
         tile_frame.setStyleSheet(f"background-color: {self.PANEL_BG};")
         tile_layout = QHBoxLayout(tile_frame)
-        tile_layout.setContentsMargins(0, 0, 0, 4)
-        tile_layout.setSpacing(2)
+        self._register_layout(tile_layout, (0, 0, 0, 4), 2)
 
         self._tile_zero_imm = self._make_tile(tile_layout, "ZPO IMM", self.LCARS_CYAN)
         self._tile_zero_hr_imm = self._make_tile(tile_layout, "ZHR IMM", self.LCARS_CYAN)
@@ -232,10 +268,7 @@ class HUDWindow(QWidget):
         content_layout.addWidget(self._hr_meter)
 
         # ───────── SEPARATOR ─────────
-        sep = QFrame(content)
-        sep.setFixedHeight(2)
-        sep.setStyleSheet(f"background-color: {self.BORDER_GLOW}; margin: 6px 10px;")
-        content_layout.addWidget(sep)
+        self._make_separator(content, content_layout)
 
         # ───────── SYSTEM STATUS ─────────
         self._lbl_ble = self._make_status_row(content_layout, "BLE FAN", "OFFLINE",
@@ -248,10 +281,7 @@ class HUDWindow(QWidget):
                                                       "– – –", self.LCARS_PURPLE)
 
         # ───────── SEPARATOR 2 ─────────
-        sep2 = QFrame(content)
-        sep2.setFixedHeight(2)
-        sep2.setStyleSheet(f"background-color: {self.BORDER_GLOW}; margin: 6px 10px;")
-        content_layout.addWidget(sep2)
+        self._make_separator(content, content_layout)
 
         # ───────── SYSTEM INFO ─────────
         self._lbl_last_sent = self._make_status_row(content_layout, "LAST TX",
@@ -270,18 +300,7 @@ class HUDWindow(QWidget):
         self._alpha_slider = QSlider(Qt.Orientation.Horizontal)
         self._alpha_slider.setRange(20, 100)
         self._alpha_slider.setValue(self._initial_opacity)
-        self._alpha_slider.setStyleSheet(
-            f"QSlider::groove:horizontal {{"
-            f"  background: #002244; height: 8px; border-radius: 4px;"
-            f"}}"
-            f"QSlider::sub-page:horizontal {{"
-            f"  background: {self.LCARS_CYAN}; border-radius: 4px;"
-            f"}}"
-            f"QSlider::handle:horizontal {{"
-            f"  background: #EAF6FF; width: 14px; margin: -3px 0;"
-            f"  border-radius: 7px;"
-            f"}}"
-        )
+        self._register_styled(self._alpha_slider, self._slider_style)
         self._alpha_slider.valueChanged.connect(self._on_alpha_change)
 
         self._alpha_value = QLabel(f"{self._initial_opacity}%")
@@ -296,10 +315,13 @@ class HUDWindow(QWidget):
         # The STARFLEET caption takes the slider's former place
         self._footer_brand = QLabel("STARFLEET CYCLING DIV")
         self._footer_brand.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._footer_brand.setStyleSheet(
-            f"color: {self.LCARS_CYAN_DIM}; background-color: {self.PANEL_BG}; "
-            f"padding: 6px 0 4px 0;"
+        self._footer_brand.setSizePolicy(
+            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed
         )
+        self._register_styled(self._footer_brand, lambda: (
+            f"color: {self.LCARS_CYAN_DIM}; background-color: {self.PANEL_BG}; "
+            f"padding: {self._px(6)}px 0 {self._px(4)}px 0;"
+        ))
         self._register_scalable(self._footer_brand, 9, bold=False)
         content_layout.addWidget(self._footer_brand)
         content_layout.addStretch()
@@ -312,14 +334,6 @@ class HUDWindow(QWidget):
             self._opacity_label, self._alpha_slider, self._alpha_value
         )
         main_layout.addWidget(self._footer)
-
-        # The content-based minimum size is recalculated with a debounce:
-        # raising the minimum during a drag would block shrinking and make
-        # the window jump around
-        self._min_size_timer = QTimer(self)
-        self._min_size_timer.setSingleShot(True)
-        self._min_size_timer.setInterval(200)
-        self._min_size_timer.timeout.connect(self._update_min_size)
 
         # Debounced automatic geometry save: the position survives even
         # when the program does not shut down cleanly
@@ -337,8 +351,9 @@ class HUDWindow(QWidget):
             lambda: self._save_hud_setting("opacity", self._alpha_slider.value())
         )
 
-        # The minimum window size follows the readable size of the content
-        self._update_min_size()
+        # Calibrate the scale mapping to the real content and derive the
+        # readable minimum window size from it
+        self._calibrate_sizing()
 
         # ───────── CONTEXT MENU ─────────
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -422,14 +437,14 @@ class HUDWindow(QWidget):
         row.setStyleSheet(f"background-color: {self.PANEL_BG};")
         row.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         row_layout = QHBoxLayout(row)
-        row_layout.setContentsMargins(0, 2, 0, 2)
-        row_layout.setSpacing(2)
+        self._register_layout(row_layout, (0, 2, 0, 2), 2)
 
         key_lbl = QLabel(label)
-        key_lbl.setStyleSheet(
+        self._register_styled(key_lbl, lambda: (
             f"background-color: {label_bg}; color: #000a14; "
-            f"padding: 3px 4px; border-radius: 4px;"
-        )
+            f"padding: {self._px(3)}px {self._px(4)}px; "
+            f"border-radius: {self._px(4)}px;"
+        ))
         row_layout.addWidget(key_lbl)
         self._register_scalable(key_lbl, 9, 100)
 
@@ -438,11 +453,12 @@ class HUDWindow(QWidget):
             Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
         )
         # Text color comes from QPalette (dynamic); stylesheet is static only
-        val_lbl.setStyleSheet(
-            f"background-color: {self._VAL_BG}; "
-            f"padding: 3px 6px; border-radius: 4px;"
-        )
         self._set_label_color(val_lbl, color)
+        self._register_styled(val_lbl, lambda: (
+            f"background-color: {self._VAL_BG}; "
+            f"padding: {self._px(3)}px {self._px(6)}px; "
+            f"border-radius: {self._px(4)}px;"
+        ))
         row_layout.addWidget(val_lbl, 1)
         self._register_scalable(val_lbl, 14)
 
@@ -457,16 +473,17 @@ class HUDWindow(QWidget):
         lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         lbl.setProperty("hudState", "off")
         # Off: dim outlined pill; on: accent fill
-        lbl.setStyleSheet(
+        self._register_styled(lbl, lambda: (
             f'QLabel {{ background-color: transparent; color: {self.TEXT_DIM}; '
             f'border: 1px solid {self.BORDER_GLOW}; '
-            f'padding: 1px 4px; border-radius: 4px; }}'
+            f'padding: {self._px(1)}px {self._px(4)}px; '
+            f'border-radius: {self._px(4)}px; }}'
             f'QLabel[hudState="on"] {{ background-color: {accent}; '
             f'color: #000a14; border-color: {accent}; }}'
             f'QLabel[hudState="flash"] {{ '
             f'background-color: {theme.lighten(accent)}; '
             f'color: #000a14; border-color: {theme.lighten(accent)}; }}'
-        )
+        ))
         # The caption must not get clipped (Minimum) nor squashed (Fixed)
         lbl.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
         self._register_scalable(lbl, 9)
@@ -480,14 +497,14 @@ class HUDWindow(QWidget):
         row.setStyleSheet(f"background-color: {self.PANEL_BG};")
         row.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         row_layout = QHBoxLayout(row)
-        row_layout.setContentsMargins(0, 2, 0, 2)
-        row_layout.setSpacing(2)
+        self._register_layout(row_layout, (0, 2, 0, 2), 2)
 
         key_lbl = QLabel(label)
-        key_lbl.setStyleSheet(
+        self._register_styled(key_lbl, lambda: (
             f"background-color: {label_bg}; color: #000a14; "
-            f"padding: 2px 4px; border-radius: 4px;"
-        )
+            f"padding: {self._px(2)}px {self._px(4)}px; "
+            f"border-radius: {self._px(4)}px;"
+        ))
         row_layout.addWidget(key_lbl)
         self._register_scalable(key_lbl, 9, 100)
 
@@ -496,16 +513,119 @@ class HUDWindow(QWidget):
             Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
         )
         # Text color comes from QPalette (dynamic); stylesheet is static only
-        val_lbl.setStyleSheet(
-            f"background-color: {self._VAL_BG}; "
-            f"padding: 2px 6px; border-radius: 4px;"
-        )
         self._set_label_color(val_lbl, self.TEXT_DIM)
+        self._register_styled(val_lbl, lambda: (
+            f"background-color: {self._VAL_BG}; "
+            f"padding: {self._px(2)}px {self._px(6)}px; "
+            f"border-radius: {self._px(4)}px;"
+        ))
         row_layout.addWidget(val_lbl, 1)
         self._register_scalable(val_lbl, 11, bold=False)
 
         layout.addWidget(row)
         return val_lbl
+
+    def _slider_style(self) -> str:
+        """Opacity slider stylesheet at the current scale.
+
+        The handle's width, height and radius all come from the same
+        number: rounding them one by one could leave the radius larger
+        than half the box, and Qt then drops the rounding altogether –
+        the round knob would turn into a square at some scales."""
+        groove = self._px(8)
+        overhang = self._px(3)              # handle sticking out of the groove
+        knob = groove + 2 * overhang        # handle box: square → round
+        return (
+            f"QSlider::groove:horizontal {{"
+            f"  background: #002244; height: {groove}px;"
+            f"  border-radius: {groove // 2}px;"
+            f"}}"
+            f"QSlider::sub-page:horizontal {{"
+            f"  background: {self.LCARS_CYAN}; border-radius: {groove // 2}px;"
+            f"}}"
+            f"QSlider::handle:horizontal {{"
+            f"  background: #EAF6FF; width: {knob}px;"
+            f"  margin: -{overhang}px 0;"
+            f"  border-radius: {knob // 2}px;"
+            f"}}"
+        )
+
+    def _make_separator(self, parent: "QWidget", layout: "QVBoxLayout") -> "QFrame":
+        """Thin LCARS divider line whose height follows the scale."""
+        sep = QFrame(parent)
+        sep.setStyleSheet(f"background-color: {self.BORDER_GLOW}; margin: 6px 10px;")
+        self._register_height(sep, 2)
+        layout.addWidget(sep)
+        return sep
+
+    # ────────── SCALABLE BOX METRICS ──────────
+
+    def _px(self, base: int, floor: int = 1) -> int:
+        """A base pixel value at the current scale (never below ``floor``)."""
+        return max(floor, round(base * self._scale))
+
+    def _register_styled(self, w: "QWidget", builder: "Callable[[], str]") -> None:
+        """Register a widget whose stylesheet contains scale-dependent pixel
+        values (padding, radius, …) and apply it right away."""
+        self._scalable_styles.append((w, builder))
+        self._apply_styled(w, builder)
+
+    def _apply_styled(self, w: "QWidget", builder: "Callable[[], str]") -> None:
+        """Re-generate the stylesheet – only assigned when the rounded pixel
+        values actually changed (setStyleSheet forces a repolish)."""
+        css = builder()
+        if getattr(w, "_hud_css", None) == css:
+            return
+        w._hud_css = css
+        w.setStyleSheet(css)
+        # A repolish can drop the palette-driven text color – put it back
+        color = getattr(w, "_hud_color", None)
+        if color is not None:
+            self._set_label_color(w, color)
+
+    def _register_layout(self, lay: "QLayout",
+                         margins: tuple[int, int, int, int], spacing: int) -> None:
+        """Register a layout whose margins/spacing follow the scale.
+
+        SetNoConstraint is essential here: with Qt's default
+        (SetDefaultConstraint) the layout writes its own minimum into the
+        panel's *explicit* minimumSize, and an explicit minimum is only
+        ever raised, never lowered. Every panel would stay pinned to its
+        largest-ever (biggest scale) minimum, so a shrinking window could
+        not shrink the rows any more – it just squeezed the text out of
+        them. Without the constraint the panels report their live layout
+        minimum instead, which follows the scale in both directions."""
+        lay.setSizeConstraint(QLayout.SizeConstraint.SetNoConstraint)
+        self._scalable_layouts.append((lay, margins, spacing))
+        self._apply_layout_scale(lay, margins, spacing)
+
+    def _apply_layout_scale(self, lay: "QLayout",
+                            margins: tuple[int, int, int, int],
+                            spacing: int) -> None:
+        m = tuple(self._px(v, 0) for v in margins)
+        sp = self._px(spacing, 0)
+        if getattr(lay, "_hud_box_key", None) == (m, sp):
+            return
+        lay._hud_box_key = (m, sp)
+        lay.setContentsMargins(*m)
+        lay.setSpacing(sp)
+
+    def _add_spacing(self, lay: "QVBoxLayout", base: int) -> None:
+        """Fixed vertical gap that shrinks/grows with the scale."""
+        item = QSpacerItem(0, base, QSizePolicy.Policy.Minimum,
+                           QSizePolicy.Policy.Fixed)
+        self._scalable_spacers.append((item, base))
+        lay.addItem(item)
+        self._apply_spacer_scale(item, base)
+
+    def _apply_spacer_scale(self, item: "QSpacerItem", base: int) -> None:
+        item.changeSize(0, self._px(base, 0), QSizePolicy.Policy.Minimum,
+                        QSizePolicy.Policy.Fixed)
+
+    def _register_height(self, w: "QWidget", base: int) -> None:
+        """Register a widget with a scale-dependent fixed height."""
+        self._scalable_heights.append((w, base))
+        w.setFixedHeight(self._px(base))
 
     # ────────── BASE PANEL (rounded card) ──────────
 
@@ -531,12 +651,10 @@ class HUDWindow(QWidget):
             # grab on a large HUD as well
             grip = max(20, int(20 * self._scale))
             if (self.width() - pos.x() < grip) and (self.height() - pos.y() < grip):
-                # For the duration of the drag allow the absolute minimum
-                # size so the window can be shrunk in one motion; the
-                # content-based minimum returns via the debounce timer that
-                # resizeEvent starts once actual resizing happens (starting
-                # it here would fire mid-hold, before any movement)
-                self.setMinimumSize(self.MIN_W, self.MIN_H)
+                # The minimum size is constant (the measured readable
+                # minimum), so the drag needs no temporary relaxation: the
+                # window simply stops shrinking at the readable limit
+                # instead of squeezing the text out of the rows
                 # Native (system) resize; manual fallback when the platform
                 # does not support it
                 if wh is None or not wh.startSystemResize(
@@ -581,14 +699,27 @@ class HUDWindow(QWidget):
         super().resizeEvent(event)
         if not getattr(self, "_ui_ready", False):
             return
-        new_scale = min(self.width() / self._base_width,
-                        self.height() / self._base_height)
+        new_scale = self._quantize_scale(
+            min(self.width() / self._base_width,
+                self.height() / self._base_height)
+        )
         if abs(new_scale - self._scale) >= 0.001:
-            self._scale = new_scale
-            self._apply_scale()
-        # The content-based minimum is only refreshed after the drag stops
-        self._min_size_timer.start()
+            self._set_scale(new_scale)
         self._geo_save_timer.start()
+
+    def _quantize_scale(self, raw: float) -> float:
+        """Snap a raw size ratio down onto the calibrated scale ladder.
+
+        Rounding DOWN matters: the ladder step is the size the content was
+        measured at, and the window is at least that big – so the content
+        is guaranteed to fit, with the odd leftover pixel going into the
+        bottom spacer instead of into a clipped row.
+        """
+        # round() before floor(): 1.5 / 0.05 is 29.999999999999996 in
+        # binary floating point, which would drop a whole ladder step
+        steps = math.floor(round(raw / self.SCALE_STEP, 6))
+        return min(self.SCALE_MAX,
+                   max(self._min_scale, round(steps * self.SCALE_STEP, 2)))
 
     def moveEvent(self, event: Any) -> None:
         """Schedule a debounced geometry save after a move."""
@@ -1052,6 +1183,11 @@ class HUDWindow(QWidget):
 
     # ────────── SCALING ──────────
 
+    def _set_scale(self, s: float) -> None:
+        """Set the scale and push it through the whole UI."""
+        self._scale = s
+        self._apply_scale()
+
     def _apply_scale(self) -> None:
         s = self._scale
 
@@ -1068,11 +1204,22 @@ class HUDWindow(QWidget):
             # Font size and fixed width of the text labels scale as well
             for lbl, base_pt, base_fw, bold in self._scalable_texts:
                 self._apply_label_scale(lbl, base_pt, base_fw, bold)
+            # …and so does every box metric (padding, margin, gap, divider):
+            # a constant pixel overhead would eat the text out of the rows
+            # as the window shrinks
+            for w, builder in self._scalable_styles:
+                self._apply_styled(w, builder)
+            for lay, margins, spacing in self._scalable_layouts:
+                self._apply_layout_scale(lay, margins, spacing)
+            for item, base in self._scalable_spacers:
+                self._apply_spacer_scale(item, base)
+            for w, base in self._scalable_heights:
+                w.setFixedHeight(self._px(base))
         finally:
             self.setUpdatesEnabled(True)
-        # The minimum size is NOT refreshed here: during a live resize a
-        # growing minimum would push the window back (jumping); the
-        # debounce timer calls _update_min_size once the drag has stopped
+        # The minimum size is NOT touched here: it is a constant measured
+        # once by _calibrate_sizing, so a resize can never feed back into
+        # the minimum (that loop used to make the window ratchet upwards)
 
     def _register_scalable(self, lbl: "QLabel", base_pt: int,
                            base_fw: int | None = None, bold: bool = True) -> None:
@@ -1090,45 +1237,155 @@ class HUDWindow(QWidget):
         The rounded point size / width only changes at the larger scale
         steps – when they equal the previous values the setFont /
         setFixedWidth calls are skipped (far fewer relayouts during a
-        live resize)."""
+        live resize).
+
+        A fixed width is never allowed below the label's own natural
+        width: the base widths are calibrated for the LCARS font, and a
+        wider fallback font would otherwise get its caption cut off. The
+        natural width is measured on the widest text the label can ever
+        show (``_hud_widest``), not on the current one – otherwise the
+        box would be sized for "92%" and clip "100%"."""
         s = self._scale
         pt = max(6, int(base_pt * s))
-        fw = None if base_fw is None else max(1, int(base_fw * s))
-        key = (pt, fw, bold)
+        key = (pt, base_fw, bold)
         if getattr(lbl, "_hud_font_key", None) == key:
             return
         lbl._hud_font_key = key
         f = QFont(self._font_family, pt)
         f.setBold(bold)
         lbl.setFont(f)
-        if fw is not None:
-            lbl.setFixedWidth(fw)
+        if base_fw is not None:
+            widest = getattr(lbl, "_hud_widest", None)
+            current = lbl.text()
+            if widest is not None and widest != current:
+                lbl.setText(widest)
+            # setFixedWidth pins min = max; clear it so the natural
+            # sizeHint is not just the previously pinned width
+            lbl.setMinimumWidth(0)
+            lbl.setMaximumWidth(QWIDGETSIZE_MAX)
+            natural = lbl.sizeHint().width()
+            if widest is not None and widest != current:
+                lbl.setText(current)
+            lbl.setFixedWidth(max(1, int(base_fw * s), natural))
 
-    def _update_min_size(self) -> None:
-        """Compute the minimum window size from the natural (readable) size
-        of the content, so rows/tiles cannot be squashed by mouse resizing.
-        Runs only at rest (debounced), never during a live drag.
+    # ────────── SIZING CALIBRATION ──────────
 
-        A native (startSystemResize) drag delivers no mouseReleaseEvent,
-        so "at rest" is detected from the global mouse button state: while
-        the left button is still down the timer re-arms itself instead of
-        raising the minimum (a mid-drag raise would block shrinking).
+    def _content_hint(self, s: float) -> "QSize":
+        """The window's natural (nothing-clipped) size at the given scale.
 
-        The minimum is also capped at the current window size, so this
-        call can never grow the window: growing would trigger a new
-        resizeEvent → larger scale → larger content hint feedback loop
-        that ratchets the window upwards in visible steps."""
-        if QGuiApplication.mouseButtons() & Qt.MouseButton.LeftButton:
-            self._min_size_timer.start()
-            return
+        Qt refreshes the cached layout minimums from posted LayoutRequest
+        events, i.e. only once the event loop runs – and on a not yet
+        shown window it does not propagate them upwards at all. The
+        measurement is synchronous, so the whole tree is invalidated by
+        hand first: updateGeometry() drops the per-widget size caches and
+        invalidate() the layout ones. Without it the nested layouts would
+        answer with the minimum belonging to the previous scale.
+        """
+        self._set_scale(s)
+        for w in self.findChildren(QWidget):
+            w.updateGeometry()
+        self.updateGeometry()
+        for lay in self.findChildren(QLayout):
+            lay.invalidate()
         lay = self.layout()
         if lay is not None:
+            lay.invalidate()
             lay.activate()
-        hint = self.minimumSizeHint()
+        return self.minimumSizeHint()
+
+    def _fits(self, s: float) -> bool:
+        """True when the content fits a ``base × s`` sized window.
+
+        That is exactly the window the scale ``s`` belongs to: the resize
+        handler derives the scale from ``min(w / base_w, h / base_h)``, so
+        a window at scale ``s`` is at least ``base_w × s`` wide and
+        ``base_h × s`` tall.
+
+        The fixed-height LCARS bars are checked separately: their inner
+        metrics (bar thickness, elbow radius) have readability floors of
+        their own, so below a certain scale the footer would squeeze the
+        opacity slider even though the window as a whole still fits.
+        """
+        hint = self._content_hint(s)
+        if (hint.width() > round(self._base_width * s)
+                or hint.height() > round(self._base_height * s)):
+            return False
+        for bar in (self._header, self._footer):
+            need = bar.minimumSizeHint()
+            if need.height() > 0 and bar.height() < need.height():
+                return False
+        return True
+
+    def _calibrate_sizing(self) -> None:
+        """Calibrate the scale mapping to the real content, then measure the
+        smallest window size where no text gets clipped.
+
+        Two steps, both done once (fonts and label texts are known by now):
+
+        1. **Base size.** ``_base_*`` is the window size that scale 1.0
+           belongs to, so the content's natural size must fit into it.
+           The design values (340×460) hold for the LCARS font, but a
+           fallback font can be taller/wider – the base is therefore
+           grown until every ladder step from 1.0 up to SCALE_MAX fits.
+           From then on the content needs at most ``base × s`` at every
+           scale, i.e. the layout shrinks exactly as fast as the window.
+
+        2. **Minimum size.** Below a certain scale the readability floors
+           (6 pt font, 30 px header, 1 px padding…) stop following the
+           scale, and from there the content would be clipped. The
+           smallest still-fitting ladder step is searched downwards from
+           1.0, and the minimum window size is ``base × that scale``.
+
+        The measurement uses the widest text every value label can ever
+        show (WIDEST_TEXTS), so a later value change cannot clip either.
+        The resulting minimum depends only on the content – never on the
+        current window size – hence resizing can never feed back into it.
+        """
+        saved_scale = self._scale
+        saved_texts = {name: lbl.text()
+                       for name, lbl in self._widest_text_labels()}
+        for name, lbl in self._widest_text_labels():
+            lbl._hud_widest = self.WIDEST_TEXTS[name]
+        self.setUpdatesEnabled(False)
+        try:
+            for name, lbl in self._widest_text_labels():
+                lbl.setText(self.WIDEST_TEXTS[name])
+
+            # 1. base size – the largest demand over the ladder from 1.0 up
+            bw, bh = self._base_width, self._base_height
+            s = 1.0
+            while s <= self.SCALE_MAX + 1e-9:
+                hint = self._content_hint(s)
+                bw = max(bw, math.ceil(hint.width() / s))
+                bh = max(bh, math.ceil(hint.height() / s))
+                s = round(s + self.SCALE_STEP, 2)
+            self._base_width, self._base_height = bw, bh
+
+            # 2. lowest ladder step that still fits
+            s = 1.0
+            while (round(s - self.SCALE_STEP, 2) >= self.MIN_SCALE_FLOOR
+                   and self._fits(round(s - self.SCALE_STEP, 2))):
+                s = round(s - self.SCALE_STEP, 2)
+            self._min_scale = s
+        finally:
+            for name, lbl in self._widest_text_labels():
+                lbl.setText(saved_texts[name])
+            self._set_scale(saved_scale)
+            self.setUpdatesEnabled(True)
+
         self.setMinimumSize(
-            max(self.MIN_W, min(hint.width(), self.width())),
-            max(self.MIN_H, min(hint.height(), self.height())),
+            max(self.MIN_W, round(self._base_width * self._min_scale)),
+            max(self.MIN_H, round(self._base_height * self._min_scale)),
         )
+        logger.debug(
+            "HUD méretezés kalibrálva: alap=%dx%d, min skála=%.2f, "
+            "min méret=%dx%d", self._base_width, self._base_height,
+            self._min_scale, self.minimumWidth(), self.minimumHeight(),
+        )
+
+    def _widest_text_labels(self) -> "list[tuple[str, QLabel]]":
+        """The value labels measured with their widest possible text."""
+        return [(name, getattr(self, name)) for name in self.WIDEST_TEXTS]
 
     def cleanup_sound(self) -> None:
         """Public interface for releasing the sound system."""
@@ -1193,11 +1450,11 @@ class HUDWindow(QWidget):
                 )
 
         sg = target_screen.availableGeometry()
-        # Clamp to the absolute floor (MIN_W/MIN_H), NOT the current
-        # minimum: at startup the minimum is still computed for the 1.0
-        # scale content, which would round a saved small size upwards
-        w = max(self.MIN_W, min(rect["w"], sg.width()))
-        h = max(self.MIN_H, min(rect["h"], sg.height()))
+        # Clamp to the measured readable minimum: a geometry saved by an
+        # older version (or on another font) may be smaller than what the
+        # content needs – restoring it as-is would clip the texts
+        w = max(self.minimumWidth(), min(rect["w"], sg.width()))
+        h = max(self.minimumHeight(), min(rect["h"], sg.height()))
         if center_on_screen:
             x = sg.x() + (sg.width() - w) // 2
             y = sg.y() + (sg.height() - h) // 2
@@ -1205,10 +1462,6 @@ class HUDWindow(QWidget):
             # The WHOLE window goes inside the monitor's visible area
             x = max(sg.x(), min(rect["x"], sg.x() + sg.width() - w))
             y = max(sg.y(), min(rect["y"], sg.y() + sg.height() - h))
-        # Qt would clamp setGeometry to the effective minimum – lower it to
-        # the floor first; the correct (saved-scale) content minimum is
-        # recomputed by the debounce timer started from resizeEvent
-        self.setMinimumSize(self.MIN_W, self.MIN_H)
         # The scale is applied by resizeEvent as a result of setGeometry
         self.setGeometry(x, y, w, h)
 

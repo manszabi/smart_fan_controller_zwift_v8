@@ -197,7 +197,7 @@ AKTIV (idozito fut)
 |------|-----|
 | `zwift_fan_controller.py` | Fo belepo (vekony): az `smart_fan_controller` csomag `app.main()`-jet hivja |
 | `zwift_api_polling.py` | Vekony belepo a Zwift API polling segedprocesszhez (logika: `smart_fan_controller/zwift_api/`) |
-| `tests/` | Tesztkeszlet (365 teszt): `test_core.py` (domain/config/logging/BLE), `test_pipeline.py` (async adatsik, UDP fogado, protobuf dekoder) |
+| `tests/` | Tesztkeszlet (368 teszt): `test_core.py` (domain/config/logging/BLE), `test_pipeline.py` (async adatsik, UDP fogado, protobuf dekoder) |
 | `settings.json` | Felhasznaloi konfiguracio (automatikusan letrejon alapertelmezettekkel) |
 | `settings.example.json` / `.jsonc` | Konfiguracios sablonok |
 | `CONFIGURATION.md` | Beallitasok dokumentacioja |
@@ -277,6 +277,13 @@ smart_fan_controller/
 - **Modern alap**: Python 3.11+ (`StrEnum`, beepitett `TimeoutError`), bleak 3.x,
   PySide6 6.5+ (nativ ablakmozgatas/atmeretezes: `startSystemMove`/`startSystemResize`);
   a config dataclass-ok `slots=True`-val futnak.
+- **Bemert HUD-meretezes**: a `HUDWindow` induláskor bemeri a tartalom valodi
+  meretigenyet (`_calibrate_sizing`) – ebbol jon a skala alapmerete es az ablak
+  legkisebb olvashato merete. A minimum ezutan allando, csak a tartalomtol fugg,
+  igy az atmeretezes nem hathat vissza ra (nincs "ugralo" ablak), a tartalom
+  pedig nem szorulhat a sajat merete ala (nincs kitakart szoveg). A skala 5%-os
+  letran mozog, a betumeret melle minden dobozmeret (padding, margo, osztovonal)
+  is skalazodik.
 
 ### Elonyok
 - **Tesztelhetoseg**: a tiszta fuggvenyek (zonazas, cooldown, atlagolas) a `core/`

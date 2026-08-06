@@ -7,6 +7,7 @@ installed (the conftest Qt stubs cannot run real widget code).
 """
 from __future__ import annotations
 
+import math
 import os
 import time
 
@@ -20,7 +21,7 @@ if not REAL_PYSIDE6:
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication  # noqa: E402
+from PySide6.QtWidgets import QApplication, QLayout, QWidget  # noqa: E402
 
 from hud_test.run_hud_test import FakeController  # noqa: E402
 from smart_fan_controller.config.schemas import DataSource, ZoneMode  # noqa: E402
@@ -218,14 +219,34 @@ def test_restore_missing_monitor_uses_primary_entry(app):
     pname, sg = _primary(app)
     ctrl = FakeController()
     ctrl.settings["hud"].window_geometry = {
-        pname: {"x": sg.x() + 40, "y": sg.y() + 50, "w": 320, "h": 440},
+        pname: {"x": sg.x() + 40, "y": sg.y() + 50, "w": 600, "h": 700},
         "\\\\.\\LECSATOLT_MONITOR": {"x": 5000, "y": 300, "w": 400, "h": 500},
     }
     win = HUDWindow(ctrl, app)
     win._timer.stop()
     win._restore_geometry()
     g = win.geometry()
-    assert (g.x(), g.y(), g.width(), g.height()) == (sg.x() + 40, sg.y() + 50, 320, 440)
+    assert (g.x(), g.y(), g.width(), g.height()) == (sg.x() + 40, sg.y() + 50, 600, 700)
+    win.deleteLater()
+
+
+def test_restore_clamps_size_up_to_readable_minimum(app):
+    """A tartalom olvasható minimuma alá mentett méret felfelé kerekítődik.
+
+    Régebbi verzió (vagy másik betűtípus) menthetett olyan kis ablakot,
+    amiben a szövegek már ki lennének takarva – a visszaállítás ilyenkor
+    a mért minimumra igazít."""
+    pname, sg = _primary(app)
+    ctrl = FakeController()
+    ctrl.settings["hud"].window_geometry = {
+        pname: {"x": sg.x() + 10, "y": sg.y() + 10, "w": 120, "h": 150},
+    }
+    win = HUDWindow(ctrl, app)
+    win._timer.stop()
+    win._restore_geometry()
+    g = win.geometry()
+    assert g.width() >= win.minimumWidth()
+    assert g.height() >= win.minimumHeight()
     win.deleteLater()
 
 
@@ -255,90 +276,101 @@ def test_resize_applies_scale(hud, app):
     # Rejtett ablaknak a Qt nem kézbesít resize eventet → meg kell jeleníteni
     win.show()
     app.processEvents()
-    win.resize(510, 690)  # ~1.5x
+    # ceil: a lefelé kerekítő létra egy fél pixeltől is fokot lépne vissza
+    win.resize(math.ceil(win._base_width * 1.5), math.ceil(win._base_height * 1.5))
     app.processEvents()
     assert win._scale == pytest.approx(1.5, abs=0.01)
     assert win._header.height() > base_header_h
     win.hide()
 
 
-def test_min_size_update_never_grows_window(hud, app):
-    """A tartalom-minimum frissítése nem nagyíthatja az ablakot.
+def test_scale_snaps_to_the_calibrated_ladder(hud):
+    """A skála a kalibrált létrára kerekítődik – LEFELÉ.
 
-    Regresszió: a minimum a pillanatnyi ablakméretnél nagyobb hintre
-    emelve visszacsatolási hurkot indított (nagyobb ablak → nagyobb scale
-    → nagyobb hint → megint nagyobb minimum), ami húzás után 200 ms-onként
-    lépcsőzve, magától növelte az ablakot."""
+    A létrafokokat a _calibrate_sizing méri be; a köztes méretekre lefelé
+    kerekítve garantált, hogy a tartalom befér (a maradék pixel az alsó
+    kitöltésbe megy, nem egy levágott sorba)."""
+    win, _ctrl = hud
+    step = win.SCALE_STEP
+    assert win._quantize_scale(1.5) == pytest.approx(1.5, abs=1e-9)
+    assert win._quantize_scale(1.5 + step * 0.9) == pytest.approx(1.5, abs=1e-9)
+    # a létra alja/teteje: sosem lépünk ki a bemért tartományból
+    assert win._quantize_scale(0.01) == pytest.approx(win._min_scale, abs=1e-9)
+    assert win._quantize_scale(99.0) == pytest.approx(win.SCALE_MAX, abs=1e-9)
+
+
+def test_minimum_size_is_the_measured_readable_minimum(hud):
+    """Az ablak minimuma a bemért olvasható minimum, nem az abszolút padló."""
+    win, _ctrl = hud
+    assert win.minimumWidth() == max(
+        win.MIN_W, round(win._base_width * win._min_scale))
+    assert win.minimumHeight() == max(
+        win.MIN_H, round(win._base_height * win._min_scale))
+    # A kalibrált alapméret elbírja a tartalmat 1.0 skálán
+    assert win._fits(1.0)
+
+
+def test_no_label_is_clipped_at_any_size(hud, app):
+    """Regresszió: átméretezéskor egyetlen felirat/érték sem takaródhat ki.
+
+    A ZONE / POWER / HEART RATE / STARFLEET sorok korábban levágódtak,
+    mert a minimum a pillanatnyi ablakméretre volt korlátozva, a rácsok
+    állandó (nem skálázódó) paddingje pedig kiszorította a szöveget."""
     win, _ctrl = hud
     win.show()
     app.processEvents()
-    # A húzás kezdetének emulálása: padló minimum, majd kis méret
-    win.setMinimumSize(win.MIN_W, win.MIN_H)
-    win.resize(win.MIN_W, win.MIN_H)
-    app.processEvents()
-    size_before = win.size()
+    # a lehető legszélesebb értékekkel: később sem takarhat ki semmit
+    for name, text in HUDWindow.WIDEST_TEXTS.items():
+        getattr(win, name).setText(text)
 
-    win._update_min_size()
-    app.processEvents()
-
-    assert win.size() == size_before  # nem nőhet magától
-    assert win.minimumWidth() <= size_before.width()
-    assert win.minimumHeight() <= size_before.height()
+    mw, mh = win.minimumWidth(), win.minimumHeight()
+    sizes = [(mw, mh), (mw, mh + 200), (mw + 200, mh), (mw + 40, mh + 15),
+             (mw * 2, mh * 2), (mw + 7, mh + 300), (mw + 300, mh + 7)]
+    widgets = win.findChildren(QWidget)
+    for w, h in sizes:
+        win.resize(w, h)
+        app.processEvents()
+        win.layout().activate()
+        for wid in widgets:
+            if not wid.isVisible() or not wid.sizeHint().isValid():
+                continue
+            hint, size = wid.sizeHint(), wid.size()
+            label = getattr(wid, "text", lambda: type(wid).__name__)()
+            assert size.width() >= hint.width(), f"{label!r} levágva @ {w}x{h}"
+            assert size.height() >= hint.height(), f"{label!r} levágva @ {w}x{h}"
     win.hide()
 
 
-def test_min_size_update_deferred_while_button_down(hud, monkeypatch):
-    """Lenyomott bal gombnál (natív resize közben) a minimum nem emelkedik,
-    a debounce timer újra-élesíti magát."""
-    from PySide6.QtCore import Qt
-    from PySide6.QtGui import QGuiApplication
+def test_panel_layouts_do_not_pin_their_minimum(hud):
+    """A belső panelek minimuma nem ragadhat be a legnagyobb skálán mértre.
 
+    Qt alap SetDefaultConstraint-je a layout minimumát a widget explicit
+    minimumSize-ába írja, amit utána már csak emelni lehet – emiatt a
+    kicsinyített ablakban a sorok nem tudtak összébb menni, csak a
+    szövegük szorult ki."""
     win, _ctrl = hud
-    monkeypatch.setattr(
-        QGuiApplication, "mouseButtons",
-        staticmethod(lambda: Qt.MouseButton.LeftButton),
-    )
-    win.setMinimumSize(win.MIN_W, win.MIN_H)
-    win._min_size_timer.stop()
-
-    win._update_min_size()
-
-    assert win.minimumSize().width() == win.MIN_W
-    assert win.minimumSize().height() == win.MIN_H
-    assert win._min_size_timer.isActive()  # később újrapróbálkozik
-    win._min_size_timer.stop()
+    for lay, _margins, _spacing in win._scalable_layouts:
+        assert lay.sizeConstraint() == QLayout.SizeConstraint.SetNoConstraint
 
 
-def test_grip_press_does_not_arm_min_size_timer(hud, app):
-    """A sarok megfogása önmagában (mozgatás nélkül) nem indítja a
-    minimum-frissítő debounce-t – 200 ms-nál hosszabb nyomva tartás alatt
-    sem ugorhat vissza a tartalom-minimum a húzás megkezdése előtt."""
-    from PySide6.QtCore import QPointF, Qt
-    from PySide6.QtGui import QMouseEvent
-
+def test_box_metrics_follow_the_scale(hud, app):
+    """A padding/margó/osztóvonal is skálázódik, nem csak a betűméret."""
     win, _ctrl = hud
     win.show()
     app.processEvents()
-    win._min_size_timer.stop()
+    win.resize(round(win._base_width * 2), round(win._base_height * 2))
+    app.processEvents()
+    big_px = win._px(4)
+    big_css = win._lbl_zone._hud_css          # padding a stíluslapban
+    big_sep = win._scalable_heights[0][0].height()   # osztóvonal vastagsága
+    big_row = win._lbl_power.parentWidget().layout().contentsMargins().top()
 
-    pos = QPointF(win.width() - 5, win.height() - 5)  # a grip sarokban
-    press = QMouseEvent(
-        QMouseEvent.Type.MouseButtonPress, pos,
-        win.mapToGlobal(pos.toPoint()),
-        Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton,
-        Qt.KeyboardModifier.NoModifier,
-    )
-    win.mousePressEvent(press)
-
-    assert not win._min_size_timer.isActive()
-    assert win.minimumSize().width() == win.MIN_W
-    assert win.minimumSize().height() == win.MIN_H
-    win.mouseReleaseEvent(QMouseEvent(
-        QMouseEvent.Type.MouseButtonRelease, pos,
-        win.mapToGlobal(pos.toPoint()),
-        Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton,
-        Qt.KeyboardModifier.NoModifier,
-    ))
+    win.resize(win.minimumWidth(), win.minimumHeight())
+    app.processEvents()
+    assert win._px(4) < big_px
+    assert win._lbl_zone._hud_css != big_css
+    assert win._scalable_heights[0][0].height() < big_sep
+    assert win._lbl_power.parentWidget().layout().contentsMargins().top() < big_row
     win.hide()
 
 
