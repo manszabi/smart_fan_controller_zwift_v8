@@ -16,6 +16,100 @@ a verziószámozás a [Semantic Versioning](https://semver.org/) sémát
 
 ### Javítva
 
+Teljes kód-átvilágítás utáni javítási csomag (config, core, BLE/ANT+/Zwift
+kezelők, processzorok, controller, app, zwift_api).
+
+**Hibák**
+
+- **ANT+ USB handle szivárgás node-init hibánál** (`handlers/_ant.py`): a
+  `Node()` már lefoglalta a sticket, de ha a `set_network_key()` vagy az
+  eszköz-regisztráció elhasalt, a node sosem került a lock alá – így a
+  `_stop_node()` már `None`-t talált, és a nyitott USB handle bennragadt.
+  Ez maga okozta a következő próbálkozás „could not claim interface
+  (resource busy)" hibáját, vagyis a hiba önmagát táplálta. A félkész node
+  mostantól hibaágon is leáll (`_release_node`).
+- **A Zwift UDP adatforrás véglegesen leállt foglalt portnál**
+  (`handlers/zwift_udp.py`): a `run()` elnyelte az `OSError`-t és normálisan
+  visszatért, amit a `_guarded_task` sikeres befejezésnek látott – így az
+  újrapróbálkozás sem futott le, és a HUD-on egy logsor után örökre
+  `ZWIFT P:FAIL` maradt. A fogadó mostantól – a BLE/ANT+ kezelőkhöz
+  hasonlóan – saját újrakötési ciklussal próbálkozik (5s-től 60s-ig növekvő
+  várakozással), és jelzi a felhasználónak az első hibát.
+- **HUD-mentés kivétellel elszállt hibás settings.json-nél**
+  (`config/loader.py`): a `save_hud_settings_only` `isinstance` ellenőrzés
+  nélkül írt a betöltött adatba, így egy nem-objektum (pl. lista) tartalmú
+  fájlnál `TypeError`-t dobott – a HUD debounce-olt automata mentéséből,
+  azaz a Qt eseményhurokból.
+- **Minden HUD-mentés átnevezte a `close_at_zwiftapp_exe` kulcsot**
+  (`config/schemas.py`): a betöltő az aláhúzásos nevet preferálja, a
+  `to_dict()` viszont a régi, pontos `close_at_zwiftapp.exe` nevet írta ki.
+  Mostantól az aktuális kulcsnevet menti; a régit olvasáskor továbbra is
+  elfogadja.
+- **Rossz típusú szekció csendben elveszett** (`config/loader.py`): az
+  elgépelt szekció-*névre* figyelmeztetett a program, de ha egy létező
+  szekció *értéke* nem objektum (pl. `"power_zones": 42`), az egész szekció
+  némán az alapértelmezésre esett vissza. Most ez is figyelmeztetést kap.
+
+**Robusztusság**
+
+- `_write_json_atomic`: `flush()` + `os.fsync()` az `os.replace` előtt – e
+  nélkül az adat még az OS write cache-ben ülhetett, miközben az átnevezés
+  már megtörtént (a docstring épp áramszünet ellen ígért védelmet).
+- A forrás-specifikus `minimum_samples` tartománya 1–100-ról 1–600-ra
+  módosult, egységesen a globális mezőével.
+- A HR-feldolgozó a power-ágnál megszokott sorrendben validál (előbb
+  ellenőriz, utána konvertál), és az érvénytelen HR is kap felhasználói
+  figyelmeztetést – korábban némán eldobódott.
+- `controller.stop()`: `wait()` a `kill()` után – enélkül a Zwift
+  segédprocessz zombiként maradhatott POSIX rendszereken.
+- Az ANT+ watchdog lock alatt olvassa a node-referenciát.
+- A Zwift segédprocessz korai hibakilépésein is lezárul a HTTP session.
+- `resolve_log_dir`: az írhatóság-teszt fájljának sikertelen törlése többé
+  nem minősíti írhatatlannak a könyvtárat.
+
+### Módosítva
+
+- **Az átlagolási ablak időalapú lett** (`core/averaging.py`): a
+  `buffer_seconds` mostantól valós másodperceket jelent – egy minta akkor
+  esik ki, ha ennél régebbi –, a `buffer_rate_hz` pedig csak a puffer
+  méretkorlátját adja. Korábban a puffer kizárólag mintaszámra vágott, így a
+  beállítottnál lassabb forrásnál az ablak jóval hosszabb lett: a Zwift
+  HTTPS API 3 másodpercnél sűrűbben nem kérdezhető le (~0.33 Hz), a
+  `10s × 3Hz = 30` mintás puffer tehát **90 másodpercnyi** adatot tartott,
+  vagyis a ventilátor másfél perces átlagot követett. A BLE/ANT+ forrásoknál
+  (4 Hz, egyezik a beállítottal) a viselkedés változatlan. A vártnál is
+  lassabb forrásnál a program mindig megtartja az `minimum_samples`-nyi
+  legfrissebb mintát, hogy soha ne maradjon átlag – és így vezérlés – nélkül.
+- **`zwift_api.poll_interval` alsó határa 1.0-ról 3.0-ra** nőtt: a Zwift API
+  ennél sűrűbben nem szolgál ki, kisebb érték csak rate-limit (429)
+  válaszokat eredményezne. A `--poll-interval` CLI kapcsoló is korlátozódik.
+
+### Karbantartás (2026-os korszerűsítés)
+
+- **`asyncio.set_event_loop()` kivezetve** (`app.py`): a 3.14-ben elavult, a
+  3.16-ban megszűnő hívás nem kell – az event loop objektum expliciten
+  utazik, a benne futó kód pedig `asyncio.get_running_loop()`-ot használ.
+- **Függőség-alsóhatárok felhúzva** a 2026-os kiadásokhoz: `bleak>=1.0.0`,
+  `openant>=1.3.0`, `requests>=2.32.0`, `PySide6>=6.7.0`,
+  `pywinauto>=0.6.9`. (A bleak 1.0/2.0/3.0 törő változásai – notification
+  callback típusa, `connect()` visszatérési értéke, `write_gatt_char`
+  `response` paramétere, `BLEDevice.name` – nem érintik a kódot.)
+- **Célzott üzenet kikapcsolt Bluetooth esetén**: a bleak 2.0 új
+  `BleakBluetoothNotAvailableError` kivételét (és a régebbi bleak
+  megfelelő hibaszövegét) felismerve egyszeri, cselekvésre váltható
+  figyelmeztetés jön a nyers hibaszöveg helyett – az ANT+ libusb-tipp
+  mintájára.
+- **Python-támogatás dokumentálva**: 3.11–3.14 (a HUD-hoz kellő PySide6
+  6.11 még nem támogatja a 3.15-öt); `classifiers` a `pyproject.toml`-ban.
+- **Teszt-függőségek és pytest-konfiguráció deklarálva**:
+  `pip install -e ".[dev]"`, illetve `[tool.pytest.ini_options]` – benne a
+  saját kódból érkező elavulás-figyelmeztetés hibává léptetése, hogy a
+  következő ilyen (pl. egy 3.16-os változás) időben kiderüljön.
+
+Új regressziós tesztek minden fenti ponthoz (összesen 384 teszt).
+
+### Korábbi javítások
+
 - **HUD: kitakart feliratok átméretezéskor** (`ui/window.py`, `ui/widgets.py`):
   bizonyos ablakméreteknél a ZONE, a POWER, a HEART RATE és a STARFLEET
   CYCLING DIV felirat (és a hozzájuk tartozó értékek) nem látszottak

@@ -11,22 +11,22 @@
 
 # --- BLE kommunikáció: ventilátor kimenet + BLE power/HR szenzorok ---
 #     (smart_fan_controller.handlers._ble)
-bleak>=0.21.0
+bleak>=1.0.0
 
 # --- ANT+ kommunikáció: power meter, HR monitor ---
 #     (smart_fan_controller.handlers._ant)
-openant>=1.0.0
+openant>=1.3.0
 
 # --- Zwift HTTPS API polling: a "zwiftudp" adatforrás segédprocessze ---
 #     (smart_fan_controller.zwift_api – külön processzben fut, UDP-n továbbít a fő appnak)
-requests>=2.28.0
+requests>=2.32.0
 
 # --- Zwift auto-launch: Windows UI automatizáció (opcionális, csak Windows) ---
-pywinauto>=0.6.8
+pywinauto>=0.6.9
 
 # --- HUD: PySide6 / Qt6 LCARS felület (opcionális – nélküle headless módban fut) ---
 #     (smart_fan_controller.ui)
-PySide6>=6.5.0
+PySide6>=6.7.0
 
 # --- Standard library (nem kell telepíteni, csak referencia) ---
 # asyncio, threading, json, signal, subprocess, collections, dataclasses,

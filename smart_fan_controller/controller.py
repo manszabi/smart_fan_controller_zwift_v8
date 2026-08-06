@@ -872,6 +872,12 @@ class FanController:
                 except subprocess.TimeoutExpired:
                     logger.warning("zwift_api_polling.py nem állt le 5s alatt, kill...")
                     self._zwift_proc.kill()
+                    # wait() after kill: without reaping it, the child stays
+                    # a zombie on POSIX (_start_zwift_subprocess does the same)
+                    try:
+                        self._zwift_proc.wait(timeout=5.0)
+                    except (subprocess.TimeoutExpired, OSError) as exc:
+                        logger.debug(f"zwift_api_polling.py wait hiba kill után: {exc}")
                 except OSError as exc:
                     logger.error(f"zwift_api_polling.py leállítása sikertelen: {exc}")
                 finally:

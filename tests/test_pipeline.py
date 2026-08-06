@@ -237,6 +237,63 @@ def _field(num: int, wire: int, payload: bytes) -> bytes:
     return _varint((num << 3) | wire) + payload
 
 
+class TestZwiftUdpRebind:
+    """Foglalt port: a fogadó újrapróbálkozik, nem hal el véglegesen.
+
+    Regresszió: a run() elnyelte az OSError-t és normálisan visszatért, amit
+    a _guarded_task sikeres befejezésnek látott – így a Zwift adatforrás egy
+    logsor után az egész munkamenetre halott maradt (HUD: örök ZWIFT P:FAIL).
+    """
+
+    def _handler(self, port):
+        from smart_fan_controller.handlers.zwift_udp import ZwiftUDPInputHandler
+        settings = {
+            "datasource": DatasourceConfig(
+                power_source=DataSource.ZWIFTUDP,
+                hr_source=DataSource.ZWIFTUDP,
+                zwift_udp_host="127.0.0.1",
+                zwift_udp_port=port,
+            ),
+            "heart_rate_zones": HeartRateZonesConfig(enabled=True),
+            "power_zones": PowerZonesConfig(min_watt=0, max_watt=1000),
+        }
+        return ZwiftUDPInputHandler(settings, asyncio.Queue(maxsize=10),
+                                    asyncio.Queue(maxsize=10))
+
+    def test_busy_port_retries_then_binds_when_freed(self):
+        # A port elfoglalása egy másik sockettel
+        blocker = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        blocker.bind(("127.0.0.1", 0))
+        port = blocker.getsockname()[1]
+
+        async def scenario():
+            handler = self._handler(port)
+            handler.REBIND_DELAY = 0.05        # a teszt ne várjon 5s-et
+            handler.REBIND_DELAY_MAX = 0.05
+            task = asyncio.create_task(handler.run())
+            try:
+                await asyncio.sleep(0.2)
+                # Foglalt port: még nincs transport, de a task ÉL (nem halt el)
+                assert handler._transport is None
+                assert not task.done()
+
+                blocker.close()               # a port felszabadul
+                for _ in range(100):
+                    if handler._transport is not None:
+                        break
+                    await asyncio.sleep(0.02)
+                assert handler._transport is not None, "nem kötött újra a felszabadult portra"
+            finally:
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+                blocker.close()
+
+        asyncio.run(scenario())
+
+
 class TestProtobufDecoder:
     """A zwift_api minimál protobuf dekódere – szintetikus PlayerState blobbal."""
 

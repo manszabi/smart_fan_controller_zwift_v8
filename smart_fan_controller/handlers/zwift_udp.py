@@ -16,6 +16,7 @@ from smart_fan_controller.config.schemas import DataSource, HeartRateZonesConfig
 from smart_fan_controller.core import is_valid_hr, is_valid_power
 
 logger = logging.getLogger("zwift_fan_controller_new")
+user_logger = logging.getLogger("user")
 
 
 class ZwiftUDPInputHandler:
@@ -70,8 +71,20 @@ class ZwiftUDPInputHandler:
         self.power_lastdata: float = 0.0
         self.hr_lastdata: float = 0.0
 
+    # Retry pacing for a failed bind (the port is typically only briefly
+    # taken: a restart, or the previous instance still shutting down)
+    REBIND_DELAY = 5.0
+    REBIND_DELAY_MAX = 60.0
+
     async def run(self) -> None:
-        """Main coroutine of the receiver – starts an asyncio DatagramProtocol."""
+        """Main coroutine of the receiver – starts an asyncio DatagramProtocol.
+
+        Keeps retrying the bind, like the BLE/ANT+ handlers keep retrying
+        their connection: a busy port used to kill the Zwift source for
+        the whole session after a single log line (the swallowed OSError
+        looked like a normal completion to the _guarded_task wrapper, so
+        even its retry never fired).
+        """
         loop = asyncio.get_running_loop()
         logger.info(f"Zwift UDP fogadó elindítva: {self.host}:{self.port}")
 
@@ -91,21 +104,41 @@ class ZwiftUDPInputHandler:
             def connection_lost(self, exc: Exception | None) -> None:
                 logger.info("Zwift UDP kapcsolat lezárva")
 
-        try:
-            transport, _ = await loop.create_datagram_endpoint(
-                _Protocol,
-                local_addr=(self.host, self.port),
-            )
+        attempt = 0
+        while True:
+            try:
+                transport, _ = await loop.create_datagram_endpoint(
+                    _Protocol,
+                    local_addr=(self.host, self.port),
+                )
+            except OSError as exc:
+                attempt += 1
+                delay = min(self.REBIND_DELAY * attempt, self.REBIND_DELAY_MAX)
+                if attempt == 1:
+                    # The first failure is worth the user's attention: with
+                    # no socket there is no Zwift data at all
+                    user_logger.warning(
+                        f"⚠ Zwift UDP port nem nyitható meg "
+                        f"({self.host}:{self.port}): {exc} – "
+                        f"újrapróbálkozás {delay:.0f}s múlva..."
+                    )
+                else:
+                    logger.warning(
+                        f"Zwift UDP bind hiba ({attempt}.): {exc} – "
+                        f"újrapróbálkozás {delay:.0f}s múlva"
+                    )
+                await asyncio.sleep(delay)
+                continue
+
+            if attempt:
+                user_logger.info(f"✓ Zwift UDP port megnyitva: {self.host}:{self.port}")
+            attempt = 0
             try:
                 # An event that never fires: sleeps until task cancellation
                 # (no pointless hourly wakeups like a sleep loop would have)
                 await asyncio.Event().wait()
             finally:
                 transport.close()
-        except asyncio.CancelledError:
-            raise
-        except OSError as exc:
-            logger.error(f"Zwift UDP bind hiba: {exc}")
 
     def _process_packet(self, raw: bytes) -> None:
         """Process one JSON packet – validation and queueing.
