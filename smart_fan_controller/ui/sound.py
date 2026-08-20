@@ -17,9 +17,22 @@ import sys
 import wave
 
 from PySide6.QtCore import QUrl
-from PySide6.QtMultimedia import QSoundEffect
 
 logger = logging.getLogger("zwift_fan_controller_new")
+
+# QtMultimedia is a separate PySide6 module backed by a platform audio
+# stack (PulseAudio/PipeWire on Linux, FFmpeg elsewhere). On a machine
+# without it the import raises ImportError – and since the ui package
+# imports this module, that used to take the WHOLE HUD down and drop the
+# application into headless mode over a missing sound backend. Sound is
+# optional; the HUD is not.
+try:
+    from PySide6.QtMultimedia import QSoundEffect
+    _QT_MULTIMEDIA_AVAILABLE = True
+except ImportError as _exc:  # pragma: no cover - platform dependent
+    QSoundEffect = None  # type: ignore[assignment, misc]
+    _QT_MULTIMEDIA_AVAILABLE = False
+    _QT_MULTIMEDIA_ERROR = str(_exc)
 
 
 class LCARSSoundManager:
@@ -71,6 +84,15 @@ class LCARSSoundManager:
         A missing file is not an error: the effect stays muted and the log
         states exactly which file to place where.
         """
+        if not _QT_MULTIMEDIA_AVAILABLE:
+            logger.warning(
+                "A PySide6.QtMultimedia nem tölthető be (%s) – a HUD "
+                "hangeffektek nélkül fut. Linuxon jellemzően a "
+                "PulseAudio/PipeWire kliens könyvtár hiányzik.",
+                _QT_MULTIMEDIA_ERROR,
+            )
+            return
+
         snd_dir = self.sounds_dir()
         missing: list[str] = []
         for name in self.SOUND_NAMES:

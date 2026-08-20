@@ -5,7 +5,6 @@ Analyzes firmware.bin files and checks compatibility with partition tables.
 """
 
 import sys
-import struct
 import os
 
 def analyze_firmware(bin_path):
@@ -57,9 +56,8 @@ def check_partition_table():
                 continue
             parts = [p.strip() for p in line.split(',')]
             if len(parts) >= 5:
-                name, typ, subtype, offset, size = parts[0], parts[1], parts[2], parts[3], parts[4]
+                name, typ, offset, size = parts[0], parts[1], parts[3], parts[4]
                 if typ == 'app':
-                    offset_dec = int(offset, 16)
                     size_dec = int(size, 16)
                     print(f"{name:8} @ 0x{offset} (0x{size} = {size_dec:,} bytes)")
 

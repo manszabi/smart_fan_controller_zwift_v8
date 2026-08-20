@@ -2756,3 +2756,172 @@ class TestBleFanReconnect:
             assert ctl._reconnect_task is None
 
         asyncio.run(scenario())
+
+
+# ============================================================
+# ÁTVILÁGÍTÁS: REGRESSZIÓS TESZTEK
+# ============================================================
+
+
+class TestAtomicSettingsWrite:
+    """A settings.json atomikus írása – korrupció elleni védelem."""
+
+    def test_temp_file_name_is_process_unique(self):
+        """A temp fájl neve tartalmazza a PID-et (nem ütközik más processzel).
+
+        Közös 'settings.json.tmp' esetén a főprogram HUD-mentése és a
+        zwift_api_polling alfolyamat hitelesítő-mentése ugyanabba a fájlba
+        írt, és az os.replace az összekeveredett, hibás tartalmat tette
+        közzé a felhasználó settings.json-jaként.
+        """
+        from smart_fan_controller.config import loader as _loader
+
+        captured: list[str] = []
+        real_open = open
+
+        def spy_open(path, *a, **kw):
+            if str(path).endswith(".tmp"):
+                captured.append(os.path.basename(str(path)))
+            return real_open(path, *a, **kw)
+
+        tmp = tempfile.mkdtemp()
+        try:
+            target = os.path.join(tmp, "settings.json")
+            with patch("smart_fan_controller.config.loader.open", spy_open, create=True):
+                _loader._write_json_atomic(target, {"a": 1})
+            assert captured, "nem készült temp fájl"
+            assert str(os.getpid()) in captured[0]
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_write_is_atomic_and_leaves_no_temp_file(self):
+        """Sikeres írás után csak a végleges fájl marad a könyvtárban."""
+        from smart_fan_controller.config.loader import _write_json_atomic
+
+        tmp = tempfile.mkdtemp()
+        try:
+            target = os.path.join(tmp, "settings.json")
+            _write_json_atomic(target, {"ékezet": "őű", "n": 1})
+            _write_json_atomic(target, {"n": 2})
+            assert os.listdir(tmp) == ["settings.json"]
+            import json as _json
+            assert _json.load(open(target, encoding="utf-8")) == {"n": 2}
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_failed_write_keeps_the_previous_content(self):
+        """Írás közbeni hiba esetén a régi tartalom sértetlen marad."""
+        from smart_fan_controller.config import loader as _loader
+
+        tmp = tempfile.mkdtemp()
+        try:
+            target = os.path.join(tmp, "settings.json")
+            _loader._write_json_atomic(target, {"jo": 1})
+            with patch("json.dump", side_effect=OSError("lemez tele")):
+                with pytest.raises(OSError):
+                    _loader._write_json_atomic(target, {"uj": 2})
+            import json as _json
+            assert _json.load(open(target, encoding="utf-8")) == {"jo": 1}
+            assert os.listdir(tmp) == ["settings.json"]
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+
+class TestBleDeviceLogCaching:
+    """A ble_devices.log nem olvasódik újra minden scan-nél és nem nő korlátlanul."""
+
+    @staticmethod
+    def _reset_caches():
+        from smart_fan_controller.handlers import _ble
+        _ble._ble_logged_addresses.clear()
+        _ble._ble_log_full_warned.clear()
+        _ble._ble_printed_addresses.clear()
+
+    def test_file_is_parsed_once_per_process(self):
+        """A második scan már nem nyitja meg olvasásra a log fájlt."""
+        from smart_fan_controller.handlers import _ble
+
+        self._reset_caches()
+        tmp = tempfile.mkdtemp()
+        try:
+            _ble._log_ble_devices_to_file(
+                [("Fan", "AA:01", ["u"])], "BLE Fan", tmp, True)
+            reads: list[str] = []
+            real_open = open
+
+            def spy_open(path, mode="r", *a, **kw):
+                if "r" in mode and str(path).endswith("ble_devices.log"):
+                    reads.append(str(path))
+                return real_open(path, mode, *a, **kw)
+
+            with patch("smart_fan_controller.handlers._ble.open", spy_open, create=True):
+                _ble._log_ble_devices_to_file(
+                    [("Fan", "AA:01", ["u"]), ("Uj", "BB:02", ["u"])],
+                    "BLE Fan", tmp, True)
+            assert reads == [], "a gyorsítótár ellenére újraolvasta a fájlt"
+            content = open(os.path.join(tmp, "ble_devices.log"), encoding="utf-8").read()
+            assert content.count("AA:01") == 1   # nem duplikálódott
+            assert "BB:02" in content            # az új eszköz bekerült
+        finally:
+            self._reset_caches()
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_entry_cap_stops_unbounded_growth(self):
+        """A bejegyzés-korlát felett már nem ír a fájlba (forgó BLE címek)."""
+        from smart_fan_controller.handlers import _ble
+
+        self._reset_caches()
+        tmp = tempfile.mkdtemp()
+        try:
+            with patch.object(_ble, "_BLE_LOG_MAX_ENTRIES", 3):
+                _ble._log_ble_devices_to_file(
+                    [(f"d{i}", f"AA:{i}", []) for i in range(3)],
+                    "BLE Fan", tmp, True)
+                size_before = os.path.getsize(os.path.join(tmp, "ble_devices.log"))
+                _ble._log_ble_devices_to_file(
+                    [("uj", "ZZ:99", [])], "BLE Fan", tmp, True)
+                assert os.path.getsize(os.path.join(tmp, "ble_devices.log")) == size_before
+        finally:
+            self._reset_caches()
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_cache_reloads_when_the_file_was_deleted(self):
+        """A fájl törlése után az eszközök újra kiíródnak."""
+        from smart_fan_controller.handlers import _ble
+
+        self._reset_caches()
+        tmp = tempfile.mkdtemp()
+        try:
+            log = os.path.join(tmp, "ble_devices.log")
+            _ble._log_ble_devices_to_file([("Fan", "AA:01", [])], "BLE Fan", tmp, True)
+            os.remove(log)
+            _ble._log_ble_devices_to_file([("Fan", "AA:01", [])], "BLE Fan", tmp, True)
+            assert "AA:01" in open(log, encoding="utf-8").read()
+        finally:
+            self._reset_caches()
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_console_listing_is_not_repeated_for_known_devices(self, caplog):
+        """Ismételt scan csak az ÚJ eszközöket listázza (konzol-elárasztás ellen)."""
+        import logging as _logging
+        from smart_fan_controller.handlers import _ble
+
+        self._reset_caches()
+        devices = [(f"dev{i}", f"AA:{i:02d}", []) for i in range(10)]
+        try:
+            with caplog.at_level(_logging.INFO, logger="user"):
+                _ble._print_ble_devices(devices, "BLE Fan")
+                first = len(caplog.records)
+                caplog.clear()
+                _ble._print_ble_devices(devices, "BLE Fan")
+                second = len(caplog.records)
+                caplog.clear()
+                _ble._print_ble_devices(
+                    devices + [("uj", "FF:FF", [])], "BLE Fan")
+                third_text = "\n".join(r.getMessage() for r in caplog.records)
+            assert first >= 11              # fejléc + 10 eszköz
+            assert second == 1              # csak az összefoglaló sor
+            assert "FF:FF" in third_text    # az új eszköz megjelenik
+            assert "AA:00" not in third_text
+        finally:
+            self._reset_caches()

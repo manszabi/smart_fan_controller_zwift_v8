@@ -14,7 +14,96 @@ a verziószámozás a [Semantic Versioning](https://semver.org/) sémát
 
 ## [Unreleased]
 
-### Javítva
+### Javítva (második átvilágítási kör)
+
+**Összeomlás / önmagától leálló program**
+
+- **A HUD 5 perc után magától leállította az egész alkalmazást Windowson
+  kívül** (`ui/window.py`): a `FanController.is_process_running()` csak
+  Windowson tud választ adni, máshol *mindig* `False`. Ezt a
+  ZwiftApp.exe-figyelő szó szerint „a Zwift nem fut"-ként értelmezte, így
+  Linuxon/macOS-en a `_ZWIFT_GRACE_PERIOD` (300 s) lejárta bezárta a HUD-ot
+  – vele a vezérlőt is –, kellős közepén az edzésnek. A figyelés mostantól
+  csak ott aktív, ahol a folyamatlista valóban olvasható; máshol egy
+  info-sor jelzi, hogy a `hud.close_at_zwiftapp_exe` hatástalan.
+- **Hiányzó hang-backend megbuktatta a teljes HUD-ot** (`ui/sound.py`): a
+  `PySide6.QtMultimedia` importja a `ui` csomag betöltési láncában van, így
+  egy hiányzó PulseAudio/PipeWire kliens könyvtár `ImportError`-ja miatt az
+  alkalmazás – néma hangeffektek helyett – *headless* módba esett, HUD
+  nélkül. A hang mostantól opcionális: nélküle a HUD fut, csak csendben.
+
+**Adatvesztés**
+
+- **A settings.json megsérülhetett párhuzamos mentésnél**
+  (`config/loader.py`): a `_write_json_atomic` mindig ugyanazt a
+  `settings.json.tmp` nevet használta. A főprogram HUD-mentése és a
+  `zwift_api_polling` alfolyamat hitelesítő-mentése ugyanabba a fájlba írt,
+  és az `os.replace` az összekeveredett tartalmat tette közzé a felhasználó
+  beállításaiként. A temp fájl neve mostantól tartalmazza a PID-et és egy
+  sorszámot; az átnevezés után a könyvtár-bejegyzés is szinkronizálódik
+  (POSIX), így az áramszünet-védelem ígérete a mentés egészére igaz.
+- **Elavult minták keveredtek az első átlagba forrás-kiesés után**
+  (`processors/processors.py`): az átlagoló az időablakon túl is megtartja
+  az `effective_minimum` mintát (hogy a lassú Zwift-forrás is adjon
+  átlagot). Egy valódi kiesés után ezek percekkel korábbi wattok/bpm-ek –
+  a dropout checker viszont csak nem-nulla zónában ürít, tehát álló
+  helyzetben (0. zóna) bennragadtak. Visszatéréskor az első zónadöntés így
+  régi adaton alapult. A processzorok mostantól ürítik a buffert, ha a
+  szünet elérte a dropout timeout-ot.
+- **A zónadöntés felülírhatta a kiesés miatti LEVEL:0-t**
+  (`processors/processors.py`): a `zone_controller_task` elengedte a state
+  lockot az olvasás és a visszaírás között, így a dropout checker
+  közbeékelődhetett – a nullázás után a task a kiesés előtti zónát írta
+  vissza fölé, és a ventilátor elavult adat alapján tovább járt. Az
+  olvasás → döntés → visszaírás mostantól egyetlen lock alatt fut (a
+  cooldown-logika szinkron, így semmit nem blokkol).
+- **A ventilátor tovább járhatott kilépés után** (`controller.py`,
+  `app.py`): a leállítási sorozat (LEVEL:0 + ROLLER:0 + disconnect)
+  lépésenkénti időkorlátainak összege (11 s) meghaladta azt a 3 s-ot, amíg
+  a `main()` az asyncio szálra várt – a daemon szál a folyamattal együtt
+  elhalt, jellemzően a LEVEL:0 előtt. A sorozat mostantól egyetlen 5 s-os
+  keretben fut (`SHUTDOWN_FAN_TIMEOUT`), a `main()` pedig ehhez igazodva
+  vár (`SHUTDOWN_JOIN_TIMEOUT`).
+
+**Reakcióidő / erőforrás**
+
+- **A Zwift auto-indítás percekre feltartotta az egész vezérlőt**
+  (`controller.py`): az `_ensure_zwift_running()` inline `await`-elve várta
+  ki a launcher ablakot, az esetleges frissítést és a ZwiftApp.exe
+  indulását – ami akár 10 perc is lehet. Addig nem indult el a BLE
+  ventilátor-kapcsolat, nem érkezett szenzoradat, és a HUD üresen állt. Az
+  auto-indítás mostantól a többi taskkal párhuzamosan fut (a blokkoló
+  várakozásait továbbra is a `_shutdown_evt` szakítja meg).
+- **A `ble_devices.log` korlátlanul nőtt, és minden scan újraolvasta**
+  (`handlers/_ble.py`): a BLE privacy-címek ~15 percenként forognak, így
+  forgalmas rádiókörnyezetben a fájl folyamatosan hízott – az
+  auto-discovery újracsatlakozási ciklusa pedig pár másodpercenként
+  végigolvasta. A címek mostantól folyamaton belül gyorsítótárazottak, és
+  a fájl bejegyzésszáma felső korlátot kapott.
+- **A BLE scan elárasztotta a konzolt** (`handlers/_ble.py`): minden
+  újracsatlakozási kísérlet kilistázta a környék összes eszközét, elnyomva
+  a tényleges státuszüzeneteket és pörgetve a log-rotációt. Az első scan
+  listáz teljesen, a továbbiak csak az újdonságokat és egy összefoglaló
+  sort.
+- Ugyanez a fölösleges újraolvasás megszűnt az `ant_devices.log`-nál is
+  (`handlers/_ant.py`): az `on_found` minden újracsatlakozáskor lefut.
+
+**Diagnosztika és karbantarthatóság**
+
+- A HUD `_update()` hibáját az első alkalommal teljes tracebackkel logolja
+  (korábban csak a kivétel szövege látszott, másodpercenként kétszer, így
+  az ok kideríthetetlen volt és a log rotálódott).
+- A csomagolt LCARS (Antonio) fontok minden platformon betöltődnek – a
+  Windows-korlátozás miatt Linuxon/macOS-en feleslegesen maradt kihasználatlan
+  a mellékelt betűtípus; a fallback lista is kapott cross-platform elemeket.
+- `esp32_firmware/serial_monitor.py`: a két csupasz `except:` helyett
+  `UnicodeDecodeError` – a `decode(errors='ignore')` sosem dobott, így a
+  hex-fallback halott kód volt, a bináris keretek pedig elrontott
+  szövegként jelentek meg. (A csupasz `except:` ráadásul a Ctrl+C-t is
+  elnyelte.)
+- Használaton kívüli importok/változók eltávolítva a firmware-eszközökből.
+
+### Javítva (első átvilágítási kör)
 
 Teljes kód-átvilágítás utáni javítási csomag (config, core, BLE/ANT+/Zwift
 kezelők, processzorok, controller, app, zwift_api).

@@ -128,6 +128,10 @@ class ANTPlusInputHandler:
         gs = settings["global_settings"]
         self._log_dir: str = resolve_log_dir(gs.log_directory)
         self._logging_enabled: bool = gs.logging
+        # Entries already present in ant_devices.log ("type | device_id"),
+        # cached so a reconnect does not reread the whole file every time
+        self._ant_logged_entries: set[str] = set()
+        self._ant_logged_entries_loaded: bool = False
 
     def start(self) -> threading.Thread:
         """Start the ANT+ daemon thread.
@@ -278,32 +282,49 @@ class ANTPlusInputHandler:
         # Unique key: "type | device_id"
         entry_key = f"{device_type} | {device_id}"
 
-        # Check the existing entries
-        existing_entries: set[str] = set()
-        try:
-            with open(self._ant_log_path(), "r", encoding="utf-8") as f:
-                for line in f:
-                    # Line format: "  TYPE | DEVICE_ID | info"
-                    parts = line.split("|")
-                    if len(parts) >= 2:
-                        existing_entries.add(f"{parts[0].strip()} | {parts[1].strip()}")
-        except FileNotFoundError:
-            pass
-        except OSError as exc:
-            logger.warning(f"Nem sikerült olvasni a {self._ant_log_path()} fájlt: {exc}")
+        log_path = self._ant_log_path()
+
+        # Already known in this process → nothing to read or write.
+        # on_found fires again after every reconnect, and rereading the
+        # whole file each time is needless I/O on the ANT+ thread.
+        if entry_key in self._ant_logged_entries:
+            return
+
+        # The file is parsed once per process (again only if it vanished)
+        if self._ant_logged_entries_loaded and os.path.exists(log_path):
+            existing_entries = self._ant_logged_entries
+        else:
+            existing_entries = set()
+            try:
+                with open(log_path, "r", encoding="utf-8") as f:
+                    for line in f:
+                        # Line format: "  TYPE | DEVICE_ID | info"
+                        parts = line.split("|")
+                        if len(parts) >= 2:
+                            existing_entries.add(
+                                f"{parts[0].strip()} | {parts[1].strip()}"
+                            )
+            except FileNotFoundError:
+                pass
+            except OSError as exc:
+                logger.warning(f"Nem sikerült olvasni a {log_path} fájlt: {exc}")
+            self._ant_logged_entries = existing_entries
+            self._ant_logged_entries_loaded = True
 
         if entry_key in existing_entries:
             return
 
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         try:
-            with open(self._ant_log_path(), "a", encoding="utf-8") as f:
+            with open(log_path, "a", encoding="utf-8") as f:
                 f.write(
                     f"  {device_type:20s} | {device_id} | {device_info} "
                     f"| @ {timestamp}\n"
                 )
+            # Only after a successful write
+            existing_entries.add(entry_key)
         except OSError as exc:
-            logger.warning(f"Nem sikerült írni a {self._ant_log_path()} fájlba: {exc}")
+            logger.warning(f"Nem sikerült írni a {log_path} fájlba: {exc}")
 
     def _init_node(self) -> None:
         """Initialize the ANT+ node and register the devices.

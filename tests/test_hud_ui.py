@@ -409,3 +409,103 @@ def test_opacity_change_updates_config_immediately(hud):
     win._on_alpha_change(55)
     assert ctrl.settings["hud"].opacity == 55
     assert win._alpha_value.text() == "55%"
+
+
+# ──────────────────── ZwiftApp.exe figyelés platformfüggése ────────────────────
+
+
+def test_zwift_watch_disabled_where_the_process_list_is_unreadable(hud, monkeypatch):
+    """Nem-Windows rendszeren a HUD NEM állítja le magát 5 perc után.
+
+    A FanController.is_process_running() csak Windows-on tud választ adni,
+    máshol mindig False – ezt szó szerint véve a türelmi idő lejárt, és a
+    HUD (vele az egész alkalmazás) magától kilépett Linuxon/macOS-en.
+    """
+    win, ctrl = hud
+    ctrl.settings["hud"].close_at_zwiftapp_exe = True
+
+    started: list[object] = []
+
+    class _RecordingThread:
+        def __init__(self, *a, **kw):
+            started.append(kw.get("name"))
+
+        def start(self):
+            pass
+
+    # Rögzítő (nem dobó) dublőr: az _update() elnyelné a kivételt, így egy
+    # assert-tel jelző szál-mock hamis zöldet adna
+    monkeypatch.setattr(
+        "smart_fan_controller.ui.window.threading.Thread", _RecordingThread)
+
+    win._zwift_watch_supported = False
+    # A türelmi idő már rég lejárt volna
+    win._zwift_grace_start = time.monotonic() - 10_000
+    for _ in range(win._ZWIFT_CHECK_INTERVAL * 2 + 2):
+        win._update()          # nem indíthat ellenőrző szálat
+    assert started == []
+    assert not win._update_error_seen, "az _update hibára futott"
+
+
+def test_zwift_watch_active_on_windows(hud, monkeypatch):
+    """Windows-on a figyelés változatlanul elindítja az ellenőrző szálat."""
+    win, ctrl = hud
+    ctrl.settings["hud"].close_at_zwiftapp_exe = True
+    win._zwift_watch_supported = True
+
+    started: list[object] = []
+
+    class _FakeThread:
+        def __init__(self, *a, **kw):
+            started.append(kw.get("name"))
+
+        def start(self):
+            pass
+
+    monkeypatch.setattr(
+        "smart_fan_controller.ui.window.threading.Thread", _FakeThread)
+    for _ in range(win._ZWIFT_CHECK_INTERVAL):
+        win._update()
+    assert "ZwiftProcessCheck" in started
+
+
+def test_grace_period_close_still_works_when_supported(hud, monkeypatch):
+    """Windows-on a lejárt türelmi idő továbbra is bezárja a HUD-ot."""
+    win, _ctrl = hud
+    win._zwift_watch_supported = True
+    win._zwift_seen = False
+    win._zwift_grace_start = time.monotonic() - 10_000
+
+    invoked: list[str] = []
+    monkeypatch.setattr(
+        "smart_fan_controller.ui.window.QMetaObject.invokeMethod",
+        lambda obj, name, conn: invoked.append(name),
+    )
+    win._check_zwift_process()
+    assert invoked == ["close"]
+
+
+# ─────────────────────────── hang: opcionális modul ───────────────────────────
+
+
+def test_hud_survives_a_missing_qtmultimedia(monkeypatch, caplog):
+    """QtMultimedia nélkül a hang néma, de a HUD nem esik szét.
+
+    A ui csomag importálja a sound modult; a QtMultimedia ImportError-ja
+    korábban az EGÉSZ HUD-ot megbuktatta, és az alkalmazás headless módba
+    esett egy hiányzó hang-backend miatt.
+    """
+    import logging
+    from smart_fan_controller.ui import sound as _sound
+
+    monkeypatch.setattr(_sound, "_QT_MULTIMEDIA_AVAILABLE", False)
+    monkeypatch.setattr(_sound, "_QT_MULTIMEDIA_ERROR", "libpulse.so.0 hiányzik",
+                        raising=False)
+    with caplog.at_level(logging.WARNING, logger="zwift_fan_controller_new"):
+        mgr = LCARSSoundManager()
+    assert mgr._effects == {}
+    assert mgr.sound_duration_ms("hud_shutdown") == 0
+    mgr.play("hud_startup")     # néma no-op, nem dobhat
+    mgr.set_volume(0.4)
+    mgr.cleanup()
+    assert any("QtMultimedia" in r.getMessage() for r in caplog.records)

@@ -81,6 +81,14 @@ class FanController:
         12. Shutdown: stop every task and thread
     """
 
+    # Upper bound on the shutdown fan sequence (LEVEL:0 + ROLLER:0 +
+    # disconnect). Each BLE step has its own timeout, and their sum could
+    # exceed the time main() waits for the asyncio thread – the thread
+    # would then be abandoned as a daemon with the fan still spinning at
+    # its last level. One shared budget keeps the sequence inside that
+    # window; see SHUTDOWN_JOIN_TIMEOUT in app.py.
+    SHUTDOWN_FAN_TIMEOUT = 5.0
+
     def __init__(self, settings_file: str = "settings.json") -> None:
         self.settings_file = settings_file
         self.settings = load_settings(settings_file)
@@ -577,8 +585,22 @@ class FanController:
         )
 
         # --- Auto-launch the Zwift application (for any data source) ---
-        # to_thread: does not block the asyncio event loop (signal handling, etc.)
-        await asyncio.to_thread(self._ensure_zwift_running)
+        # to_thread: does not block the asyncio event loop (signal handling,
+        # etc.). It is NOT awaited here either: _ensure_zwift_running waits
+        # for the launcher window, a possible update and the ZwiftApp.exe
+        # start, which can take many minutes. Awaited inline, that delayed
+        # the whole controller – no BLE fan connection, no sensor data and
+        # a dead HUD until Zwift finished starting. The launch now runs
+        # beside everything else; its blocking waits break on _shutdown_evt.
+        self._tasks.append(
+            asyncio.create_task(
+                _guarded_task(
+                    asyncio.to_thread(self._ensure_zwift_running),
+                    "ZwiftAutoLaunch",
+                ),
+                name="ZwiftAutoLaunch",
+            )
+        )
 
         # --- Create the components ---
         raw_power_queue: asyncio.Queue[float] = asyncio.Queue(maxsize=100)
@@ -803,21 +825,46 @@ class FanController:
         except asyncio.CancelledError:
             pass
         finally:
-            # Guard against None if setup crashed before ble_fan init
-            if self._ble_fan is not None:  # type: ignore[redundant-expr]
-                # Send LEVEL:0 before shutdown – turn the fan off
-                try:
-                    await self._ble_fan._write_level(0)
-                    user_logger.info("✓ Ventilátor leállítva (LEVEL:0)")
-                except Exception as exc:
-                    logger.warning(f"LEVEL:0 küldése sikertelen leállításkor: {exc}")
-                try:
-                    await self._ble_fan._write_raw("ROLLER:0")
-                    user_logger.info("✓ Görgő leállítva (ROLLER:0)")
-                except Exception as exc:
-                    logger.warning(f"ROLLER:0 küldése sikertelen leállításkor: {exc}")
-                await self._ble_fan.disconnect()
-                self._ble_fan = None
+            await self._shutdown_fan()
+
+    async def _shutdown_fan(self) -> None:
+        """Stop the fan and the roller, then release the BLE link.
+
+        Bounded by SHUTDOWN_FAN_TIMEOUT so a wedged BLE stack cannot hold
+        up the shutdown. Runs on the cancellation path of run(), hence
+        every step is individually guarded – one failure must not skip
+        the ones after it.
+        """
+        # Guard against None if setup crashed before ble_fan init
+        ble_fan = self._ble_fan
+        if ble_fan is None:
+            return
+        self._ble_fan = None
+
+        async def _sequence() -> None:
+            # Send LEVEL:0 before shutdown – turn the fan off
+            try:
+                await ble_fan._write_level(0)
+                user_logger.info("✓ Ventilátor leállítva (LEVEL:0)")
+            except Exception as exc:
+                logger.warning(f"LEVEL:0 küldése sikertelen leállításkor: {exc}")
+            try:
+                await ble_fan._write_raw("ROLLER:0")
+                user_logger.info("✓ Görgő leállítva (ROLLER:0)")
+            except Exception as exc:
+                logger.warning(f"ROLLER:0 küldése sikertelen leállításkor: {exc}")
+            await ble_fan.disconnect()
+
+        try:
+            await asyncio.wait_for(_sequence(), timeout=self.SHUTDOWN_FAN_TIMEOUT)
+        except TimeoutError:
+            user_logger.warning(
+                f"⚠ A ventilátor leállítása nem fejeződött be "
+                f"{self.SHUTDOWN_FAN_TIMEOUT:.0f}s alatt – a BLE kapcsolat "
+                f"bontása kimaradhatott."
+            )
+        except Exception as exc:
+            logger.warning(f"Ventilátor leállítási hiba: {exc}", exc_info=True)
 
     def stop(self) -> None:
         """Stop every task and thread.
