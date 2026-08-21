@@ -186,6 +186,9 @@ AKTIV (idozito fut)
 - `asyncio.Lock` - megosztott vezerlo allapot vedelem
 - `threading.Lock` - UISnapshot vedelem (HUD ↔ async szal), ANT+ node bontas
 - `threading.Event` - leallas koordinacio (megszakithato varakozasok: ANT+ retry, Zwift-varas)
+- A Zwift auto-inditas (`_ensure_zwift_running`) sajat `asyncio.to_thread` taskban
+  fut, a tobbi taskkal PARHUZAMOSAN: a launcher/frissites kivarasa percekig
+  tarthat, es addig a ventilator-vezerlesnek is mukodnie kell
 - `loop.call_soon_threadsafe` - task cancel es queue-iras masik szalbol (a `Task.cancel()`
   onmagaban nem szalbiztos)
 
@@ -197,7 +200,7 @@ AKTIV (idozito fut)
 |------|-----|
 | `zwift_fan_controller.py` | Fo belepo (vekony): az `smart_fan_controller` csomag `app.main()`-jet hivja |
 | `zwift_api_polling.py` | Vekony belepo a Zwift API polling segedprocesszhez (logika: `smart_fan_controller/zwift_api/`) |
-| `tests/` | Tesztkeszlet (384 teszt): `test_core.py` (domain/config/logging/BLE), `test_pipeline.py` (async adatsik, UDP fogado, protobuf dekoder) |
+| `tests/` | Tesztkeszlet (400 teszt): `test_core.py` (domain/config/logging/BLE), `test_pipeline.py` (async adatsik, UDP fogado, protobuf dekoder) |
 | `settings.json` | Felhasznaloi konfiguracio (automatikusan letrejon alapertelmezettekkel) |
 | `settings.example.json` / `.jsonc` | Konfiguracios sablonok |
 | `CONFIGURATION.md` | Beallitasok dokumentacioja |

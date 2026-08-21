@@ -63,6 +63,8 @@ async def power_processor_task(
     min_watt = settings["power_zones"].min_watt
     max_watt = settings["power_zones"].max_watt
     zone_mode = get_effective_zone_mode(settings)
+    dropout_timeout = _resolve_buffer_settings(settings, "power")["dropout_timeout"]
+    last_sample_at: float | None = None
 
     logger.info("Power processor korrutin elindítva")
 
@@ -75,6 +77,20 @@ async def power_processor_task(
 
         power = int(power)
         now = time.monotonic()
+
+        # The averager keeps ``effective_minimum`` samples even past the
+        # time window (so a slower-than-expected source still yields an
+        # average). After a real gap those leftovers are ancient, and the
+        # first average back would blend minutes-old watts into the fan
+        # decision. The dropout checker only clears while a non-zero zone
+        # is active, so the standing-still case has to be handled here.
+        if last_sample_at is not None and (now - last_sample_at) >= dropout_timeout:
+            power_averager.clear()
+            logger.info(
+                "Power buffer ürítve: %.1fs szünet (dropout timeout: %ss)",
+                now - last_sample_at, dropout_timeout,
+            )
+        last_sample_at = now
 
         if zone_mode != ZoneMode.HIGHER_WINS:
             printer.emit("power_raw", f"⚡ Teljesítmény: {power} watt")
@@ -147,6 +163,8 @@ async def hr_processor_task(
     valid_min_hr: int = hrz.valid_min_hr
     valid_max_hr: int = hrz.valid_max_hr
     hr_enabled: bool = hrz.enabled
+    dropout_timeout = _resolve_buffer_settings(settings, "hr")["dropout_timeout"]
+    last_sample_at: float | None = None
     logger.info("HR processor korrutin elindítva")
 
     while True:
@@ -168,6 +186,16 @@ async def hr_processor_task(
             async with state.lock:
                 state.last_hr_time = now
             continue
+
+        # Drop the leftovers of an earlier session before averaging – see
+        # the same guard in power_processor_task for the reasoning.
+        if last_sample_at is not None and (now - last_sample_at) >= dropout_timeout:
+            hr_averager.clear()
+            logger.info(
+                "HR buffer ürítve: %.1fs szünet (dropout timeout: %ss)",
+                now - last_sample_at, dropout_timeout,
+            )
+        last_sample_at = now
 
         if zone_mode in (ZoneMode.HR_ONLY, ZoneMode.POWER_ONLY):
             printer.emit("hr_raw", f"❤ HR: {hr} bpm")
@@ -247,7 +275,14 @@ async def zone_controller_task(
     while True:
         await zone_event.wait()
         zone_event.clear()
-        # State snapshot (under the lock)
+
+        # Read, decide and write back under ONE lock hold. Everything
+        # between the read and the write is synchronous (cooldown_ctrl
+        # uses a plain threading.Lock), so nothing is blocked by holding
+        # it – but releasing it in between opened a window in which the
+        # dropout checker could drop the zone to 0 and have this task
+        # immediately write the pre-dropout zone back over it, leaving the
+        # fan running on stale data. Only send_zone() stays outside.
         async with state.lock:
             power_zone = state.current_power_zone
             hr_zone = state.current_hr_zone
@@ -256,38 +291,39 @@ async def zone_controller_task(
             last_power = state.last_power_time
             last_hr = state.last_hr_time
 
-        # Freshness check (to account for dropouts)
-        # Fix #3: last_power_time is Optional now – None = no data received yet
-        power_fresh = (
-            last_power is not None
-            and (now - last_power) < power_dropout_timeout
-        )
-        hr_fresh = last_hr is not None and (now - last_hr) < hr_dropout_timeout
+            # Freshness check (to account for dropouts)
+            # Fix #3: last_power_time is Optional now – None = no data yet
+            power_fresh = (
+                last_power is not None
+                and (now - last_power) < power_dropout_timeout
+            )
+            hr_fresh = last_hr is not None and (now - last_hr) < hr_dropout_timeout
 
-        # Zone combination based on zone_mode
-        if zone_mode == ZoneMode.POWER_ONLY:
-            final_zone = power_zone if power_fresh else None
-        elif zone_mode == ZoneMode.HR_ONLY:
-            final_zone = hr_zone if hr_fresh else None
-        else:  # higher_wins
-            p = power_zone if power_fresh else None
-            h = hr_zone if hr_fresh else None
-            final_zone = apply_zone_mode(p, h, zone_mode)
+            # Zone combination based on zone_mode
+            if zone_mode == ZoneMode.POWER_ONLY:
+                final_zone = power_zone if power_fresh else None
+            elif zone_mode == ZoneMode.HR_ONLY:
+                final_zone = hr_zone if hr_fresh else None
+            else:  # higher_wins
+                p = power_zone if power_fresh else None
+                h = hr_zone if hr_fresh else None
+                final_zone = apply_zone_mode(p, h, zone_mode)
 
-        if final_zone is None:
-            continue  # Not enough fresh data for a decision
+            if final_zone is None:
+                continue  # Not enough fresh data for a decision
 
-        # Immediate stop flag (zero_power_immediate / zero_hr_immediate)
-        use_zero_immediate = (
-            (zero_power_immediate and power_zone is not None and power_zone == 0 and power_fresh)
-            or (zero_hr_immediate and hr_zone is not None and hr_zone == 0 and hr_fresh)
-        )
+            # Immediate stop flag (zero_power_immediate / zero_hr_immediate)
+            use_zero_immediate = (
+                (zero_power_immediate and power_zone == 0 and power_fresh)
+                or (zero_hr_immediate and hr_zone == 0 and hr_fresh)
+            )
 
-        # Apply the cooldown logic
-        zone_to_send = cooldown_ctrl.process(current_zone, final_zone, use_zero_immediate)
+            # Apply the cooldown logic
+            zone_to_send = cooldown_ctrl.process(
+                current_zone, final_zone, use_zero_immediate
+            )
 
-        if zone_to_send is not None:
-            async with state.lock:
+            if zone_to_send is not None:
                 state.current_zone = zone_to_send
                 # Fix #1: update the UI snapshot under the lock – consistent view
                 state.ui_snapshot.update(
@@ -295,6 +331,8 @@ async def zone_controller_task(
                     state.current_avg_power,
                     state.current_avg_hr,
                 )
+
+        if zone_to_send is not None:
             await send_zone(zone_to_send, zone_queue)
             user_logger.info(f"→ Zóna elküldve: LEVEL:{zone_to_send}")
 

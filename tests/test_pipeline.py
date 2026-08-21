@@ -8,8 +8,10 @@ használ pytest-asyncio-t – konzisztensen a TestBleFanReconnect mintájával).
 from __future__ import annotations
 
 import asyncio
+import os
 import socket
 import struct
+import time
 
 from smart_fan_controller.config import DataSource, ZoneMode
 from smart_fan_controller.config.schemas import (
@@ -339,3 +341,223 @@ class TestBackoff:
         assert _backoff_seconds(4) == 16.0
         assert _backoff_seconds(5) == 30.0
         assert _backoff_seconds(10 ** 6) == 30.0   # nincs OverflowError
+
+
+class TestStaleBufferAfterGap:
+    """Forrás-szünet után a régi minták nem keveredhetnek az új átlagba."""
+
+    @staticmethod
+    def _settings(dropout: int = 1) -> dict:
+        s = _pipeline_settings()
+        s["datasource"] = DatasourceConfig(
+            power_source=DataSource.ZWIFTUDP, hr_source=None,
+            zwiftUDP_buffer_seconds=1, zwiftUDP_minimum_samples=2,
+            zwiftUDP_buffer_rate_hz=4, zwiftUDP_dropout_timeout=dropout,
+        )
+        return s
+
+    def test_averager_cleared_after_a_gap(self):
+        """A dropout timeout-nál hosszabb szünet után ürül a buffer.
+
+        Az átlagoló a ``effective_minimum`` mintát az időablakon túl is
+        megtartja (hogy a lassú forrás is adjon átlagot). Egy valódi
+        kiesés után ezek percekkel korábbi wattok – nélkülük a
+        visszatéréskor számolt első átlag azokkal keveredett. A dropout
+        checker csak nem-nulla zónában ürít, ezért az álló helyzet
+        (0. zóna) esetét a processzornak kell kezelnie.
+        """
+        async def scenario():
+            settings = self._settings(dropout=1)
+            state = ControllerState()
+            avg = PowerAverager(1, 2, 4)
+            queue: asyncio.Queue = asyncio.Queue(maxsize=100)
+            event = asyncio.Event()
+            task = asyncio.create_task(power_processor_task(
+                queue, state, event, avg, ConsolePrinter(), settings,
+                calculate_power_zones(200, 0, 1000, 60, 89)))
+            try:
+                for _ in range(2):
+                    await queue.put(300.0)
+                await asyncio.wait_for(_avg_becomes(state, 300), timeout=3)
+
+                # Szünet a dropout timeout fölött, majd új minta
+                await asyncio.sleep(1.2)
+                await queue.put(100.0)
+                await asyncio.sleep(0.2)
+                # Az első minta önmagában kevés (effective_minimum=2),
+                # tehát a régi 300 W nem húzhatja fel az átlagot 200-ra
+                assert state.current_avg_power == 300, "a régi minta beleszámított"
+
+                await queue.put(100.0)
+                await asyncio.wait_for(_avg_becomes(state, 100), timeout=3)
+                assert list(avg.buffer) == [100.0, 100.0]
+            finally:
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+
+        asyncio.run(scenario())
+
+    def test_continuous_stream_is_not_cleared(self):
+        """Folyamatos adatfolyamnál a buffer nem ürül feleslegesen."""
+        async def scenario():
+            settings = self._settings(dropout=5)
+            state = ControllerState()
+            avg = PowerAverager(1, 2, 4)
+            queue: asyncio.Queue = asyncio.Queue(maxsize=100)
+            event = asyncio.Event()
+            task = asyncio.create_task(power_processor_task(
+                queue, state, event, avg, ConsolePrinter(), settings,
+                calculate_power_zones(200, 0, 1000, 60, 89)))
+            try:
+                for _ in range(4):
+                    await queue.put(200.0)
+                    await asyncio.sleep(0.05)
+                await asyncio.wait_for(_avg_becomes(state, 200), timeout=3)
+                assert len(avg.buffer) >= 2
+            finally:
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+
+        asyncio.run(scenario())
+
+
+class TestZoneDecisionAtomicity:
+    """A zóna döntés olvasás→döntés→visszaírás egyetlen lock alatt fut."""
+
+    def test_cooldown_is_evaluated_while_holding_the_state_lock(self):
+        """A cooldown döntés közben a state lock végig fogva van.
+
+        Elengedve a dropout checker közbeékelődhetett: LEVEL:0-ra vitte a
+        zónát, majd ez a task a kiesés előtti zónát írta vissza fölé – a
+        ventilátor elavult adat alapján tovább járt.
+        """
+        async def scenario():
+            settings = _pipeline_settings()
+            state = ControllerState()
+            cooldown = CooldownController(0)
+            observed: list[bool] = []
+            real_process = cooldown.process
+
+            def spy(*args, **kwargs):
+                observed.append(state.lock.locked())
+                return real_process(*args, **kwargs)
+
+            cooldown.process = spy  # type: ignore[method-assign]
+            zone_queue: asyncio.Queue = asyncio.Queue(maxsize=1)
+            event = asyncio.Event()
+            task = asyncio.create_task(zone_controller_task(
+                state, zone_queue, cooldown, settings, event))
+            try:
+                async with state.lock:
+                    state.current_power_zone = 3
+                    state.current_avg_power = 250
+                    state.last_power_time = time.monotonic()
+                event.set()
+                assert await asyncio.wait_for(zone_queue.get(), timeout=3) == 3
+                assert observed and all(observed), "a lock nem volt fogva"
+            finally:
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+
+        asyncio.run(scenario())
+
+
+async def _avg_becomes(state, value: float, timeout: float = 3.0) -> None:
+    """Vár, amíg a state átlagos teljesítménye eléri az adott értéket."""
+    while state.current_avg_power != value:
+        await asyncio.sleep(0.02)
+
+
+class TestShutdownStopsTheFan:
+    """Leállításkor a ventilátornak tényleg le kell állnia."""
+
+    @staticmethod
+    def _controller(tmpdir: str):
+        import json as _json
+        from smart_fan_controller.controller import FanController
+
+        path = os.path.join(tmpdir, "settings.json")
+        with open(path, "w", encoding="utf-8") as f:
+            _json.dump({
+                "global_settings": {"logging": False},
+                "datasource": {"power_source": None, "hr_source": None,
+                               "zwift_auto_launch": False},
+                "heart_rate_zones": {"enabled": False},
+            }, f)
+        return FanController(path)
+
+    def test_level_zero_is_sent_on_cancellation(self):
+        """A run() megszakításakor kimegy a LEVEL:0, a ROLLER:0 és a bontás.
+
+        A leállítási lépések időkorlátainak összege korábban meghaladta
+        azt az időt, amíg a main() az asyncio szálra várt – a daemon szál
+        a folyamattal együtt elhalt, jellemzően még a LEVEL:0 előtt, így
+        a ventilátor tovább járt az utolsó szinten.
+        """
+        import tempfile, shutil
+
+        tmp = tempfile.mkdtemp()
+        try:
+            ctrl = self._controller(tmp)
+            calls: list[str] = []
+
+            class _FakeFan:
+                async def _write_level(self, zone):
+                    calls.append(f"LEVEL:{zone}")
+
+                async def _write_raw(self, cmd):
+                    calls.append(cmd)
+
+                async def disconnect(self):
+                    calls.append("disconnect")
+
+            async def scenario():
+                ctrl._ble_fan = _FakeFan()          # type: ignore[assignment]
+                task = asyncio.create_task(ctrl.run())
+                await asyncio.sleep(0.3)
+                ctrl._ble_fan = _FakeFan()          # run() overwrote it
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+
+            asyncio.run(scenario())
+            assert calls == ["LEVEL:0", "ROLLER:0", "disconnect"], calls
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_shutdown_is_time_bounded(self):
+        """Beragadt BLE stack esetén sem húzódik el a leállítás."""
+        from smart_fan_controller.controller import FanController
+
+        class _StuckFan:
+            async def _write_level(self, zone):
+                await asyncio.sleep(60)
+
+            async def _write_raw(self, cmd):
+                await asyncio.sleep(60)
+
+            async def disconnect(self):
+                await asyncio.sleep(60)
+
+        async def scenario():
+            ctrl = FanController.__new__(FanController)
+            ctrl._ble_fan = _StuckFan()             # type: ignore[assignment]
+            ctrl.SHUTDOWN_FAN_TIMEOUT = 0.2         # type: ignore[misc]
+            t0 = time.monotonic()
+            await ctrl._shutdown_fan()
+            elapsed = time.monotonic() - t0
+            assert elapsed < 1.0, f"a leállítás {elapsed:.1f}s-ig tartott"
+            assert ctrl._ble_fan is None
+
+        asyncio.run(scenario())

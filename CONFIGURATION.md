@@ -400,7 +400,9 @@ A hangerő és ki/bekapcsolás a jobb egérgombos menüből is elérhető, és a
 
 ### ZwiftApp.exe figyelés
 
-Ha `close_at_zwiftapp_exe` értéke `true`, a program ~10 másodpercenként ellenőrzi, hogy a `ZwiftApp.exe` fut-e. Ha a Zwift futott és kilép, a program automatikusan leáll (tricorder becsukás hanggal).
+Ha `close_at_zwiftapp_exe` értéke `true`, a program ~10 másodpercenként ellenőrzi, hogy a `ZwiftApp.exe` fut-e. Ha a Zwift futott és kilép, a program automatikusan leáll (tricorder becsukás hanggal). Ha a Zwift az indítástól számított 5 percen belül el sem indul, a program szintén kilép.
+
+> **Csak Windows.** A folyamatlista a `tasklist` paranccsal olvasható, ezért a figyelés más rendszeren automatikusan kikapcsol (a beállítás értékétől függetlenül), és a log egy info-sorral jelzi ezt. Nélküle Linuxon/macOS-en a „Zwift nem fut" válasz miatt a program 5 perc után magától leállt volna.
 
 ---
 
@@ -409,7 +411,7 @@ Ha `close_at_zwiftapp_exe` értéke `true`, a program ~10 másodpercenként elle
 | Fájl | Tartalom | Max méret |
 |------|----------|-----------|
 | `smart_fan_controller.log` | Teljes alkalmazás log (zónaváltások, csatlakozás, hibák) | 500 KB (rotált, 2 backup) |
-| `ble_devices.log` | Talált BLE eszközök (deduplikált, csak új eszközök kerülnek bele) | – |
+| `ble_devices.log` | Talált BLE eszközök (deduplikált, csak új eszközök kerülnek bele) | max. 2000 bejegyzés |
 | `ant_devices.log` | Talált ANT+ eszközök (deduplikált, device_type + device_id alapján) | – |
 
 A log fájlok helye a `global_settings.log_directory` beállítástól függ. Ha nincs megadva vagy nem elérhető, a program könyvtárába kerülnek.

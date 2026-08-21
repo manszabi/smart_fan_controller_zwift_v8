@@ -149,14 +149,28 @@ class HUDWindow(QWidget):
         self._prev_ant_status: str | None = None
         self._prev_zwift_status: str | None = None
         self._prev_last_sent_time: float = 0.0
+        # Only the first _update failure is logged with a traceback
+        self._update_error_seen = False
 
         # ───────── ZWIFT PROCESS MONITOR ─────────
+        # The watch only works where the process list is actually
+        # readable. FanController.is_process_running() is Windows-only and
+        # answers False everywhere else – taken at face value that meant
+        # "Zwift is not running", so on Linux/macOS the grace period
+        # expired and the HUD shut the whole application down after five
+        # minutes. Off-Windows the feature is simply disabled.
+        self._zwift_watch_supported = _platform.system() == "Windows"
         self._zwift_seen = False           # True once we saw it running
         self._zwift_check_counter = 0
         self._ZWIFT_CHECK_INTERVAL = 20    # every 20th _update call ≈ 10 s
         self._zwift_check_running = False  # race-condition guard
         self._zwift_grace_start: float = time.monotonic()
         self._ZWIFT_GRACE_PERIOD: float = 300.0  # wait 5 minutes for launch
+        if not self._zwift_watch_supported and hud_cfg.close_at_zwiftapp_exe:
+            logger.info(
+                "ZwiftApp.exe figyelés kihagyva: a folyamatlista csak "
+                "Windows-on olvasható (hud.close_at_zwiftapp_exe hatástalan)."
+            )
 
         # "Live data" window for BLE/ANT sensors. Deliberately generous:
         # bike meters may go quiet while coasting / at 0 W – they should
@@ -380,9 +394,12 @@ class HUDWindow(QWidget):
           1. <package_dir>/fonts/Antonio-{Bold,Regular}.ttf
           2. <exe_dir>/smart_fan_controller/fonts/...   (PyInstaller frozen)
         When the fonts are absent a system font is used as fallback.
+
+        The fonts ship inside the package and QFontDatabase loads TTFs on
+        every platform, so the loading is NOT Windows-gated: skipping it
+        elsewhere left the bundled LCARS face unused on Linux/macOS and
+        the HUD fell back to a generic system font for no reason.
         """
-        if _platform.system() != "Windows":
-            return
         try:
             if getattr(sys, "frozen", False):
                 base_dir = os.path.join(
@@ -421,7 +438,9 @@ class HUDWindow(QWidget):
 
         preferred = [
             "Antonio", "Michroma", "Century Gothic", "Eras Bold ITC",
-            "Eras Medium ITC", "Bahnschrift", "Trebuchet MS", "Segoe UI", "Consolas",
+            "Eras Medium ITC", "Bahnschrift", "Trebuchet MS", "Segoe UI",
+            # Cross-platform fallbacks before the Windows-only last resort
+            "DejaVu Sans Condensed", "Liberation Sans Narrow", "Consolas",
         ]
         for f in preferred:
             if f in available:
@@ -1134,7 +1153,7 @@ class HUDWindow(QWidget):
                                  _tile_state(cool is not None and cd_active, 1))
 
             # ── ZwiftApp.exe process watch (about every 10 s) ──
-            if settings["hud"].close_at_zwiftapp_exe:
+            if settings["hud"].close_at_zwiftapp_exe and self._zwift_watch_supported:
                 self._zwift_check_counter += 1
                 if self._zwift_check_counter >= self._ZWIFT_CHECK_INTERVAL:
                     self._zwift_check_counter = 0
@@ -1147,7 +1166,14 @@ class HUDWindow(QWidget):
                         ).start()
 
         except Exception as exc:
-            logger.warning("HUD _update hiba: %s", exc)
+            # The timer fires twice a second, so an unhandled error would
+            # repeat forever. The first occurrence carries the full
+            # traceback (without it the cause was undiagnosable); the rest
+            # are one-liners so a persistent fault cannot rotate the log
+            # file out from under the useful entries.
+            first = not self._update_error_seen
+            self._update_error_seen = True
+            logger.warning("HUD _update hiba: %s", exc, exc_info=first)
 
     # ────────── ZWIFT PROCESS MONITOR ──────────
 

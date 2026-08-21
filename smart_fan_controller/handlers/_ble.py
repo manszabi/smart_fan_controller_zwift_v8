@@ -87,6 +87,47 @@ def _ble_log_path(log_dir: str) -> str:
     return os.path.join(log_dir, "ble_devices.log")
 
 
+# Addresses already present in ble_devices.log, per log file path. The file
+# is parsed once per process instead of on every scan: with auto-discovery
+# a failed connection rescans every few seconds, and BLE privacy addresses
+# rotate roughly every 15 minutes, so in a busy radio environment the file
+# keeps growing – re-reading all of it each time was pure waste.
+_ble_logged_addresses: dict[str, set[str]] = {}
+
+# Upper bound on the entries kept in ble_devices.log. The file is a
+# discovery aid, not a record: without a cap the rotating random addresses
+# of the neighbourhood would grow it without limit over a long session.
+_BLE_LOG_MAX_ENTRIES = 2000
+_ble_log_full_warned: set[str] = set()
+
+
+def _load_logged_ble_addresses(ble_log: str) -> set[str]:
+    """Return the addresses already written to ``ble_log`` (cached).
+
+    The cache is dropped when the file disappeared (deleted by the user),
+    so the entries are rewritten instead of being silently skipped.
+    """
+    cached = _ble_logged_addresses.get(ble_log)
+    if cached is not None and os.path.exists(ble_log):
+        return cached
+
+    existing_addresses: set[str] = set()
+    try:
+        with open(ble_log, "r", encoding="utf-8") as f:
+            for line in f:
+                # Line format: "  name | ADDRESS | UUIDs: ..."
+                parts = line.split("|")
+                if len(parts) >= 2:
+                    existing_addresses.add(parts[1].strip())
+    except FileNotFoundError:
+        pass  # The file does not exist yet, every device is new
+    except OSError as exc:
+        logger.warning(f"Nem sikerült olvasni a {ble_log} fájlt: {exc}")
+    _ble_logged_addresses[ble_log] = existing_addresses
+    _ble_log_full_warned.discard(ble_log)
+    return existing_addresses
+
+
 def _log_ble_devices_to_file(
     devices_info: list[tuple[str | None, str, list[str]]],
     scan_context: str,
@@ -110,20 +151,19 @@ def _log_ble_devices_to_file(
     if not devices_info:
         return
 
-    # Read the existing addresses from the file
-    existing_addresses: set[str] = set()
     ble_log = _ble_log_path(log_dir)
-    try:
-        with open(ble_log, "r", encoding="utf-8") as f:
-            for line in f:
-                # Line format: "  name | ADDRESS | UUIDs: ..."
-                parts = line.split("|")
-                if len(parts) >= 2:
-                    existing_addresses.add(parts[1].strip())
-    except FileNotFoundError:
-        pass  # The file does not exist yet, every device is new
-    except OSError as exc:
-        logger.warning(f"Nem sikerült olvasni a {ble_log} fájlt: {exc}")
+    existing_addresses = _load_logged_ble_addresses(ble_log)
+
+    if len(existing_addresses) >= _BLE_LOG_MAX_ENTRIES:
+        if ble_log not in _ble_log_full_warned:
+            _ble_log_full_warned.add(ble_log)
+            logger.warning(
+                "A %s már %d eszközt tartalmaz – a további felderített "
+                "eszközök nem kerülnek bele (a fájl korlátlan növekedésének "
+                "megakadályozása). Törölhető, ha újra kell gyűjteni.",
+                ble_log, len(existing_addresses),
+            )
+        return
 
     # Filter for the new devices only
     new_devices = [
@@ -142,8 +182,22 @@ def _log_ble_devices_to_file(
             for name, addr, uuids in new_devices:
                 uuid_str = ", ".join(uuids[:5]) if uuids else "–"
                 f.write(f"  {name or '(névtelen)':30s} | {addr} | UUIDs: {uuid_str}\n")
+        # Only after a successful write – a failed one must not make the
+        # cache claim the devices are already on disk
+        existing_addresses.update(addr for _n, addr, _u in new_devices)
     except OSError as exc:
         logger.warning(f"Nem sikerült írni a {ble_log} fájlba: {exc}")
+
+
+# Addresses already shown on the console, per scan context. A reconnect
+# loop rescans every few seconds; reprinting the neighbourhood's dozens of
+# devices each round buried the actual status messages and filled the
+# rotating log file. The first scan prints the full list, later ones only
+# what is new.
+_ble_printed_addresses: dict[str, set[str]] = {}
+# Memory guard: rotating BLE privacy addresses would otherwise grow the
+# "already shown" set forever. Reaching the cap starts a fresh list.
+_BLE_PRINT_MEMORY_LIMIT = 4000
 
 
 def _print_ble_devices(
@@ -153,19 +207,52 @@ def _print_ble_devices(
 ) -> None:
     """Print the discovered BLE devices to the console.
 
+    The full list is printed on the first scan of a context. Repeat scans
+    print a one-line summary plus the devices not seen before, so a
+    reconnect loop cannot flood the console.
+
     Args:
         devices_info: List of (name, address, service_uuids) tuples.
         scan_context: Context of the scan.
         matched_addr: Address of the auto-selected device (for the ◄ marker).
     """
-    user_logger.info(f"\n📡 BLE Scan ({scan_context}): {len(devices_info)} eszköz található")
-    for name, addr, uuids in devices_info:
+    seen = _ble_printed_addresses.get(scan_context)
+    first_scan = seen is None
+    if seen is None:
+        seen = set()
+        _ble_printed_addresses[scan_context] = seen
+
+    if first_scan:
+        shown = devices_info
+    else:
+        # The match is always shown, even when its address is not new
+        shown = [
+            d for d in devices_info
+            if d[1] not in seen or (matched_addr and d[1] == matched_addr)
+        ]
+
+    count = len(devices_info)
+    if first_scan:
+        user_logger.info(f"\n📡 BLE Scan ({scan_context}): {count} eszköz található")
+    elif shown:
+        user_logger.info(
+            f"\n📡 BLE Scan ({scan_context}): {count} eszköz "
+            f"({len(shown)} új a legutóbbi listázás óta)"
+        )
+    else:
+        user_logger.info(f"📡 BLE Scan ({scan_context}): {count} eszköz (nincs új)")
+
+    for name, addr, uuids in shown:
         marker = " ◄ AUTO" if matched_addr and addr == matched_addr else ""
         icon = "📱" if name else "❓"
         uuid_str = ", ".join(uuids[:3]) if uuids else "–"
         user_logger.info(f"  {icon} {name or '(névtelen)':30s} | {addr} | {uuid_str}{marker}")
     if not devices_info:
         user_logger.info("  (nincs eszköz a közelben)")
+
+    seen.update(addr for _n, addr, _u in devices_info)
+    if len(seen) > _BLE_PRINT_MEMORY_LIMIT:
+        seen.clear()
 
 
 async def _scan_ble_with_autodiscovery(

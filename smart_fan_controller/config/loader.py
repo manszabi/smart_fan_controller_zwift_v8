@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import copy
 import dataclasses
+import itertools
 import json
 import logging
 import os
@@ -286,6 +287,11 @@ def _backup_incorrect_settings(settings_path: str) -> str | None:
         return None
 
 
+# Serial number of the temp files, so two writers inside one process
+# (Qt main thread, worker) cannot pick the same name either.
+_tmp_counter = itertools.count()
+
+
 def _write_json_atomic(path: str, data: dict[str, Any]) -> None:
     """Write JSON atomically: temp file + os.replace (atomic on Windows too).
 
@@ -293,17 +299,27 @@ def _write_json_atomic(path: str, data: dict[str, Any]) -> None:
     leave a truncated settings.json behind – all user settings lost.
     This way either the old or the new full content survives.
 
+    The temp file name carries the process id and a serial number. With a
+    shared ``settings.json.tmp`` two writers – the HUD's debounced save in
+    the main app and the credential save of the zwift_api_polling
+    subprocess, both targeting the same settings.json – wrote the SAME
+    temp file at the same time, and os.replace then published the
+    interleaved, corrupt result as the user's settings.
+
     flush + fsync before the replace: without them the data may still sit
     in the OS write cache while the rename is already committed, so a
     power loss could leave an EMPTY settings.json – exactly the case this
-    function is meant to protect against."""
-    tmp_path = path + ".tmp"
+    function is meant to protect against. The directory entry is synced
+    too, so the rename itself survives a power loss (POSIX only; Windows
+    has no directory handle to sync)."""
+    tmp_path = f"{path}.{os.getpid()}.{next(_tmp_counter)}.tmp"
     try:
         with open(tmp_path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
             f.flush()
             os.fsync(f.fileno())
         os.replace(tmp_path, path)
+        _fsync_directory(os.path.dirname(os.path.abspath(path)))
     finally:
         # Leave no stray temp file behind after a failed write
         if os.path.exists(tmp_path):
@@ -311,6 +327,27 @@ def _write_json_atomic(path: str, data: dict[str, Any]) -> None:
                 os.remove(tmp_path)
             except OSError:
                 pass
+
+
+def _fsync_directory(dir_path: str) -> None:
+    """Flush the directory entry so a completed rename survives a crash.
+
+    Best effort: Windows cannot open a directory as a file, and some
+    filesystems reject the fsync – neither makes the write itself less
+    valid, so the failure is only logged at debug level.
+    """
+    if os.name == "nt":
+        return
+    try:
+        fd = os.open(dir_path, os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(fd)
+    except OSError:
+        pass
+    finally:
+        os.close(fd)
 
 
 def save_zwift_api_credentials(settings_file: str, username: str, password: str) -> bool:

@@ -63,6 +63,11 @@ from smart_fan_controller.core import (
 
 __all__ = ["main", "_PYSIDE6_AVAILABLE"]
 
+# How long main() waits for the asyncio thread to finish. It has to cover
+# FanController's bounded fan-stop sequence plus a little slack, otherwise
+# the daemon thread is killed with the process before LEVEL:0 goes out.
+SHUTDOWN_JOIN_TIMEOUT = FanController.SHUTDOWN_FAN_TIMEOUT + 3.0
+
 # PySide6 availability: the HUD is optional (in headless mode, e.g. on a
 # Raspberry Pi terminal, the app runs without a HUD). The flag drives the
 # branch selection in main().
@@ -222,12 +227,20 @@ def main() -> None:
             loop.call_soon_threadsafe(shutdown_event.set)
         except Exception as exc:
             logger.debug(f"shutdown_event.set hiba: {exc}")
-        asyncio_thread.join(timeout=3.0)
+        # Long enough for the bounded shutdown fan sequence
+        # (FanController.SHUTDOWN_FAN_TIMEOUT) to send LEVEL:0 / ROLLER:0
+        # and disconnect. With the previous 3 s the thread was regularly
+        # abandoned mid-sequence – as a daemon it died with the process,
+        # leaving the fan running at its last level.
+        asyncio_thread.join(timeout=SHUTDOWN_JOIN_TIMEOUT)
         if asyncio_thread.is_alive():
             # A running event loop must NOT be closed (it would raise a
             # RuntimeError on the exit path); the daemon thread dies with
             # the process.
-            logger.warning("AsyncioThread nem állt le 3s alatt – loop.close() kihagyva")
+            logger.warning(
+                "AsyncioThread nem állt le %.0fs alatt – loop.close() kihagyva",
+                SHUTDOWN_JOIN_TIMEOUT,
+            )
         else:
             loop.close()
         user_logger.info("\nProgram leállítva.")

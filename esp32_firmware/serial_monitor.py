@@ -3,7 +3,6 @@
 
 import serial
 import serial.tools.list_ports
-import sys
 import threading
 import time
 from datetime import datetime
@@ -72,11 +71,14 @@ class SerialMonitor:
                         data = self.ser.read(self.ser.in_waiting)
                         timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
 
-                        # Try to decode as text, fall back to hex
+                        # Try to decode as text, fall back to hex.
+                        # Strict decoding: with errors='ignore' the call
+                        # never raises, so the hex branch was dead code and
+                        # binary frames were printed as mangled text.
                         try:
-                            text = data.decode('utf-8', errors='ignore')
+                            text = data.decode('utf-8')
                             print(f"[{timestamp}] RX: {text.rstrip()}")
-                        except:
+                        except UnicodeDecodeError:
                             hex_str = ' '.join(f'{b:02x}' for b in data)
                             print(f"[{timestamp}] RX: {hex_str}")
                     else:
@@ -118,9 +120,9 @@ class SerialMonitor:
             timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
 
             try:
-                text = data.decode('utf-8', errors='ignore')
+                text = data.decode('utf-8')
                 print(f"[{timestamp}] TX: {text.rstrip()}")
-            except:
+            except UnicodeDecodeError:
                 hex_str = ' '.join(f'{b:02x}' for b in data)
                 print(f"[{timestamp}] TX: {hex_str}")
             return True

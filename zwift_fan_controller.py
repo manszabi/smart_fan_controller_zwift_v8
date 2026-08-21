@@ -49,6 +49,7 @@ from smart_fan_controller import __version__  # single source of the version
 __all__ = [
     "main",
     "_PYSIDE6_AVAILABLE",
+    "__version__",
     # config
     "ZoneMode",
     "DataSource",
