@@ -12,7 +12,6 @@
 #include "SPIFFS.h"
 #include "esp_ota_ops.h"
 #include "esp_system.h"
-#include "esp_log.h"
 #include <Preferences.h>  // [FIX-ESP-21] NVS fokozat-mentés áramtalanításra
 
 // ===================== DEBUG CONFIG =====================
@@ -63,8 +62,8 @@
 #endif
 
 // ===================== VERSION INFO =====================
-#define FIRMWARE_VERSION "7.14.7"
-#define FIRMWARE_DATE "2026-07-23"
+#define FIRMWARE_VERSION "7.14.9"
+#define FIRMWARE_DATE "2026-08-24"
 
 // ===================== PINS =====================
 #if defined(CONFIG_IDF_TARGET_ESP32C6)
@@ -225,9 +224,12 @@ const unsigned long BLE_ZONE_TIMEOUT_MS = 720000;  // BLE elszállás után 12 p
 
 // ===================== BLE AUTH =====================
 #define BLE_AUTH_PIN "123456"
-#if !defined(BLE_AUTH_PIN)
-#warning "BLE_AUTH_PIN is empty – authentication disabled!"
-#endif
+// [MOD-24] A PIN hossza fordítási időben ismert (string literál). Eddig minden egyes
+// BLE-parancs egy `String correctPin = BLE_AUTH_PIN;` heap-allokációval indult, csak
+// azért, hogy a .length() > 0 eldőljön. (A korábbi `#if !defined(BLE_AUTH_PIN)` őr
+// halott volt: a makró egy sorral fentebb mindig definiált — az ÜRES PIN-t akarta
+// elkapni, amit valójában a setup() static_assert-je ellenőriz.)
+static constexpr bool BLE_AUTH_REQUIRED = (sizeof(BLE_AUTH_PIN) > 1);
 #define MAX_AUTH_ATTEMPTS 5         // ennyi hibás PIN után zárolás (brute-force ellen)
 #define AUTH_LOCKOUT_TIME_MS 60000  // 60 s zárolás a hibás kísérletek után
 
@@ -274,9 +276,6 @@ bool heartbeatPulse = false;
 bool heartbeatPulse_red = false;
 
 // ===================== SOROS STÁTUSZ-KIÍRÁS =====================
-unsigned long lastPrint1 = 0;
-unsigned long lastPrint2 = 0;
-unsigned long lastPrint3 = 0;
 const unsigned long printInterval = 30000;  // státusz-kiírás periódusa a soros logba (ne spammeljen)
 
 RTC_NOINIT_ATTR uint32_t bootMagic;
@@ -297,7 +296,6 @@ RTC_NOINIT_ATTR int errRestoreCount;  // egymást követő gyors hibás resetek 
 const int MAX_ERR_RESTORE = 3;                     // ennyiedik egymást követőnél már idle
 const unsigned long ERR_RESTORE_CLEAR_MS = 30000;  // ennyi stabil futás után nullázzuk
 bool errRestoreCleared = false;
-bool restore_main = false;
 
 Preferences fanPrefs;
 int nvsLastSavedZone = -1;                       // amit utoljára NVS-be írtunk (cache, hogy ne írjunk feleslegesen)
@@ -414,7 +412,7 @@ static void otaAbort(const String& msg) {
   otaExpectedPart = 0;
 }
 
-static void rebootEspWithReason(String reason) {
+static void rebootEspWithReason(const char* reason) {  // [MOD-25] volt: String érték szerint (másolat hívásonként)
   DBG_P("Rebooting: ");
   DBG_VLN(reason);
   delay(1000);
@@ -535,7 +533,7 @@ void ota_boot_flow() {
   DBG("=== OTA BOOT FLOW END ===");
 }
 
-void sendOtaResult(String result) {
+void sendOtaResult(const String& result) {  // [MOD-25] volt: érték szerint (másolat hívásonként)
   if (!pOtaTx) return;
   pOtaTx->setValue(result.c_str());
   pOtaTx->notify();
@@ -730,6 +728,10 @@ class MyServerCallbacks : public BLEServerCallbacks {
     diagRequested = false;
     diagClearRequested = false;
 
+    // [MOD-27] A flash-méret csomagot kapcsolatonként egyszer küldjük; eddig a flag
+    // bontáskor nem állt vissza, így egy MÁSODIK OTA-kliens már nem kapta meg.
+    otaSendSize = true;
+
     if (otaMode != OTA_NORMAL_MODE) {
       DBG("OTA interrupted – resetting OTA state");
       otaMode = OTA_NORMAL_MODE;
@@ -793,10 +795,12 @@ class MyCallbacks : public BLECharacteristicCallbacks {
         return;
       }
 
-      String receivedPin = val.substring(5);
-      String correctPin = BLE_AUTH_PIN;
+      // [MOD-24] Összehasonlítás a már meglévő `val` puffere felett, substring-allokáció
+      // nélkül. Az ág feltétele (startsWith("AUTH:")) garantálja a legalább 5 karaktert,
+      // így a +5 offset legrosszabb esetben a lezáró NUL-ra mutat (üres PIN → nem egyezik).
+      const char* receivedPin = val.c_str() + 5;
 
-      if (correctPin.length() == 0 || receivedPin == correctPin) {
+      if (!BLE_AUTH_REQUIRED || strcmp(receivedPin, BLE_AUTH_PIN) == 0) {
         isAuthenticated = true;
         authAttempts = 0;
         DBG("Auth OK");
@@ -816,8 +820,7 @@ class MyCallbacks : public BLECharacteristicCallbacks {
       }
 
     } else if (val.startsWith("LEVEL:")) {
-      String correctPin = BLE_AUTH_PIN;
-      if (correctPin.length() > 0 && !isAuthenticated) {
+      if (BLE_AUTH_REQUIRED && !isAuthenticated) {  // [MOD-24] allokáció-mentes
         DBG("LEVEL rejected (no auth)");
         pCharacteristic->setValue("AUTH_REQUIRED");
         pCharacteristic->notify();
@@ -845,8 +848,7 @@ class MyCallbacks : public BLECharacteristicCallbacks {
       DBG_VLN(zone);
 
     } else if (val.startsWith("ROLLER:")) {
-      String correctPin = BLE_AUTH_PIN;
-      if (correctPin.length() > 0 && !isAuthenticated) {
+      if (BLE_AUTH_REQUIRED && !isAuthenticated) {  // [MOD-24] allokáció-mentes
         DBG("ROLLER rejected (no auth)");
         pCharacteristic->setValue("AUTH_REQUIRED");
         pCharacteristic->notify();
@@ -874,8 +876,7 @@ class MyCallbacks : public BLECharacteristicCallbacks {
       DBG_VLN(mainCmd);
 
     } else if (val.startsWith("DIAG?")) {
-      String correctPin = BLE_AUTH_PIN;
-      if (correctPin.length() > 0 && !isAuthenticated) {
+      if (BLE_AUTH_REQUIRED && !isAuthenticated) {  // [MOD-24] allokáció-mentes
         DBG("DIAG rejected (no auth)");
         pCharacteristic->setValue("AUTH_REQUIRED");
         pCharacteristic->notify();
@@ -885,8 +886,7 @@ class MyCallbacks : public BLECharacteristicCallbacks {
       DBG("Diag log requested");
 
     } else if (val.startsWith("DIAGCLR")) {
-      String correctPin = BLE_AUTH_PIN;
-      if (correctPin.length() > 0 && !isAuthenticated) {
+      if (BLE_AUTH_REQUIRED && !isAuthenticated) {  // [MOD-24] allokáció-mentes
         DBG("DIAGCLR rejected (no auth)");
         pCharacteristic->setValue("AUTH_REQUIRED");
         pCharacteristic->notify();
@@ -905,7 +905,11 @@ class MyCallbacks : public BLECharacteristicCallbacks {
 class OtaCallbacks : public BLECharacteristicCallbacks {
   void onWrite(BLECharacteristic* pCharacteristic) {
     uint8_t* pData = pCharacteristic->getData();
-    int len = pCharacteristic->getValue().length();
+    // [MOD-23] getLength() a getValue().length() helyett: a getValue() String-et ad
+    // vissza ÉRTÉK szerint, azaz minden egyes OTA-csomagra heap-allokáció + másolás
+    // (~11 500 csomag / 1,1 MB firmware). A getData()/getLength() ugyanazt a puffert
+    // éri el másolás nélkül. `int`-ként tartjuk: a lenti `len - 2` előjeles kell legyen.
+    const int len = (int)pCharacteristic->getLength();
     if (pData == NULL || len == 0) return;
 
     OTA_DBG("OTA packet");
@@ -932,10 +936,21 @@ class OtaCallbacks : public BLECharacteristicCallbacks {
           otaAbort("0xFC truncated");
         }
       } else {
-        otaWriteLen = (pData[1] * 256) + pData[2];
-        otaExpectedCrc = ((uint32_t)pData[5] << 24) | ((uint32_t)pData[6] << 16) | ((uint32_t)pData[7] << 8) | ((uint32_t)pData[8]);
-        otaCur = (pData[3] * 256) + pData[4];
-        otaWriteFile = true;
+        // [FIX-ESP-51] A 0xFC hosszmezője (0..65535) vezérli a CRC-számítás és a
+        // SPIFFS-írás olvasását az OTA_BUF_SIZE (16 KB) pufferből. A 0xFB író ág már
+        // határ-ellenőrzött, ez viszont eddig nem volt: sérült/eltérő PART-méretű
+        // kliens ~48 KB heap-túlolvasást okozhatott. Nem fér bele → abort.
+        int wlen = (pData[1] * 256) + pData[2];
+        if (wlen <= 0 || wlen > (int)OTA_BUF_SIZE) {
+          DBG_P("0xFC bad part length: ");
+          DBG_VLN(wlen);
+          otaAbort("bad part length");
+        } else {
+          otaWriteLen = wlen;
+          otaExpectedCrc = ((uint32_t)pData[5] << 24) | ((uint32_t)pData[6] << 16) | ((uint32_t)pData[7] << 8) | ((uint32_t)pData[8]);
+          otaCur = (pData[3] * 256) + pData[4];
+          otaWriteFile = true;
+        }
       }
 
     } else if (pData[0] == 0xFD) {
@@ -1001,6 +1016,21 @@ class OtaCallbacks : public BLECharacteristicCallbacks {
     }
   }
 };
+
+// Bypass-mód jelzés: 1 mp gyors váltakozó LED-villogás (defenzív: 1 ms delay + WDT reset, nem 60 ms blokkolás)
+static void bypassBlinkIndicator() {
+  unsigned long t0 = millis();
+  while (millis() - t0 < 1000) {
+    digitalWrite(LED_YELLOW, HIGH);
+    digitalWrite(LED_RED, LOW);
+    for (int i = 0; i < 60; i++) { delay(1); esp_task_wdt_reset(); }
+    digitalWrite(LED_YELLOW, LOW);
+    digitalWrite(LED_RED, HIGH);
+    for (int i = 0; i < 60; i++) { delay(1); esp_task_wdt_reset(); }
+  }
+  digitalWrite(LED_YELLOW, LOW);
+  digitalWrite(LED_RED, LOW);
+}
 
 // ===================== BUTTON HANDLERS =====================
 void handleClick() {
@@ -1080,18 +1110,7 @@ void handleMultiClick() {
     relaySenseBypass = !relaySenseBypass;
     bypassPrefs.putBool("enabled", relaySenseBypass);
 
-    // 1 mp gyors váltakozó villogás (defenzív: 1ms delay + WDT reset, nem 60ms blokkolás)
-    unsigned long t0 = millis();
-    while (millis() - t0 < 1000) {
-      digitalWrite(LED_YELLOW, HIGH);
-      digitalWrite(LED_RED, LOW);
-      for (int i = 0; i < 60; i++) { delay(1); esp_task_wdt_reset(); }
-      digitalWrite(LED_YELLOW, LOW);
-      digitalWrite(LED_RED, HIGH);
-      for (int i = 0; i < 60; i++) { delay(1); esp_task_wdt_reset(); }
-    }
-    digitalWrite(LED_YELLOW, LOW);
-    digitalWrite(LED_RED, LOW);
+    bypassBlinkIndicator();
 
     zeroStateForBypass();
     disableRelays();  // [FIX-ESP-44] Defensive: ensure relays are OFF before restart
@@ -1304,7 +1323,10 @@ void printBootDiag() {
 void handleDiagRequest() {
   if (!pCharacteristic) return;
 
-  if (diagClearRequested) {
+  // [FIX-ESP-52] Streamelés közben NEM csonkoljuk a naplót: a diagFile ilyenkor nyitott
+  // FILE_READ handle-t tart rá (a diagLog append-ágát ugyanez védi, [FIX-ESP-42]).
+  // A kérés függőben marad, és a stream lezárása után a következő híváskor lefut.
+  if (diagClearRequested && !diagStreaming) {
     diagClearRequested = false;
     // A [ver] sort megőrizzük: csak a hibabejegyzéseket töröljük
     String ver = diagReadVersionLine();
@@ -1387,18 +1409,7 @@ void setup() {
   relaySenseBypass = bypassPrefs.getBool("enabled", false);
 
   if (relaySenseBypass) {
-    // 1 mp gyors váltakozó villogás (defenzív: 1ms delay + WDT reset, nem 60ms blokkolás)
-    unsigned long t0 = millis();
-    while (millis() - t0 < 1000) {
-      digitalWrite(LED_YELLOW, HIGH);
-      digitalWrite(LED_RED, LOW);
-      for (int i = 0; i < 60; i++) { delay(1); esp_task_wdt_reset(); }
-      digitalWrite(LED_YELLOW, LOW);
-      digitalWrite(LED_RED, HIGH);
-      for (int i = 0; i < 60; i++) { delay(1); esp_task_wdt_reset(); }
-    }
-    digitalWrite(LED_YELLOW, LOW);
-    digitalWrite(LED_RED, LOW);
+    bypassBlinkIndicator();
   }
 
 #if defined(CONFIG_IDF_TARGET_ESP32C6)
@@ -1544,8 +1555,8 @@ void setup() {
   button.attachLongPressStop(handleLongPressStop);
   button.attachDoubleClick(handleDoubleClick);
   button.attachMultiClick(handleMultiClick);
-  button.setPressTicks(2000);
-  button.setClickTicks(400);
+  button.setPressMs(2000);
+  button.setClickMs(400);
 
   DBG("Relay state restore");
   fanPrefs.begin("fan", true);  // read-only
@@ -1579,13 +1590,9 @@ void setup() {
       snprintf(e, sizeof(e), "[boot] loop-break idle n=%d", errRestoreCount);
       diagLog(e);
     } else {
-      restore_main = true;
       DBG("Boot after BROWNOUT/UNKNOWN/WDT, main was active → resuming");
-      if (relaySenseBypass) {
-        enableRelays();
-        
-        activateMain();
-      }
+      enableRelays();
+      activateMain();
       bool rtcValid = (savedZoneMagic == SAVED_ZONE_MAGIC && savedZone >= 0 && savedZone <= 3);
       bool nvsValid = (nvsLastSavedZone >= 0 && nvsLastSavedZone <= 3);
       int restoreZone;
@@ -1602,12 +1609,10 @@ void setup() {
         restoreZone = 2;
         DBG("Both RTC and NVS invalid → defaulting to zone 2");
       }
-      if (relaySenseBypass) {
-        setFanZone(restoreZone, SRC_BUTTON);
-        // [FIX-ESP-40] Fan-relé azonnali bekapcsolása bootkor: a setFanZone csak indítja a váltást, a handleZoneChange RELAY_SWITCH_DELAY_MS után hat → kivárjuk, majd hívjuk
-        delay(RELAY_SWITCH_DELAY_MS + 5);
-        handleZoneChange();
-      }
+      setFanZone(restoreZone, SRC_BUTTON);
+      // [FIX-ESP-40] Fan-relé azonnali bekapcsolása bootkor: a setFanZone csak indítja a váltást, a handleZoneChange RELAY_SWITCH_DELAY_MS után hat → kivárjuk, majd hívjuk
+      delay(RELAY_SWITCH_DELAY_MS + 5);
+      handleZoneChange();
     }
   }
 
@@ -1995,7 +2000,13 @@ void setFanZone(int zone, CommandSource source) {
 
   portENTER_CRITICAL(&zoneMux);
 
-  if (now >= sourceLockedUntil) {
+  // [FIX-ESP-53] wrap-safe forrás-zárolás (a monitorFanRelays grace-ével azonos idióma):
+  // a nyers now/sourceLockedUntil összevetés a millis()-túlcsorduláskor egy 2 s-os
+  // ablakra megfordult volna (a zárolás korán lejár, majd tévesen újra aktívnak látszik).
+  // A számítás a kritikus szekción BELÜL marad, mint az eredeti összehasonlítás.
+  const bool sourceLockActive = ((long)(sourceLockedUntil - now) > 0);
+
+  if (!sourceLockActive) {
     activeSource = SRC_NONE;
   }
 
@@ -2008,7 +2019,7 @@ void setFanZone(int zone, CommandSource source) {
   zoneChanging = true;
   zoneChangeInProgress = true;
 
-  if (activeSource != SRC_NONE && source != SRC_NONE && now < sourceLockedUntil) {
+  if (activeSource != SRC_NONE && source != SRC_NONE && sourceLockActive) {
     if (source < activeSource) {
       zoneChanging = false;
       zoneChangeInProgress = false;
@@ -2523,7 +2534,9 @@ void enterDeepSleep(const char* reason) {
 void otaLoop() {
   if (!pOtaTx || !pOtaRx) return;
 
-  if (otaPendingReboot && millis() >= otaRebootAt) {
+  // [FIX-ESP-53] wrap-safe határidő (v.ö. [FIX-ESP-49]): a nyers `millis() >= deadline`
+  // a millis()-túlcsordulás körül azonnal igazzá válna (az 5 s várakozás kimaradna)
+  if (otaPendingReboot && (long)(millis() - otaRebootAt) >= 0) {
     rebootEspWithReason("OTA done");
   }
 
@@ -2629,7 +2642,7 @@ void otaLoop() {
     case OTA_INSTALL_MODE:
 
       if (otaInstallWaiting) {
-        if (millis() >= otaInstallWaitUntil) {
+        if ((long)(millis() - otaInstallWaitUntil) >= 0) {  // [FIX-ESP-53] wrap-safe
           otaInstallWaiting = false;
           if (otaReceivedBytes == otaTotalBytes && otaTotalBytes > 0) {
             uint32_t savedTotal = otaTotalBytes;

@@ -134,3 +134,132 @@ egyetlen összevont "Update FanController_OTA_debug.ino" commitban érkeztek.)*
 - **[MOD-16]** 2026-07-23: **7.14.7** — **`ota_diagnostic.py` hordozhatóság.**
   A partíciós tábla beégetett `/home/user/...` útvonala a szkript saját
   könyvtárára cserélve — bármely gépen működik.
+
+---
+
+## v7.14.8 — Átvilágítás: boot-helyreállítási regresszió + Python segédeszközök (2026-08-24)
+
+- **[FIX-ESP-50]** 2026-08-24: **7.14.8** — **Kritikus regresszió: a hibás-reset utáni
+  boot-helyreállítás véletlenül az 5x-kattintás bypass-kapcsolóhoz lett kötve.**
+  Az „5 gombnyomás hozzáadása" commit (bypass mód, 2026-06-27) a `setup()`
+  BROWNOUT/UNKNOWN/WDT-ági fő relé + ventilátorfokozat visszaállítását
+  (`enableRelays()`/`activateMain()`/`setFanZone()`/`handleZoneChange()`)
+  tévedésből `if (relaySenseBypass)` alá tette. Mivel a bypass alapból **kikapcsolt**
+  (`false`), ez a **normál/gyári üzemmódban teljesen kiiktatta** a
+  FIX-ESP-19/25/30/39/40 óta meglévő boot-helyreállítást: hibás reset (brownout/
+  panic/WDT) után az eszköz `[boot] reason=...` bejegyzést írt, a hurok-megszakító
+  számlálót is növelte, de a relék/ventilátor **soha nem álltak vissza** — pontosan
+  az a „holtan marad" tünet, amit ezek a korábbi javítások megszüntettek. (A README
+  szerint az 5x-kattintás célja kizárólag „a reléfigyelés és boot teszt ki/be
+  kapcsolása" — a boot-helyreállításhoz semmi köze.) Javítás: a négy hívás feltétel
+  nélkülire állítva, a bypass csak azt szabályozza, aminek dokumentálva van
+  (`monitorFanRelays`/`checkFanRelayMismatch`/`relayBootTest`).
+- **[MOD-17]** 2026-08-24: **7.14.8** — **Halott `restore_main` globális törölve.**
+  A FIX-ESP-50 melletti hiba miatt bekerült változót csak írta a kód, olvasni
+  soha nem olvasta.
+- **[MOD-18]** 2026-08-24: **7.14.8** — **Bypass-jelző LED-villogás DRY.**
+  Az 5x-kattintás kezelőjében és a `setup()`-ban szó szerint duplikált, 12 soros
+  „1 mp gyors váltakozó villogás" blokk közös `bypassBlinkIndicator()` helperbe
+  emelve (kisebb flash, egyetlen hely a jövőbeli módosításhoz).
+- **[MOD-18b]** 2026-08-24: **7.14.8** — **OneButton API modernizálás.**
+  A `button.setPressTicks()`/`setClickTicks()` az OneButton 2.6.1-ben deprecated
+  (`--warnings all` mellett fordítási figyelmeztetést adott) — lecserélve a
+  jelenlegi `setPressMs()`/`setClickMs()` hívásokra (a viselkedés azonos, csak a
+  metódusnév változott). C3 és C6 célon is figyelmeztetés-mentesen fordul.
+- **[MOD-19]** 2026-08-24: **`fan_stress.py`** — **Python 3.8 kompatibilitás.**
+  A `find_address()` visszatérési típusa `str | None` (PEP 604) volt `from __future__
+  import annotations` nélkül — ez a `TOOLS_README.md` által ígért Python 3.8/3.9 alatt
+  `TypeError`-ral elszáll importáláskor (a `|` union-szintaxis csak 3.10-től
+  értékelhető ki futásidőben). Hozzáadva a `from __future__ import annotations`.
+- **[MOD-20]** 2026-08-24: **`serial_monitor.py`** — **Újracsatlakozási szál-szivárgás.**
+  A `read_loop()` a kapcsolat-vesztéskor a szálindító `connect()`-et hívta újra,
+  ami minden újracsatlakozáskor **egy újabb** `read_loop` szálat indított a már
+  futó mellé — ismétlődő/összefésült sorokhoz és szál-felhalmozódáshoz vezetve
+  hosszú, sok-újracsatlakozásos munkameneteknél. Javítás: a portnyitás
+  `_open_port()`-ba különítve; a `connect()` (első csatlakozás) indítja a
+  szálat, az újracsatlakozási ágak csak `_open_port()`-ot hívnak. Emellett a
+  RX/TX decode-fallback `errors='ignore'`-t használt, ami **soha nem dob
+  kivételt** → a hex-fallback ág holt kód volt (bináris/nem-UTF-8 adat
+  csendben, hibásan jelent volna meg szövegként); most szigorú UTF-8 dekódolás
+  + `UnicodeDecodeError`-ra tényleges hex-fallback.
+- **[MOD-21]** 2026-08-24: **`ota_diagnostic.py`** — kihasználatlan `import struct` és
+  `offset_dec`/`subtype` változók törölve; explicit, érthető hibaüzenet 0 byte-os
+  (üres) firmware-fájlra ahelyett, hogy az `IndexError` az általános except-ágba
+  esne. Emellett futtatással megerősített, valódi hiba: a partíciós tábla
+  kiírása duplán tette ki a `0x` prefixet (`"0x0x10000"`), mert a CSV `offset`/
+  `size` mezője már tartalmazza — a formázó string javítva, most helyesen
+  `0x10000`-et ír.
+- **[MOD-22]** 2026-08-24: **`sender/discover.py`** — az elavult
+  `asyncio.get_event_loop()` + `run_until_complete()` pár lecserélve
+  `asyncio.run()`-ra (a többi szkripttel egységesen), `if __name__ == "__main__"`
+  őrfeltétellel.
+
+---
+
+## v7.14.9 — Második átvilágítási kör: OTA-puffer határellenőrzés, wrap-safe határidők, allokáció-mentes forró utak (2026-08-24)
+
+- **[FIX-ESP-51]** 2026-08-24: **7.14.9** — **OTA heap-túlolvasás a `0xFC` hosszmezőjéből.**
+  A part-vége csomag 16 bites hosszmezője (`0..65535`) ellenőrzés nélkül került az
+  `otaWriteLen`-be, és ez vezérelte a `crc32_zlib(buf, blen)` **olvasását** és az
+  `otaWriteBinary(..., buf, blen)` **kiírását** a `OTA_BUF_SIZE` = **16 KB** pufferből.
+  Sérült hosszmező (BLE bithiba) vagy eltérő `PART`-méretű kliens esetén akár ~48 KB
+  **heap-túlolvasás** történhetett (idegen heap-tartalom a `update.bin`-be írva, illetve
+  potenciális összeomlás). Jellemző **inkonzisztencia**: a `0xFB` **író** ág már
+  határ-ellenőrzött volt (`if ((base + x) < (int)OTA_BUF_SIZE)`), az olvasást vezérlő
+  hosszmező viszont nem. Javítás: `wlen <= 0 || wlen > OTA_BUF_SIZE` → `otaAbort("bad part length")`.
+- **[FIX-ESP-52]** 2026-08-24: **7.14.9** — **`DIAGCLR` streamelés közben csonkolta a naplót.**
+  A `diagLog()` append-ágát a `[FIX-ESP-42]` guard védi (`if (diagStreaming) return;`),
+  a `handleDiagRequest()` **törlő** ága viszont **nem** volt védve: egy folyamatban lévő
+  `DIAG?` stream alatt érkező `DIAGCLR` `FILE_WRITE`-tal (truncate) írta felül, illetve
+  `FLASH.remove()`-val törölte a fájlt, **miközben a `diagFile` nyitott `FILE_READ`
+  handle-t tartott rá** — a stream ezután csonkolt/érvénytelen fájlból olvasott tovább.
+  (A `diag_client.py --clear` megvárja a `DIAG_END`-et, de bármely más kliens — mobil app,
+  `fan_stress.py` — interleavelheti a két parancsot.) Javítás: `if (diagClearRequested && !diagStreaming)`
+  — a kérés **függőben marad**, és a stream lezárása után a következő híváskor fut le.
+- **[FIX-ESP-53]** 2026-08-24: **7.14.9** — **További `millis()`-túlcsordulásra érzékeny határidők**
+  (a `[FIX-ESP-49]` által javított hibaosztály maradék előfordulásai — **inkonzisztencia**,
+  mert a `monitorFanRelays()` grace-e már a wrap-safe idiómát használta):
+  1. `otaLoop()` — `millis() >= otaRebootAt`: az OTA utáni **5 s**-os, eredményküldésre
+     hagyott várakozás a túlcsordulás körül kimaradt volna (azonnali reboot).
+  2. `otaLoop()` — `millis() >= otaInstallWaitUntil`: ugyanez a **2 s**-os telepítés előtti
+     várakozásra.
+  3. `setFanZone()` — `now >= sourceLockedUntil` / `now < sourceLockedUntil`: a **2 s**-os
+     BLE-vs-gomb forrás-prioritás zárolás a túlcsorduláskor korán lejárt, majd tévesen
+     újra aktívnak látszott volna.
+  Mindhárom a szabványos előjeles különbségre cserélve. A javítás **normál működésben
+  bitre azonos** — külön host-oldali teszttel ellenőrizve (a régi idióma a normál
+  tartományban 0 hibát ad, a wrap körül 2204-et; az új sehol nem hibázik).
+- **[MOD-23]** 2026-08-24: **7.14.9** — **OTA forró út: heap-allokáció csomagonként.**
+  Az `OtaCallbacks::onWrite()` a hosszt `pCharacteristic->getValue().length()`-ből vette;
+  a `getValue()` a BLE-könyvtárban **`String`-et ad vissza érték szerint**, azaz a teljes
+  csomagot **lemásolta a heapre** — csak azért, hogy a hossz megvan-e. Egy 1,1 MB-os
+  firmware ~**11 500** csomag → ugyanennyi felesleges `malloc`/`memcpy`/`free` a legidőkritikusabb
+  úton (heap-fragmentáció + CPU). A `getData()`/`getLength()` ugyanazt a `BLEValue`-puffert
+  éri el másolás nélkül (a könyvtár forrásában ellenőrizve). `int`-ként tartva, mert a
+  lenti `len - 2` **előjeles** kell legyen (1 bájtos csomagnál `size_t` alulcsordulna).
+- **[MOD-24]** 2026-08-24: **7.14.9** — **BLE-parancsok: `String` allokáció parancsonként.**
+  Mind az **5** parancságban (`AUTH:`/`LEVEL:`/`ROLLER:`/`DIAG?`/`DIAGCLR`) egy
+  `String correctPin = BLE_AUTH_PIN;` heap-allokáció született, pusztán a
+  `correctPin.length() > 0` **fordítási időben eldönthető** feltételhez; az `AUTH:` ág
+  ráadásul egy `val.substring(5)` allokációval is indult. Helyette `static constexpr bool
+  BLE_AUTH_REQUIRED = (sizeof(BLE_AUTH_PIN) > 1)` és `strcmp(val.c_str() + 5, BLE_AUTH_PIN)`
+  — allokáció-mentes, viselkedésben azonos (host-oldali teszttel 10 határesetre ellenőrizve:
+  üres/rövid/hosszú/whitespace-es PIN — 0 eltérés). Egyúttal törölve a **halott**
+  `#if !defined(BLE_AUTH_PIN)` őr: a makró egy sorral fentebb mindig definiált, így
+  sosem sülhetett el — az ÜRES PIN-t akarta elkapni, amit valójában a `setup()`
+  `static_assert`-je ellenőriz.
+- **[MOD-25]** 2026-08-24: **7.14.9** — **`String` paraméterek érték szerint.**
+  `rebootEspWithReason(String)` → `const char*`, `sendOtaResult(String)` → `const String&`
+  (hívásonkénti felesleges `String`-másolat megszüntetése).
+- **[MOD-26]** 2026-08-24: **7.14.9** — **Halott kód.** A `lastPrint1`/`lastPrint2`/`lastPrint3`
+  globálisok csak deklarálva voltak, sehol nem használva (a státusz-kiírás `static Timer`-t
+  használ) — törölve. A `#include "esp_log.h"` egyetlen szimbóluma sem szerepelt a
+  kódban — törölve (az `esp_system.h` marad: az `esp_reset_reason()` onnan jön).
+- **[MOD-27]** 2026-08-24: **7.14.9** — **`otaSendSize` nem állt vissza bontáskor.**
+  A flash-méret csomagot kapcsolatonként egyszer küldjük, de a flag a `onDisconnect`
+  OTA-állapot-reset blokkjából kimaradt (miközben az összes többi OTA-flag nullázódik),
+  így egy **második** OTA-kliens már nem kapta meg. A jelenlegi `sender/ota.py` nem
+  használja, de a protokoll-állapot így konzisztens.
+
+*Ellenőrzés: mindkét cél (XIAO ESP32-C3 és C6) `--warnings all` mellett hiba- és
+figyelmeztetés-mentesen fordul. Flash C3: 1 146 468 → 1 145 894 bájt (−574).*

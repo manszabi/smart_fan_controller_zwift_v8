@@ -9,7 +9,7 @@ program parancsait.
 > [manszabi/FanController_OTA_debug](https://github.com/manszabi/FanController_OTA_debug)
 > repó. Az itteni másolat kényelmi célú, hogy a szoftver és a firmware egy
 > helyen legyen áttekinthető. Módosítást mindig **mindkét helyre** vezess át
-> (ez a másolat a firmware-repó `v7.14.7` állapotát tükrözi).
+> (ez a másolat a firmware-repó `v7.14.9` állapotát tükrözi).
 
 ## Hogyan kapcsolódik a fő programhoz?
 
@@ -33,7 +33,7 @@ eszköznév `FanController`.
 |---|---|
 | `FanController_OTA_debug.ino` | **A firmware maga** (Arduino vázlat, ~2700 sor): BLE vezérlés + PIN-auth, relé-állapotgép break-before-make váltással, kézi (gombos) mód, failsafe-védelem, relé-visszajelzés figyelés (H11AA1M optocsatoló), fokozat-mentés áramszünetre (RTC+NVS), BLE OTA frissítés CRC-vel és health-checkkel, deep sleep, diagnosztikai napló. |
 | `README.md` | A firmware saját, részletes (magyar) dokumentációja: hardver/pinkiosztás, üzemmódok, gombvezérlés, OTA, hibaelhárítás. **Ezt olvasd először.** |
-| `verhistory.md` | A firmware teljes verziótörténete (v7.0.0 → v7.14.7). |
+| `verhistory.md` | A firmware teljes verziótörténete (v7.0.0 → v7.14.9). |
 | `partitions_custom.csv` | Egyedi flash-partíciós tábla (két OTA app-partíció + SPIFFS az OTA-átmenethez). |
 | `build.sh` | Fordítás arduino-cli-vel (XIAO ESP32-C3 alapból; `TARGET=c6` a C6-hoz). |
 | `sender/ota.py` | **BLE OTA feltöltő**: az új firmware `.bin` feltöltése vezeték nélkül (részenkénti CRC32-vel, újraküldéssel). `sender/discover.py`: BLE-eszközök listázása; `sender/run.bat`: Windows-indító. |
@@ -53,7 +53,46 @@ eszköznév `FanController`.
 3. **További frissítések OTA-val:**
    `python sender/ota.py "<MAC-cím>" "FanController_OTA_debug.ino.bin"`
 4. **Ellenőrzés:** a HUD-ból vagy a `diag_client.py`-jal lekérdezhető a
-   diag.log – az első sora a futó stabil verzió (`[ver] 7.14.7`).
+   diag.log – az első sora a futó stabil verzió (`[ver] 7.14.9`).
+
+## A 2026-08-24-i átvilágítás eredménye (v7.14.8 – v7.14.9)
+
+Két további kör, immár tényleges fordítással ellenőrizve (XIAO ESP32-C3 és C6,
+`--warnings all` mellett 0 hiba / 0 figyelmeztetés).
+
+**Kritikus regresszió – érdemes tudni róla:**
+
+- **[FIX-ESP-50]** A 2026-06-27-i „5 gombnyomás" (relé-figyelés bypass) módosítás
+  tévedésből a **hibás reset utáni boot-helyreállítást** is a bypass-kapcsoló alá
+  tette. Mivel a bypass alapból **ki van kapcsolva**, ez gyári beállításban
+  **teljesen kiiktatta** a fő relé + ventilátorfokozat automatikus visszaállítását
+  BROWNOUT/WDT/panic reset után – vagyis visszahozta azt a „holtan marad" tünetet,
+  amit a `[FIX-ESP-19/25/30/39/40]` sorozat korábban megszüntetett. Javítva:
+  a visszaállítás ismét feltétel nélküli, a bypass csak a dokumentált hatáskörére
+  (reléfigyelés + bootkori relé-önteszt) vonatkozik.
+
+**További javított hibák:**
+
+- **[FIX-ESP-51]** OTA **heap-túlolvasás**: a `0xFC` part-vége csomag ellenőrizetlen
+  hosszmezője a 16 KB-os pufferen túlra olvastatott (sérült hosszmező vagy eltérő
+  `PART`-méretű kliens esetén akár ~48 KB) → határellenőrzés + abort.
+- **[FIX-ESP-52]** A `DIAGCLR` egy futó `DIAG?` stream közben csonkolta a naplót,
+  miközben nyitott olvasó-handle volt rajta → a törlés most megvárja a stream végét.
+- **[FIX-ESP-53]** További `millis()`-túlcsordulásra érzékeny határidők (OTA-reboot,
+  OTA-telepítés, BLE-vs-gomb forrás-prioritás zárolás) wrap-biztosra javítva.
+
+**Memória- és processzoridő-takarékosság:**
+
+- **[MOD-23]** Az OTA forró útján csomagonként egy felesleges `String` heap-másolat
+  született (~11 500 alkalommal egy 1,1 MB-os firmware-nél) – megszüntetve.
+- **[MOD-24]** Mind az 5 BLE-parancság `String`-allokációval indult egy fordítási
+  időben eldönthető feltételhez – `constexpr`-re cserélve.
+- **[MOD-25…27]** Érték szerinti `String` paraméterek, halott globálisok/include,
+  és egy bontáskor vissza nem álló OTA-flag rendezése.
+
+A Python segédeszközök is kaptak javításokat (`serial_monitor.py` szál-szivárgás
+újracsatlakozáskor, `fan_stress.py` Python 3.8-kompatibilitás, `ota_diagnostic.py`
+hibás `0x0x…` kiírás). Részletek: `verhistory.md`.
 
 ## A 2026-07-23-i átvilágítás eredménye (v7.14.7)
 

@@ -30,6 +30,8 @@ Használat:
     python3 fan_stress.py --address AA:BB:CC:DD:EE:FF --pin 123456
 """
 
+from __future__ import annotations
+
 import argparse
 import asyncio
 import time
