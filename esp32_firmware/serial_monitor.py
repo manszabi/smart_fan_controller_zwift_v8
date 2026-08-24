@@ -3,6 +3,7 @@
 
 import serial
 import serial.tools.list_ports
+import sys
 import threading
 import time
 from datetime import datetime
@@ -40,8 +41,8 @@ class SerialMonitor:
             print(f"  {i}: {port.device} - {port.description}")
         return ports
 
-    def connect(self):
-        """Connect to serial port."""
+    def _open_port(self):
+        """Open (or reopen) the serial port only — does not touch the rx thread."""
         try:
             self.ser = serial.Serial(
                 port=self.port,
@@ -52,18 +53,29 @@ class SerialMonitor:
                 bytesize=serial.EIGHTBITS
             )
             print(f"\n✓ Csatlakozva: {self.port} @ {self.baudrate} baud")
-            self.running = True
-
-            # Start receive thread
-            self.rx_thread = threading.Thread(target=self.read_loop, daemon=True)
-            self.rx_thread.start()
             return True
         except serial.SerialException as e:
             print(f"✗ Hiba a csatlakozásnál: {e}")
             return False
 
+    def connect(self):
+        """Connect to serial port and start the (single) receive thread."""
+        if not self._open_port():
+            return False
+        self.running = True
+        # Start receive thread
+        self.rx_thread = threading.Thread(target=self.read_loop, daemon=True)
+        self.rx_thread.start()
+        return True
+
     def read_loop(self):
-        """Read from serial port continuously with auto-reconnect."""
+        """Read from serial port continuously with auto-reconnect.
+
+        Runs in a single background thread (started once by connect()); on
+        reconnect it must only reopen the port via _open_port(), never spawn
+        another thread, or every reconnect would leave an extra thread
+        reading the same port concurrently.
+        """
         while self.running:
             try:
                 if self.ser and self.ser.is_open:
@@ -71,10 +83,7 @@ class SerialMonitor:
                         data = self.ser.read(self.ser.in_waiting)
                         timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
 
-                        # Try to decode as text, fall back to hex.
-                        # Strict decoding: with errors='ignore' the call
-                        # never raises, so the hex branch was dead code and
-                        # binary frames were printed as mangled text.
+                        # Try to decode as text, fall back to hex for non-UTF-8 bytes
                         try:
                             text = data.decode('utf-8')
                             print(f"[{timestamp}] RX: {text.rstrip()}")
@@ -88,7 +97,7 @@ class SerialMonitor:
                     if self.auto_reconnect and self.running:
                         print(f"\n⚠ Kapcsolat megszakadt. Újracsatlakozás {self.reconnect_delay}s múlva...")
                         time.sleep(self.reconnect_delay)
-                        if self.connect():
+                        if self._open_port():
                             print("✓ Újracsatlakozva!")
                     else:
                         break
@@ -97,7 +106,7 @@ class SerialMonitor:
                     if self.auto_reconnect:
                         print(f"\n⚠ Soros hiba: {e}. Újracsatlakozás {self.reconnect_delay}s múlva...")
                         time.sleep(self.reconnect_delay)
-                        if self.connect():
+                        if self._open_port():
                             print("✓ Újracsatlakozva!")
                     else:
                         print(f"Olvasási hiba: {e}")
