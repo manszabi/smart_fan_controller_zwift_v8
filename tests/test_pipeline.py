@@ -503,7 +503,8 @@ class TestShutdownStopsTheFan:
         a folyamattal együtt elhalt, jellemzően még a LEVEL:0 előtt, így
         a ventilátor tovább járt az utolsó szinten.
         """
-        import tempfile, shutil
+        import shutil
+        import tempfile
 
         tmp = tempfile.mkdtemp()
         try:
@@ -561,3 +562,107 @@ class TestShutdownStopsTheFan:
             assert ctrl._ble_fan is None
 
         asyncio.run(scenario())
+
+
+class TestZeroImmediateIsScopedToTheActiveZoneMode:
+    """A zero-immediate kapcsolók csak a döntő metrikára vonatkoznak.
+
+    Kapuzás nélkül az IGNORÁLT forrás nulla értéke is törölte a
+    cooldown-t: power_only módban a levett (resting alatti) pulzusmérő
+    zero_hr_immediate-et váltott ki, hr_only módban pedig a gurulás
+    közbeni 0 W – mindkét esetben a felhasználó által kikapcsolt
+    azonnali leállást erőltetve rá a másik metrikára.
+    """
+
+    @staticmethod
+    def _run(zone_mode: ZoneMode, *, zero_power: bool, zero_hr: bool,
+             power_zone: int, hr_zone: int) -> bool:
+        """Visszaadja, hogy a cooldown zero_immediate=True-val hívódott-e."""
+        async def scenario() -> bool:
+            settings = _pipeline_settings()
+            settings["heart_rate_zones"] = HeartRateZonesConfig(
+                enabled=True, zone_mode=zone_mode, zero_hr_immediate=zero_hr,
+            )
+            settings["power_zones"] = PowerZonesConfig(
+                ftp=200, min_watt=0, max_watt=1000,
+                zero_power_immediate=zero_power,
+            )
+            settings["datasource"] = DatasourceConfig(
+                power_source=DataSource.ZWIFTUDP,
+                hr_source=DataSource.ZWIFTUDP,
+                zwiftUDP_buffer_seconds=1, zwiftUDP_minimum_samples=1,
+                zwiftUDP_buffer_rate_hz=4, zwiftUDP_dropout_timeout=30,
+            )
+            state = ControllerState()
+            # 120 s cooldown: azonnali leállás nélkül semmi nem megy ki
+            cooldown = CooldownController(120)
+            seen: list[bool] = []
+            real_process = cooldown.process
+
+            def spy(current_zone, new_zone, zero_immediate):
+                seen.append(zero_immediate)
+                return real_process(current_zone, new_zone, zero_immediate)
+
+            cooldown.process = spy  # type: ignore[method-assign]
+            zone_queue: asyncio.Queue = asyncio.Queue(maxsize=1)
+            event = asyncio.Event()
+            task = asyncio.create_task(zone_controller_task(
+                state, zone_queue, cooldown, settings, event))
+            try:
+                now = time.monotonic()
+                async with state.lock:
+                    # Már fut a ventilátor – innen esik vissza nullára
+                    state.current_zone = 3
+                    state.current_power_zone = power_zone
+                    state.current_hr_zone = hr_zone
+                    state.last_power_time = now
+                    state.last_hr_time = now
+                event.set()
+                for _ in range(100):
+                    if seen:
+                        break
+                    await asyncio.sleep(0.01)
+                assert seen, "a cooldown nem lett meghívva"
+                return seen[0]
+            finally:
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+
+        return asyncio.run(scenario())
+
+    def test_zero_hr_immediate_is_ignored_in_power_only_mode(self):
+        assert self._run(
+            ZoneMode.POWER_ONLY, zero_power=False, zero_hr=True,
+            power_zone=0, hr_zone=0,
+        ) is False
+
+    def test_zero_power_immediate_is_ignored_in_hr_only_mode(self):
+        assert self._run(
+            ZoneMode.HR_ONLY, zero_power=True, zero_hr=False,
+            power_zone=0, hr_zone=0,
+        ) is False
+
+    def test_zero_power_immediate_still_applies_in_power_only_mode(self):
+        assert self._run(
+            ZoneMode.POWER_ONLY, zero_power=True, zero_hr=False,
+            power_zone=0, hr_zone=0,
+        ) is True
+
+    def test_zero_hr_immediate_still_applies_in_hr_only_mode(self):
+        assert self._run(
+            ZoneMode.HR_ONLY, zero_power=False, zero_hr=True,
+            power_zone=0, hr_zone=0,
+        ) is True
+
+    def test_both_flags_apply_in_higher_wins_mode(self):
+        assert self._run(
+            ZoneMode.HIGHER_WINS, zero_power=True, zero_hr=False,
+            power_zone=0, hr_zone=0,
+        ) is True
+        assert self._run(
+            ZoneMode.HIGHER_WINS, zero_power=False, zero_hr=True,
+            power_zone=0, hr_zone=0,
+        ) is True

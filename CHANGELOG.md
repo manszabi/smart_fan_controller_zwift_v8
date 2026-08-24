@@ -14,6 +14,105 @@ a verziószámozás a [Semantic Versioning](https://semver.org/) sémát
 
 ## [Unreleased]
 
+### Javítva (harmadik átvilágítási kör)
+
+- **A `zero_power_immediate` / `zero_hr_immediate` átszivárgott az
+  ignorált forrásból** (`processors/processors.py`): a `zone_controller_task`
+  mindkét kapcsolót minden zónamódban figyelembe vette, holott a mód szerint
+  csak az egyik metrika dönt. `power_only` módban egy levett (resting alatti)
+  pulzusmérő `zero_hr_immediate`-et váltott ki, és a felhasználó által
+  szándékosan kikapcsolt azonnali leállás mégis megtörtént – cooldown nélkül
+  állt le a ventilátor a legizzadtabb pillanatban. Ugyanez fordítva
+  `hr_only` módban a gurulás közbeni 0 W-tal. A kapcsolók mostantól csak
+  abban a módban élnek, ahol a metrikájuk ténylegesen dönt (`higher_wins`-ben
+  továbbra is mindkettő).
+- **A HUD nem a tényleges zónamódot mutatta** (`ui/window.py`): a csempék a
+  nyers `heart_rate_zones.zone_mode` értéket olvasták, miközben a vezérlő
+  `heart_rate_zones.enabled: false` esetén *mindig* `power_only` módban fut
+  (`get_effective_zone_mode`). Az alapértelmezett `higher_wins` beállítás
+  mellett tehát pulzusmérő nélküli gépen is villogott a **HI WINS** csempe,
+  és vele a **ZHR IMM** is – kettő olyan állapot, ami soha nem érvényesült.
+  A csempék mostantól ugyanazt a kapuzást használják, mint a zónavezérlő.
+- **A korai log-puffer korlátlanul nőhetett** (új `earlylog.py`, +
+  `core/logging_setup.py`, `zwift_api/logsetup.py`): a beállítás-betöltés
+  előtti naplózás `MemoryHandler(capacity=100000)`-t használt, aminek a
+  kapacitása ebben a felállásban **egyáltalán nem érvényesült**. A CPython
+  `MemoryHandler.flush()`-a csak `if self.target` esetén üríti a puffert –
+  target pedig nincs, amíg a valódi handlerek fel nem épülnek –, így a
+  kapacitás elérése után minden további rekord egy hatástalan flush-t
+  váltott ki, a lista viszont tovább nőtt. Mérve: `capacity=5` mellett 200
+  rekord után 200 elem maradt bent. Az új `EarlyLogBuffer` valódi korlátot
+  tart (alapértelmezés: 1000 rekord), a **legkorábbi** üzeneteket őrzi meg
+  (a validációnál az első hiba a leghasznosabb), a többit megszámolja, és
+  visszajátszáskor jelzi, hány bejegyzés veszett el – így a csonkolás nem
+  csendes. 200 000 rekordos rohamnál a puffer ~460 KiB-nál megáll. A
+  visszajátszás előtt a puffer leválik a loggerről, hogy ne etesse vissza
+  magát. A két logging-setup (fő app + alfolyamat) most közös
+  implementációt használ.
+- **A `generate_tone()` elszállt a 16 bites tartomány túllépésén**
+  (`core/helpers.py`): `volume * amp > 1.0` esetén a
+  `struct.pack("<{n}h", …)` `struct.error`-ral megállt a generálás közepén,
+  így egyetlen hangosabb hangdefiníció az egész hangkészlet legyártását
+  megbuktatta. A minták mostantól a szokásos audio-viselkedés szerint
+  levágásra kerülnek.
+
+### Optimalizálva (harmadik átvilágítási kör)
+
+- **Nincs több `tasklist.exe` indítás 10 másodpercenként** (új
+  `procwatch.py`): a HUD ZwiftApp.exe-figyelője és a `zwift_api`
+  segédfolyamat is külön processzt indított és formázott szöveget
+  elemzett minden egyes ellenőrzésnél – messze a legdrágább ismétlődő
+  művelet egy egyébként mikroszekundumos programban. Helyette a Toolhelp32
+  pillanatkép (`CreateToolhelp32Snapshot`) olvassa a folyamatlistát a hívó
+  processzen belül, `ctypes`-szal (nem kell `psutil`). Minden hibaág
+  visszaesik az eredeti `tasklist` megoldásra, így ahol az API nem elérhető,
+  ott a viselkedés változatlan. Ráadásul pontos képnév-egyezésre megy a
+  korábbi részstring-keresés helyett. A két hívó eltérő „nem tudom"
+  értelmezése (HUD: „nem fut", Zwift poller: „ne lépj ki") megmaradt, és
+  a duplikált kód megszűnt.
+- **`generate_tone()`: −89% csúcsmemória, ~18% gyorsabb**
+  (`core/helpers.py`): a minták `array("h")`-ba kerülnek a Python
+  int-lista helyett, és a `struct.pack(f"<{n}h", *samples)` – ami több
+  tízezer argumentumot pakolt a hívási veremre – eltűnt. Egy 1 másodperces
+  effektnél 1220 KiB → 131 KiB csúcs. A ciklusinvariánsok (fade-hossz,
+  körfrekvencia) is kikerültek a belső ciklusból. A kimenet **bitre azonos**
+  a repóban lévő WAV fájlokkal – új teszt köti le.
+- **~17%-kal gyorsabb HUD-indulás** (`ui/window.py`): a `_content_hint()`
+  minden hívásnál kétszer bejárta a teljes widget-fát (`findChildren`), és
+  a `_calibrate_sizing` a skálalétra végigmérésével ~90-szer hívja. A fa a
+  kalibráció alatt nem változik, így ~180 bejárás helyett kettő elég.
+- **A `zwift_api` alfolyamat nem húzza be a teljes `core` csomagot**: a
+  `procwatch` a csomag gyökerébe került (`smart_fan_controller/procwatch.py`).
+  Bármi `core` alatti import lefuttatja a `core/__init__`-et, ami az egész
+  domain-réteget (zónák, átlagolás, cooldown, logging setup) betöltötte
+  volna az alfolyamatba – pedig annak egyikre sincs szüksége. A modul
+  amúgy sem tiszta domain-logika (a folyamatlista olvasása IO), így a
+  gyökérszintű leaf modul architekturálisan is pontosabb. Mérve: az
+  alfolyamat importlánca 163 ms → 152 ms, a fagyasztott
+  `zwift_api_polling.exe` pedig ennyivel kevesebb modult tartalmaz.
+
+### Hozzáadva
+
+- **CI (GitHub Actions)** – `.github/workflows/tests.yml`: `core` job
+  (Ubuntu + Windows × Python 3.11–3.14, PySide6 nélkül – a headless út),
+  `hud` job (valódi PySide6, offscreen Qt), `lint` job (`ruff`, szűk
+  hibaosztály-készlettel) és `package` job (wheel + a fontok/hangok/
+  `settings.default.json` tényleges jelenlétének ellenőrzése). Részletek:
+  `DEVELOPMENT.md` → „CI (GitHub Actions)".
+- Regressziós tesztek mind a négy fenti hibára, valamint a `procwatch`
+  visszaesési logikájára és az `EarlyLogBuffer` korlátjára/leválására; új
+  teszt köti le a `generate_tone()` bitre azonos kimenetét a becsomagolt
+  WAV fájlokkal.
+
+### Karbantartás
+
+- A hangtesztek (`tests/test_hud_ui.py`) `skip`-elnek, ha a
+  `PySide6.QtMultimedia` nem tölthető be (pl. `libpulse` nélküli minimál
+  futtató) – korábban valós hiba nélkül buktak el ilyen gépen.
+- Néhány holt import és egysoros többes import eltávolítva
+  (`app.py`, `esp32_firmware/serial_monitor.py`, `tests/test_pipeline.py`),
+  hogy a CI lint-kapuja tisztán induljon.
+
 ### Javítva (második átvilágítási kör)
 
 **Összeomlás / önmagától leálló program**

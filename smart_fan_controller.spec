@@ -126,6 +126,13 @@ zwift_a = Analysis(
         'smart_fan_controller.config',
         'smart_fan_controller.config.schemas',
         'smart_fan_controller.config.loader',
+        # Gyökérszintű leaf modulok: a runtime.py innen veszi a ZwiftApp.exe
+        # figyeléshez a folyamat-ellenőrzést (Toolhelp32, tasklist
+        # tartalékkal), a logsetup.py pedig a korlátozott korai log-puffert.
+        # Egyik sem a core csomagban van, így az alfolyamat nem húzza be a
+        # teljes domain-réteget (zónák, átlagolás, cooldown, …).
+        'smart_fan_controller.procwatch',
+        'smart_fan_controller.earlylog',
     ],
     hookspath=[],
     hooksconfig={},

@@ -68,6 +68,42 @@ valódi csomag nincs telepítve – telepített PySide6 mellett a UI tesztek a
 valódi Qt-t használják. Új külső importot bevezetve ellenőrizd, hogy a
 stubok között szerepel-e a szükséges név (különben a headless CI törik).
 
+### CI (GitHub Actions)
+
+A `.github/workflows/tests.yml` minden push/PR esetén négy jobot futtat:
+
+| Job | Mit fed le |
+|---|---|
+| `core` | Ubuntu + Windows × Python 3.11–3.14, **PySide6 nélkül** – ez a headless út (a conftest stubjai lépnek életbe) |
+| `hud` | Windows + Ubuntu, valódi PySide6, `QT_QPA_PLATFORM=offscreen` – a HUD UI tesztek |
+| `lint` | `ruff` szűk, hibaosztály-orientált szabálykészlettel (nem stílus-ellenőrzés) |
+| `package` | wheel építése + annak ellenőrzése, hogy a fontok, hangok és a `settings.default.json` tényleg benne vannak |
+
+A `core` job szándékosan telepíti a `zwift` extrát is: a
+`smart_fan_controller.zwift_api` importidőben kéri a `requests`-et, arra
+nincs (és ne is legyen) stub.
+
+Linuxon a `hud` job külön telepíti a Qt futásidejű könyvtárait
+(`libegl1`, `libgl1`, `libxkbcommon0`, `libdbus-1-3`, `libfontconfig1`,
+`libpulse0`) – a PySide6 wheel ezeket nem hozza magával. A `libpulse0`
+hiányában a QtMultimedia nem tölt be; a hangtesztek ilyenkor **skip**-elnek
+(nem buknak), mert a program is némán, de hibátlanul fut ilyen gépen.
+
+Helyben ugyanez reprodukálható:
+
+```bash
+# core job (headless)
+python -m venv .venv-core && .venv-core/bin/pip install -e ".[dev,zwift]"
+.venv-core/bin/pytest
+
+# hud job
+pip install -e ".[dev,zwift,ui]"
+QT_QPA_PLATFORM=offscreen pytest
+
+# lint job
+ruff check --select=E9,F63,F7,F82,F401,F811,F841,E401,E711,E712,E713,E714,E722 .
+```
+
 Elvárás minden változtatásnál: **a teljes készlet zöld**, és minden
 hibajavításhoz tartozik regressziós teszt.
 

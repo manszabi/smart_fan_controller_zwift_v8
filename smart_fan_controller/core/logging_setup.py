@@ -11,9 +11,10 @@ logger):
 import logging
 import os
 import sys
-from logging.handlers import MemoryHandler, RotatingFileHandler
+from logging.handlers import RotatingFileHandler
 
 from smart_fan_controller.core.helpers import resolve_log_dir
+from smart_fan_controller.earlylog import EarlyLogBuffer
 
 __all__ = [
     "logger",
@@ -49,7 +50,7 @@ def _default_log_dir() -> str:
 # Module-level state
 _log_dir: str = _default_log_dir()
 _logging_enabled: bool = True
-_early_mem_handlers: list[tuple[logging.Logger, MemoryHandler]] = []
+_early_mem_handlers: list[tuple[logging.Logger, EarlyLogBuffer]] = []
 
 
 def _close_and_clear_handlers(lg: logging.Logger) -> None:
@@ -58,7 +59,7 @@ def _close_and_clear_handlers(lg: logging.Logger) -> None:
     A plain handlers.clear() would leave the file handlers open: the
     descriptors would leak, and on Windows the forgotten open handle
     makes log rotation (file rename) fail with WinError 32.
-    close does not drain the MemoryHandler buffer (it has no target), so
+    Closing an EarlyLogBuffer does not drop its records either, so
     replaying the early logs is unaffected."""
     for h in lg.handlers[:]:
         lg.removeHandler(h)
@@ -166,10 +167,12 @@ def setup_early_logging() -> None:
         _close_and_clear_handlers(lg)
         lg.setLevel(logging.DEBUG)
         lg.propagate = False
-        # Large capacity + high flushLevel → never flushes on its own
-        mh = MemoryHandler(capacity=100000, flushLevel=logging.CRITICAL + 10)
-        lg.addHandler(mh)
-        _early_mem_handlers.append((lg, mh))
+        # Bounded buffer: nothing flushes it until the real handlers
+        # exist, so its size must be capped rather than trusted to stay
+        # small (see EarlyLogBuffer for why MemoryHandler cannot be).
+        buf = EarlyLogBuffer()
+        lg.addHandler(buf)
+        _early_mem_handlers.append((lg, buf))
     logging.getLogger("bleak").setLevel(logging.CRITICAL)
     logging.getLogger("openant").setLevel(logging.CRITICAL)
 
@@ -177,19 +180,16 @@ def setup_early_logging() -> None:
 def flush_early_logging() -> None:
     """Replay the buffered early logs onto the configured handlers."""
     global _early_mem_handlers
-    for lg, mh in _early_mem_handlers:
-        for record in mh.buffer:
-            lg.handle(record)
-        mh.close()
+    for lg, buf in _early_mem_handlers:
+        buf.replay(lg)
     _early_mem_handlers = []
 
 
 def discard_early_logging() -> None:
     """Drop the buffered early logs (the logging: false case)."""
     global _early_mem_handlers
-    for _lg, mh in _early_mem_handlers:
-        mh.buffer.clear()
-        mh.close()
+    for lg, buf in _early_mem_handlers:
+        buf.discard(lg)
     _early_mem_handlers = []
 
 

@@ -6,12 +6,13 @@ import logging
 import platform as _platform
 import socket
 import struct
-import subprocess
 import threading
 import time
 from typing import Any
 
 import requests
+
+from smart_fan_controller.procwatch import process_running
 
 from .api import RateLimitError, ZwiftAPIClient, ZwiftAuth
 
@@ -118,21 +119,15 @@ class UDPBroadcaster:
 
 
 def _is_zwift_running() -> bool:
-    """Check if ZwiftApp.exe is running (Windows only, returns True on other OS)."""
-    if _platform.system() != "Windows":
-        return True
-    try:
-        result = subprocess.run(
-            ["tasklist", "/FI", "IMAGENAME eq ZwiftApp.exe", "/NH"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-            # No console flash even under windowed (pythonw/noconsole) runs
-            creationflags=subprocess.CREATE_NO_WINDOW,
-        )
-        return "zwiftapp.exe" in result.stdout.lower()
-    except (subprocess.TimeoutExpired, OSError):
-        return True  # when we cannot check, do not exit
+    """Check if ZwiftApp.exe is running (Windows only, returns True on other OS).
+
+    Uses the shared in-process lookup (Toolhelp32, ``tasklist`` fallback)
+    instead of spawning a helper on every ten-second check.
+    """
+    running = process_running("ZwiftApp.exe")
+    if running is None:
+        return True  # non-Windows, or we cannot check → do not exit
+    return running
 
 
 def run_polling_loop(

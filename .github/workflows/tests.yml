@@ -1,0 +1,155 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Egy ágon egyszerre csak egy futás – az új push megszakítja a régit
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # ──────────────────────────────────────────────────────────────────
+  # Headless mag: PySide6 NÉLKÜL fut, ahogy a program is futhat
+  # (pl. Raspberry Pi terminálban). A conftest Qt/bleak/openant stub-jai
+  # veszik át a helyüket, így ez a job pont azt a konfigurációt fedi le,
+  # amit a HUD-os job nem.
+  # ──────────────────────────────────────────────────────────────────
+  core:
+    name: mag (${{ matrix.os }}, py${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Függőségek
+        # A zwift_api modul importidőben kéri a requests-et, ezért a "zwift"
+        # extra a headless futáshoz is kell. A bleak/openant/PySide6 hiányát
+        # a conftest stub-jai kezelik – pont ezt az utat teszteljük itt.
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,zwift]"
+
+      - name: Tesztek
+        run: pytest
+
+  # ──────────────────────────────────────────────────────────────────
+  # HUD: a valódi PySide6 ellen, offscreen Qt platformon
+  # ──────────────────────────────────────────────────────────────────
+  hud:
+    name: HUD (${{ matrix.os }}, py${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # A HUD a felhasználó célplatformján (Windows 11) a legfontosabb;
+        # a linuxos futás a headless/Pi irányt tartja életben.
+        os: [windows-latest, ubuntu-latest]
+        python-version: ["3.13"]
+    env:
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Qt futásidejű könyvtárak (Linux)
+        if: runner.os == 'Linux'
+        # A PySide6 wheel nem hozza magával ezeket: EGL/GL az offscreen
+        # platformhoz, libpulse a QtMultimedia hangmotorjához. Utóbbi nélkül
+        # a hangtesztek kihagyásra kerülnek (skip), nem buknak – de itt a
+        # valódi útvonalat akarjuk mérni.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libegl1 libgl1 libxkbcommon0 libdbus-1-3 libfontconfig1 libpulse0
+
+      - name: Függőségek
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,zwift,ui]"
+
+      - name: Tesztek (valódi Qt)
+        run: pytest
+
+  # ──────────────────────────────────────────────────────────────────
+  # Lint: csak a valódi hibákat fogó szabályok (nem stílus-rendőrség)
+  # ──────────────────────────────────────────────────────────────────
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+
+      - run: pip install ruff
+
+      - name: ruff (hibaosztályok)
+        # Szándékosan szűk szabálykészlet: szintaktikai hibák, nem definiált
+        # nevek, holt importok/változók, gyanús összehasonlítások. A stílus
+        # (sorhossz, importsorrend) nincs kikényszerítve.
+        run: >
+          ruff check
+          --select=E9,F63,F7,F82,F401,F811,F841,E401,E711,E712,E713,E714,E722
+          .
+
+  # ──────────────────────────────────────────────────────────────────
+  # Csomagolhatóság: a wheel tényleg tartalmazza a fontokat/hangokat és a
+  # settings.default.json-t – enélkül a pip-es telepítés HUD nélkül indul
+  # ──────────────────────────────────────────────────────────────────
+  package:
+    name: csomag
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+
+      - run: pip install build
+
+      - name: Wheel építése
+        run: python -m build --wheel
+
+      - name: Csomag-adatfájlok ellenőrzése
+        run: |
+          python - <<'PY'
+          import pathlib
+          import zipfile
+          wheel = next(pathlib.Path("dist").glob("*.whl"))
+          names = set(zipfile.ZipFile(wheel).namelist())
+          required = [
+              "smart_fan_controller/config/settings.default.json",
+              "smart_fan_controller/fonts/Antonio-Bold.ttf",
+              "smart_fan_controller/sounds/hud_shutdown.wav",
+          ]
+          missing = [r for r in required if r not in names]
+          if missing:
+              raise SystemExit(f"Hiányzó csomag-adatfájl(ok): {missing}")
+          print(f"{wheel.name}: minden szükséges adatfájl benne van "
+                f"({len(names)} bejegyzés)")
+          PY

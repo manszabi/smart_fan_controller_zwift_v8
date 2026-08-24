@@ -119,7 +119,7 @@ _Példa:_ `buffer_seconds=3`, `buffer_rate_hz=2` → max `6`; ha `minimum_sample
 | `max_watt` | int | 0–1000 | 1000 | Maximális érvényes watt. |
 | `z1_max_percent` | int | 1–100 | 60 | Z1 felső határ az FTP %-ában. |
 | `z2_max_percent` | int | 1–100 | 89 | Z2 felső határ az FTP %-ában. |
-| `zero_power_immediate` | bool | – | false | Ha true, 0W → azonnali LEVEL:0 (cooldown nélkül). |
+| `zero_power_immediate` | bool | – | false | Ha true, 0W → azonnali LEVEL:0 (cooldown nélkül). Csak `power_only` és `higher_wins` módban hat (lásd lent). |
 
 **Zóna kiosztás:**
 
@@ -150,13 +150,29 @@ _Példa:_ `buffer_seconds=3`, `buffer_rate_hz=2` → max `6`; ha `minimum_sample
 | `z2_max_percent` | int | 1–100 | 80 | Z2 felső határ a max_hr %-ában. |
 | `valid_min_hr` | int | 30–100 | 30 | Érvényes HR alsó határ szűréshez. |
 | `valid_max_hr` | int | 150–300 | 220 | Érvényes HR felső határ szűréshez. |
-| `zero_hr_immediate` | bool | – | false | Ha true, 0 HR zóna → azonnali LEVEL:0 (cooldown nélkül). |
+| `zero_hr_immediate` | bool | – | false | Ha true, 0 HR zóna → azonnali LEVEL:0 (cooldown nélkül). Csak `hr_only` és `higher_wins` módban hat (lásd lent). |
 
 **Zóna módok:**
 
 - `"power_only"` – csak a teljesítmény zóna dönt (HR figyelmen kívül) – ilyenkor `hr_source` állítható `null`-ra
 - `"hr_only"` – csak a HR zóna dönt (power figyelmen kívül) – ilyenkor `power_source` állítható `null`-ra
 - `"higher_wins"` – a kettő közül a magasabb zóna érvényesül
+
+**Az azonnali leállítás (`zero_*_immediate`) hatóköre:**
+
+Mindkét kapcsoló **csak arra a metrikára** vonatkozik, amelyik az adott
+zónamódban ténylegesen dönt:
+
+| Zónamód | `zero_power_immediate` | `zero_hr_immediate` |
+|---|---|---|
+| `power_only` | ✔ hat | ✘ hatástalan |
+| `hr_only` | ✘ hatástalan | ✔ hat |
+| `higher_wins` | ✔ hat | ✔ hat |
+
+Enélkül az *ignorált* forrás nulla értéke is törölte volna a cooldown-t:
+`power_only` módban egy levett pulzusmérő azonnal leállította volna a
+ventilátort, `hr_only` módban pedig a gurulás közbeni 0 W – mindkét esetben
+felülírva a felhasználó cooldown-beállítását.
 
 **HR zóna kiosztás:**
 

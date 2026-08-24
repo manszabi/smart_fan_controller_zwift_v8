@@ -29,7 +29,9 @@ from PySide6.QtWidgets import (
     QSlider, QMenu, QFrame, QSizePolicy, QSpacerItem,
 )
 
-from smart_fan_controller.config import DataSource, ZoneMode
+from smart_fan_controller.config import (
+    DataSource, ZoneMode, get_effective_zone_mode,
+)
 from smart_fan_controller.config.loader import (
     HudConfig, DatasourceConfig, save_hud_settings_only,
 )
@@ -1135,14 +1137,25 @@ class HUDWindow(QWidget):
                     return "off"
                 return "flash" if (_ft + phase) % 4 < 2 else "on"
 
-            zpi = settings["power_zones"].zero_power_immediate
+            # The tiles report what the controller ACTUALLY does, so they
+            # use the effective zone mode – with heart_rate_zones.enabled
+            # false the controller runs power_only whatever zone_mode says,
+            # and the raw value lit up HIGHER WINS (the default) on a
+            # power-only setup. The immediate-stop tiles follow the same
+            # gating as zone_controller_task: a flag whose metric does not
+            # decide the zone in the active mode has no effect.
+            eff_mode = get_effective_zone_mode(settings)
+            zpi = settings["power_zones"].zero_power_immediate and (
+                eff_mode in (ZoneMode.POWER_ONLY, ZoneMode.HIGHER_WINS)
+            )
             self._set_tile_state(self._tile_zero_imm, _tile_state(zpi, 0))
 
-            zhi = settings["heart_rate_zones"].zero_hr_immediate
+            zhi = settings["heart_rate_zones"].zero_hr_immediate and (
+                eff_mode in (ZoneMode.HR_ONLY, ZoneMode.HIGHER_WINS)
+            )
             self._set_tile_state(self._tile_zero_hr_imm, _tile_state(zhi, 1))
 
-            zone_mode_val = settings["heart_rate_zones"].zone_mode
-            hw = zone_mode_val == ZoneMode.HIGHER_WINS
+            hw = eff_mode == ZoneMode.HIGHER_WINS
             self._set_tile_state(self._tile_higher_wins, _tile_state(hw, 2))
 
             self._set_tile_state(self._tile_ant,
@@ -1306,18 +1319,38 @@ class HUDWindow(QWidget):
         hand first: updateGeometry() drops the per-widget size caches and
         invalidate() the layout ones. Without it the nested layouts would
         answer with the minimum belonging to the previous scale.
+
+        The child lists are collected once: _calibrate_sizing walks the
+        whole scale ladder and calls this ~90 times, and findChildren
+        walks the entire object tree on each call. Nothing creates or
+        destroys widgets between those calls (_apply_scale only resizes
+        existing ones), so two traversals replace ~180.
         """
         self._set_scale(s)
-        for w in self.findChildren(QWidget):
+        widgets, layouts = self._layout_tree()
+        for w in widgets:
             w.updateGeometry()
         self.updateGeometry()
-        for lay in self.findChildren(QLayout):
+        for lay in layouts:
             lay.invalidate()
         lay = self.layout()
         if lay is not None:
             lay.invalidate()
             lay.activate()
         return self.minimumSizeHint()
+
+    def _layout_tree(self) -> "tuple[list[QWidget], list[QLayout]]":
+        """The window's child widgets and layouts, collected once.
+
+        Cached for the lifetime of the window: the tree is fully built
+        before the first call (_calibrate_sizing runs at the end of
+        __init__) and nothing adds or removes widgets afterwards.
+        """
+        cached = getattr(self, "_layout_tree_cache", None)
+        if cached is None:
+            cached = (self.findChildren(QWidget), self.findChildren(QLayout))
+            self._layout_tree_cache = cached
+        return cached
 
     def _fits(self, s: float) -> bool:
         """True when the content fits a ``base × s`` sized window.

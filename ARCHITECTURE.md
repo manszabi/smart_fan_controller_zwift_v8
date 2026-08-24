@@ -217,6 +217,8 @@ csak vekony belepo, ami az `app.main()`-t hivja.
 smart_fan_controller/
 ├── app.py               # Belepopont: asyncio event loop + PySide6 HUD osszehangolasa, jelkezeles
 ├── controller.py        # FanController orchestrator (komponensek + eletciklus)
+├── procwatch.py         # process_running (Toolhelp32, tasklist tartalekkal) – leaf modul
+├── earlylog.py          # EarlyLogBuffer: korlatozott korai log-puffer – leaf modul
 │
 ├── config/
 │   ├── loader.py        # load_settings(), validacio, save_hud/zwift helperek
@@ -264,6 +266,15 @@ smart_fan_controller/
   hivja, es nehany szimbolumot re-exportal a tesztek/visszafelekompatibilitas miatt.
 - **Tiszta mag**: a `core/` csomag PySide6- es BLE-fuggetlen, igy a domain-logika
   (zonazas, atlagolas, cooldown) izolaltan, fuggosegek nelkul unit-tesztelheto.
+- **Gyokerszintu leaf modulok** (`procwatch.py`, `earlylog.py`): olyan
+  segedeszkozok, amiket a fo app ES a `zwift_api` alfolyamat is hasznal.
+  Szandekosan NEM a `core/` alatt vannak: egyreszt egyik sem tiszta
+  domain-logika (folyamatlista-olvasas, illetve logging-infrastruktura),
+  masreszt barmi `core` alatti import lefuttatja a `core/__init__`-et, ami
+  a teljes domain-reteget (zonak, atlagolas, cooldown, logging setup)
+  behuzna az alfolyamatba – annak egyikre sincs szuksege. Igy az
+  alfolyamat importlanca es a fagyasztott `zwift_api_polling.exe` is
+  kisebb marad. A modulok a projektbol semmit nem importalnak.
 - **Zwift polling kulon processzben (subprocess + UDP)**: a HTTPS lekerdezes
   (blokkolo `requests`, OAuth2 login, protobuf dekodolas) a fo asyncio loop-tol
   elkulonitve, sajat processzben fut (`smart_fan_controller.zwift_api`), es UDP-n

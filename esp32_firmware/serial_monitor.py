@@ -3,7 +3,6 @@
 
 import serial
 import serial.tools.list_ports
-import sys
 import threading
 import time
 from datetime import datetime
