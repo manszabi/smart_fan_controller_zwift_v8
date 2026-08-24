@@ -36,7 +36,6 @@ from smart_fan_controller.core import (
     calculate_power_zones,
     is_logging_enabled,
     logger,
-    process_running,
     user_logger,
 )
 from smart_fan_controller.handlers import (
@@ -48,6 +47,7 @@ from smart_fan_controller.handlers import (
     ZwiftUDPInputHandler,
     _ANTPLUS_AVAILABLE,
 )
+from smart_fan_controller.procwatch import process_running
 from smart_fan_controller.processors import (
     _guarded_task,
     dropout_checker_task,
@@ -143,7 +143,7 @@ class FanController:
     def is_process_running(process_name: str) -> bool:
         """Check whether a Windows process with the given name is running.
 
-        Backed by :func:`smart_fan_controller.core.process_running`, which
+        Backed by :func:`smart_fan_controller.procwatch.process_running`, which
         reads the process list in-process (Toolhelp32) and only falls back
         to spawning ``tasklist`` when that is unavailable. No ``psutil``
         required either way.

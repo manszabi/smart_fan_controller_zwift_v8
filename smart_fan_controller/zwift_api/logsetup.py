@@ -10,7 +10,8 @@ from __future__ import annotations
 import logging
 import os
 import sys
-from typing import Any
+
+from smart_fan_controller.earlylog import EarlyLogBuffer
 
 log = logging.getLogger("zwift_api_polling")
 
@@ -24,7 +25,7 @@ _base_dir: str = (
 # The resolved log directory (set by setup_logging)
 _log_dir: str = _base_dir
 # Handler buffering the early (pre-settings-load) logs
-_early_mem_handler: Any = None
+_early_mem_handler: EarlyLogBuffer | None = None
 
 
 def _close_and_clear_handlers() -> None:
@@ -76,15 +77,15 @@ def setup_early_logging() -> None:
     replayed (flush_early_logging) or dropped (discard_early_logging)
     once the flag is known.
     """
-    from logging.handlers import MemoryHandler
-
     global _early_mem_handler
     _close_and_clear_handlers()
     log.setLevel(logging.DEBUG)
     log.propagate = False
-    mh = MemoryHandler(capacity=100000, flushLevel=logging.CRITICAL + 10)
-    log.addHandler(mh)
-    _early_mem_handler = mh
+    # Bounded buffer – see EarlyLogBuffer for why MemoryHandler cannot be
+    # capped while it has no target to flush into.
+    buf = EarlyLogBuffer()
+    log.addHandler(buf)
+    _early_mem_handler = buf
 
 
 def setup_logging(
@@ -132,9 +133,7 @@ def flush_early_logging() -> None:
     """Replay the buffered early logs onto the configured handlers."""
     global _early_mem_handler
     if _early_mem_handler is not None:
-        for record in _early_mem_handler.buffer:
-            log.handle(record)
-        _early_mem_handler.close()
+        _early_mem_handler.replay(log)
         _early_mem_handler = None
 
 
@@ -142,6 +141,5 @@ def discard_early_logging() -> None:
     """Drop the buffered early logs (the logging: false case)."""
     global _early_mem_handler
     if _early_mem_handler is not None:
-        _early_mem_handler.buffer.clear()
-        _early_mem_handler.close()
+        _early_mem_handler.discard(log)
         _early_mem_handler = None

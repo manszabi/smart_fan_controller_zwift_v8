@@ -17,6 +17,14 @@ The single entry point is :func:`process_running`. It returns ``None``
 when the process list cannot be read at all (non-Windows platform, or
 both back ends failed) – the callers differ in what that should mean, so
 the decision is left to them rather than baked in here.
+
+Placement: this is a package-root leaf module, importing nothing from the
+project besides the (empty) package root. It is deliberately NOT in
+``core/``: that package is documented as pure, IO-free domain logic,
+which reading the OS process table is not – and importing anything under
+``core`` runs ``core/__init__``, pulling the whole domain layer
+(averaging, cooldown, zones, logging setup…) into the ``zwift_api``
+helper process, which otherwise needs none of it.
 """
 from __future__ import annotations
 

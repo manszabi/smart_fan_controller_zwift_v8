@@ -33,6 +33,22 @@ a verziószámozás a [Semantic Versioning](https://semver.org/) sémát
   mellett tehát pulzusmérő nélküli gépen is villogott a **HI WINS** csempe,
   és vele a **ZHR IMM** is – kettő olyan állapot, ami soha nem érvényesült.
   A csempék mostantól ugyanazt a kapuzást használják, mint a zónavezérlő.
+- **A korai log-puffer korlátlanul nőhetett** (új `earlylog.py`, +
+  `core/logging_setup.py`, `zwift_api/logsetup.py`): a beállítás-betöltés
+  előtti naplózás `MemoryHandler(capacity=100000)`-t használt, aminek a
+  kapacitása ebben a felállásban **egyáltalán nem érvényesült**. A CPython
+  `MemoryHandler.flush()`-a csak `if self.target` esetén üríti a puffert –
+  target pedig nincs, amíg a valódi handlerek fel nem épülnek –, így a
+  kapacitás elérése után minden további rekord egy hatástalan flush-t
+  váltott ki, a lista viszont tovább nőtt. Mérve: `capacity=5` mellett 200
+  rekord után 200 elem maradt bent. Az új `EarlyLogBuffer` valódi korlátot
+  tart (alapértelmezés: 1000 rekord), a **legkorábbi** üzeneteket őrzi meg
+  (a validációnál az első hiba a leghasznosabb), a többit megszámolja, és
+  visszajátszáskor jelzi, hány bejegyzés veszett el – így a csonkolás nem
+  csendes. 200 000 rekordos rohamnál a puffer ~460 KiB-nál megáll. A
+  visszajátszás előtt a puffer leválik a loggerről, hogy ne etesse vissza
+  magát. A két logging-setup (fő app + alfolyamat) most közös
+  implementációt használ.
 - **A `generate_tone()` elszállt a 16 bites tartomány túllépésén**
   (`core/helpers.py`): `volume * amp > 1.0` esetén a
   `struct.pack("<{n}h", …)` `struct.error`-ral megállt a generálás közepén,
@@ -43,7 +59,7 @@ a verziószámozás a [Semantic Versioning](https://semver.org/) sémát
 ### Optimalizálva (harmadik átvilágítási kör)
 
 - **Nincs több `tasklist.exe` indítás 10 másodpercenként** (új
-  `core/procwatch.py`): a HUD ZwiftApp.exe-figyelője és a `zwift_api`
+  `procwatch.py`): a HUD ZwiftApp.exe-figyelője és a `zwift_api`
   segédfolyamat is külön processzt indított és formázott szöveget
   elemzett minden egyes ellenőrzésnél – messze a legdrágább ismétlődő
   művelet egy egyébként mikroszekundumos programban. Helyette a Toolhelp32
@@ -65,6 +81,15 @@ a verziószámozás a [Semantic Versioning](https://semver.org/) sémát
   minden hívásnál kétszer bejárta a teljes widget-fát (`findChildren`), és
   a `_calibrate_sizing` a skálalétra végigmérésével ~90-szer hívja. A fa a
   kalibráció alatt nem változik, így ~180 bejárás helyett kettő elég.
+- **A `zwift_api` alfolyamat nem húzza be a teljes `core` csomagot**: a
+  `procwatch` a csomag gyökerébe került (`smart_fan_controller/procwatch.py`).
+  Bármi `core` alatti import lefuttatja a `core/__init__`-et, ami az egész
+  domain-réteget (zónák, átlagolás, cooldown, logging setup) betöltötte
+  volna az alfolyamatba – pedig annak egyikre sincs szüksége. A modul
+  amúgy sem tiszta domain-logika (a folyamatlista olvasása IO), így a
+  gyökérszintű leaf modul architekturálisan is pontosabb. Mérve: az
+  alfolyamat importlánca 163 ms → 152 ms, a fagyasztott
+  `zwift_api_polling.exe` pedig ennyivel kevesebb modult tartalmaz.
 
 ### Hozzáadva
 
@@ -74,9 +99,10 @@ a verziószámozás a [Semantic Versioning](https://semver.org/) sémát
   hibaosztály-készlettel) és `package` job (wheel + a fontok/hangok/
   `settings.default.json` tényleges jelenlétének ellenőrzése). Részletek:
   `DEVELOPMENT.md` → „CI (GitHub Actions)".
-- Regressziós tesztek mindhárom fenti hibára, valamint a `procwatch`
-  visszaesési logikájára; új teszt köti le a `generate_tone()` bitre azonos
-  kimenetét a becsomagolt WAV fájlokkal.
+- Regressziós tesztek mind a négy fenti hibára, valamint a `procwatch`
+  visszaesési logikájára és az `EarlyLogBuffer` korlátjára/leválására; új
+  teszt köti le a `generate_tone()` bitre azonos kimenetét a becsomagolt
+  WAV fájlokkal.
 
 ### Karbantartás
 

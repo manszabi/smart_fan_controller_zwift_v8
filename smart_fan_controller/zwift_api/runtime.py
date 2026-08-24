@@ -12,7 +12,7 @@ from typing import Any
 
 import requests
 
-from smart_fan_controller.core.procwatch import process_running
+from smart_fan_controller.procwatch import process_running
 
 from .api import RateLimitError, ZwiftAPIClient, ZwiftAuth
 

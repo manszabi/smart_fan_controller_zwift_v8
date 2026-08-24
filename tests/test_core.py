@@ -1759,6 +1759,114 @@ class TestLoggingToggle:
             self._reset()
             shutil.rmtree(tmp, ignore_errors=True)
 
+    def test_early_buffer_is_bounded(self):
+        """A korai puffer nem nő korlátlanul, és jelzi a veszteséget.
+
+        A korábbi MemoryHandler(capacity=100000) nem volt korlátozható:
+        target nélkül a flush() NEM üríti a puffert (a CPython csak
+        ``if self.target`` esetén ürít), így a kapacitás elérése után
+        minden további rekord egy hatástalan flush-t váltott ki, a lista
+        pedig tovább nőtt – ameddig a pufferelés tart.
+        """
+        from smart_fan_controller.earlylog import EarlyLogBuffer
+
+        self._reset()
+        tmp = tempfile.mkdtemp()
+        try:
+            _setup_early_logging()
+            bufs = [b for _lg, b in _logmod._early_mem_handlers]
+            assert bufs and all(isinstance(b, EarlyLogBuffer) for b in bufs)
+            # Kis kapacitásra állítva a határ gyorsan reprodukálható
+            for b in bufs:
+                b.capacity = 5
+
+            user_log = _logging.getLogger("user")
+            for i in range(40):
+                user_log.warning("KORAI_%02d", i)
+
+            user_buf = next(
+                b for lg, b in _logmod._early_mem_handlers if lg.name == "user"
+            )
+            assert len(user_buf.records) == 5, "a kapacitás nem érvényesült"
+            assert user_buf.dropped == 35
+
+            _setup_logging(tmp, logging_enabled=True)
+            _flush_early_logging()
+            text = open(
+                os.path.join(tmp, "smart_fan_controller.log"), encoding="utf-8"
+            ).read()
+            # A LEGKORÁBBI rekordok maradnak meg (az első hiba a leghasznosabb)
+            assert "KORAI_00" in text
+            assert "KORAI_04" in text
+            assert "KORAI_05" not in text
+            # …és a veszteség nem tűnik el csendben
+            assert "35" in text
+        finally:
+            self._reset()
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_early_buffer_detaches_before_replay(self):
+        """Visszajátszáskor a puffer leválik: nem eteti vissza magát.
+
+        A Logger.handle() minden csatolt handlernek átadja a rekordot –
+        ha a puffer még a loggeren lóg, a visszajátszás újra beletolná
+        ugyanazokat a rekordokat.
+        """
+        from smart_fan_controller.earlylog import EarlyLogBuffer
+
+        self._reset()
+        try:
+            lg = _logging.getLogger("user")
+            lg.handlers.clear()
+            lg.setLevel(_logging.DEBUG)
+            buf = EarlyLogBuffer()
+            lg.addHandler(buf)
+            lg.warning("EGYSZER")
+            assert len(buf.records) == 1
+
+            buf.replay(lg)
+            assert buf not in lg.handlers
+            assert buf.records == []
+        finally:
+            self._reset()
+
+
+class TestEarlyLogBuffer:
+    """A korlátozott korai log-puffer önmagában."""
+
+    def test_records_are_kept_unformatted_until_replay(self):
+        """A rekordok objektumként várakoznak – a formázás a cél handleré."""
+        from smart_fan_controller.earlylog import EarlyLogBuffer
+
+        buf = EarlyLogBuffer(capacity=10)
+        rec = _logging.LogRecord(
+            "t", _logging.WARNING, __file__, 1, "érték: %s", ("x",), None
+        )
+        buf.handle(rec)
+        assert buf.records == [rec]
+        assert buf.records[0].args == ("x",)
+        buf.discard()
+
+    def test_capacity_floor_is_one(self):
+        """0 vagy negatív kapacitás sem hagyhat használhatatlan puffert."""
+        from smart_fan_controller.earlylog import EarlyLogBuffer
+
+        buf = EarlyLogBuffer(capacity=0)
+        assert buf.capacity == 1
+        buf.discard()
+
+    def test_discard_drops_everything_and_closes(self):
+        from smart_fan_controller.earlylog import EarlyLogBuffer
+
+        buf = EarlyLogBuffer(capacity=2)
+        for i in range(5):
+            buf.handle(_logging.LogRecord(
+                "t", _logging.INFO, __file__, 1, "m%d" % i, None, None
+            ))
+        assert (len(buf.records), buf.dropped) == (2, 3)
+        buf.discard()
+        assert (buf.records, buf.dropped) == ([], 0)
+
 
 # ============================================================
 # zwift_api – config (settings.json zwift_api szekció) + saját loggolás
@@ -3007,7 +3115,7 @@ class TestProcessWatch:
         """Friss procwatch modulpéldány (a lusta cache miatt)."""
         import importlib
 
-        from smart_fan_controller.core import procwatch
+        from smart_fan_controller import procwatch
 
         return importlib.reload(procwatch)
 
