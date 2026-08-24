@@ -6,11 +6,12 @@ each other.
 """
 from __future__ import annotations
 
+import array
 import io
 import logging
 import math
 import os
-import struct
+import sys
 import wave
 
 user_logger = logging.getLogger("user")
@@ -75,6 +76,19 @@ def generate_tone(
 ) -> bytes:
     """Sine-wave based WAV generation in memory.
 
+    Samples are accumulated in an ``array("h")`` rather than a Python
+    list: the list held a boxed int object per sample (~32 bytes each,
+    against 2 bytes in the array), and ``struct.pack(f"<{n}h", *samples)``
+    then had to unpack the whole thing onto the argument stack in one
+    call. For a one-second effect that meant tens of thousands of
+    arguments and about a megabyte of transient objects for 44 KB of
+    audio.
+
+    Values are clamped to the signed 16-bit range. ``volume * amp`` above
+    1.0 used to overflow it and take the call down with a ``struct.error``
+    mid-generation; clipping the peaks is the normal audio behavior and
+    keeps the caller's tone definition usable.
+
     Args:
         frequencies: List of (freq_hz, duration_sec, amplitude_mult)
                      tuples. Multiple items are concatenated in order.
@@ -89,26 +103,46 @@ def generate_tone(
         >>> len(wav_data) > 0
         True
     """
-    samples: list[int] = []
+    samples = array.array("h")
+    sin = math.sin
     for freq, duration, amp in frequencies:
         n_samples = int(sample_rate * duration)
+        # Loop invariants hoisted out: the fade length and the angular
+        # frequency do not depend on the sample index. The multiplication
+        # ORDER of the original expression is kept exactly as it was
+        # (folding volume * amp together would shift the last ULP), so the
+        # generated audio stays bit-for-bit identical to the shipped WAVs.
+        fade_samples = min(200, n_samples // 4)
+        omega = 2 * math.pi * freq
         for i in range(n_samples):
             t = i / sample_rate
             # Fade in/out to avoid audio clicks
-            fade_samples = min(200, n_samples // 4)
             fade = 1.0
             if fade_samples > 0:
                 if i < fade_samples:
                     fade = i / fade_samples
                 elif i > n_samples - fade_samples:
                     fade = (n_samples - i) / fade_samples
-            val = math.sin(2 * math.pi * freq * t) * volume * amp * fade
-            samples.append(int(val * 32767))
+            val = sin(omega * t) * volume * amp * fade
+            samples.append(_clamp_int16(int(val * 32767)))
+
+    if sys.byteorder == "big":
+        # WAV PCM is little-endian; array.tobytes() uses the host order
+        samples.byteswap()
 
     buf = io.BytesIO()
     with wave.open(buf, "wb") as wf:
         wf.setnchannels(1)
         wf.setsampwidth(2)
         wf.setframerate(sample_rate)
-        wf.writeframes(struct.pack(f"<{len(samples)}h", *samples))
+        wf.writeframes(samples.tobytes())
     return buf.getvalue()
+
+
+def _clamp_int16(value: int) -> int:
+    """Clamp to the signed 16-bit PCM range."""
+    if value > 32767:
+        return 32767
+    if value < -32768:
+        return -32768
+    return value

@@ -248,7 +248,7 @@ def main() -> None:
     # Fix #20: PySide6 is optional – headless mode runs without a HUD
     if _PYSIDE6_AVAILABLE:
         from PySide6.QtWidgets import QApplication
-        from PySide6.QtCore import qInstallMessageHandler, QtMsgType
+        from PySide6.QtCore import qInstallMessageHandler
 
         # pywinauto already set the process DPI awareness, so the Qt
         # SetProcessDpiAwarenessContext() call fails with "access denied".

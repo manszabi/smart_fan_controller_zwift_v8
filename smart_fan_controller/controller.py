@@ -36,6 +36,7 @@ from smart_fan_controller.core import (
     calculate_power_zones,
     is_logging_enabled,
     logger,
+    process_running,
     user_logger,
 )
 from smart_fan_controller.handlers import (
@@ -142,22 +143,16 @@ class FanController:
     def is_process_running(process_name: str) -> bool:
         """Check whether a Windows process with the given name is running.
 
-        Uses the ``tasklist`` command, no ``psutil`` required.
+        Backed by :func:`smart_fan_controller.core.process_running`, which
+        reads the process list in-process (Toolhelp32) and only falls back
+        to spawning ``tasklist`` when that is unavailable. No ``psutil``
+        required either way.
+
+        An unreadable process list (non-Windows platform, both back ends
+        failing) answers False – the HUD's Zwift watch is gated on
+        Windows separately, so "unknown" must not read as "running".
         """
-        if _platform.system() != "Windows":
-            return False
-        try:
-            result = subprocess.run(
-                ["tasklist", "/FI", f"IMAGENAME eq {process_name}", "/NH"],
-                capture_output=True,
-                text=True,
-                timeout=10,
-                # No console flash even under windowed (pythonw/noconsole) runs
-                creationflags=subprocess.CREATE_NO_WINDOW,
-            )
-            return process_name.lower() in result.stdout.lower()
-        except (subprocess.TimeoutExpired, OSError):
-            return False
+        return process_running(process_name) is True
 
     @staticmethod
     def _find_zwift_launcher() -> str | None:

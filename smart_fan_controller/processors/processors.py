@@ -263,8 +263,20 @@ async def zone_controller_task(
         zone_event: asyncio.Event – signals that new data arrived.
     """
     zone_mode = get_effective_zone_mode(settings)
-    zero_power_immediate = settings["power_zones"].zero_power_immediate
-    zero_hr_immediate = settings["heart_rate_zones"].zero_hr_immediate
+    # The immediate-stop flags only apply to the metric that actually
+    # decides the zone in the active mode. Ungated, a zero reading from the
+    # IGNORED source could still cancel the cooldown: in power_only mode an
+    # HR strap reading below resting (or simply taken off) fired
+    # zero_hr_immediate and stopped the fan at once, even though the user
+    # left zero_power_immediate off precisely to get the cooldown – and
+    # symmetrically in hr_only mode with a coasting 0 W. In higher_wins both
+    # metrics decide, so both flags stay in effect.
+    zero_power_immediate = settings["power_zones"].zero_power_immediate and (
+        zone_mode in (ZoneMode.POWER_ONLY, ZoneMode.HIGHER_WINS)
+    )
+    zero_hr_immediate = settings["heart_rate_zones"].zero_hr_immediate and (
+        zone_mode in (ZoneMode.HR_ONLY, ZoneMode.HIGHER_WINS)
+    )
     power_buf = _resolve_buffer_settings(settings, "power")
     hr_buf = _resolve_buffer_settings(settings, "hr")
     power_dropout_timeout = power_buf["dropout_timeout"]

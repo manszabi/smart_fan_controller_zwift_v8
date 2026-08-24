@@ -230,6 +230,7 @@ smart_fan_controller/
 │   ├── printers.py      # ConsolePrinter (throttle-olt)
 │   ├── state.py         # ControllerState, UISnapshot (szalbiztos HUD-csere)
 │   ├── helpers.py       # resolve_log_dir, generate_tone (hang-ujrageneralas)
+│   ├── procwatch.py     # process_running (Toolhelp32, tasklist tartalekkal)
 │   └── logging_setup.py # logger/user_logger, setup_logging, korai pufferelo
 │
 ├── handlers/            # Be- es kimeneti adatkezelok

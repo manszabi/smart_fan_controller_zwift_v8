@@ -24,6 +24,7 @@ from .logging_setup import (
     is_logging_enabled,
 )
 from .printers import ConsolePrinter
+from .procwatch import process_running
 from .state import ControllerState, UISnapshot
 from .zones import (
     apply_zone_mode,
@@ -63,6 +64,8 @@ __all__ = [
     "is_logging_enabled",
     # printers
     "ConsolePrinter",
+    # process watch
+    "process_running",
     # state
     "ControllerState",
     "UISnapshot",

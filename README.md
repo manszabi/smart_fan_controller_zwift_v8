@@ -1,5 +1,7 @@
 # Smart Fan Controller
 
+[![tests](https://github.com/manszabi/smart_fan_controller_zwift_v8/actions/workflows/tests.yml/badge.svg)](https://github.com/manszabi/smart_fan_controller_zwift_v8/actions/workflows/tests.yml)
+
 Kerékpáros edzés ventilátor vezérlő – ANT+, BLE és Zwift API szenzor adatok alapján automatikusan szabályozza a BLE ventilátort (ESP32).
 
 ## Működés

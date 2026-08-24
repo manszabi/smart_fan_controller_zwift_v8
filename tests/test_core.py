@@ -2925,3 +2925,179 @@ class TestBleDeviceLogCaching:
             assert "AA:00" not in third_text
         finally:
             self._reset_caches()
+
+
+class TestGenerateToneRange:
+    """A WAV generálás nem szállhat el a 16 bites tartomány túllépésén."""
+
+    def test_loud_tone_is_clipped_not_crashing(self):
+        """volume * amp > 1.0 → levágás, nem struct.error.
+
+        A pack("<{n}h") korábban ValueError-ral (struct.error) állt le a
+        generálás közepén, így egyetlen hangosabb hangdefiníció az egész
+        hangkészlet legyártását megbuktatta.
+        """
+        from smart_fan_controller.core.helpers import generate_tone
+
+        data = generate_tone([(440, 0.05, 1.5)], volume=1.0)
+        assert data[:4] == b"RIFF"
+        # A csúcsok pontosan a tartomány szélén állnak meg
+        import wave as _wave
+        import io as _io
+        import array as _array
+
+        with _wave.open(_io.BytesIO(data), "rb") as wf:
+            frames = wf.readframes(wf.getnframes())
+        samples = _array.array("h")
+        samples.frombytes(frames)
+        assert max(samples) == 32767
+        assert min(samples) >= -32768
+
+    def test_quiet_tone_is_untouched(self):
+        """A normál (nem levágott) tartományban semmi nem változik."""
+        from smart_fan_controller.core.helpers import generate_tone
+
+        import wave as _wave
+        import io as _io
+        import array as _array
+
+        data = generate_tone([(440, 0.05, 1.0)], volume=0.4)
+        with _wave.open(_io.BytesIO(data), "rb") as wf:
+            frames = wf.readframes(wf.getnframes())
+        samples = _array.array("h")
+        samples.frombytes(frames)
+        assert max(samples) < 32767
+        assert min(samples) > -32768
+
+    def test_shipped_wavs_regenerate_bit_identically(self):
+        """A becsomagolt hangfájlok bitre azonosan újragenerálhatók.
+
+        Ez köti le a generate_tone számítási sorrendjét: egy ártalmatlannak
+        tűnő átszervezés (pl. volume * amp összevonása) az utolsó ULP-t
+        elmozdítva más bájtokat adna, és a repóban lévő WAV-ok
+        észrevétlenül eltérnének a generátor kimenetétől.
+        """
+        import importlib.util
+        import pathlib
+
+        from smart_fan_controller.core.helpers import generate_tone
+
+        root = pathlib.Path(__file__).resolve().parents[1]
+        spec = importlib.util.spec_from_file_location(
+            "_lcars_sound_defs", root / "tools" / "generate_lcars_sounds.py"
+        )
+        assert spec is not None and spec.loader is not None
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+
+        snd_dir = root / "smart_fan_controller" / "sounds"
+        for name, tones in mod.SOUND_DEFS.items():
+            wav = snd_dir / f"{name}.wav"
+            assert wav.is_file(), f"hiányzó hangfájl: {wav}"
+            assert wav.read_bytes() == generate_tone(tones), (
+                f"a(z) {name}.wav nem egyezik a generátor kimenetével"
+            )
+
+
+class TestProcessWatch:
+    """A folyamat-ellenőrző visszaesési (fallback) logikája."""
+
+    @staticmethod
+    def _fresh_module():
+        """Friss procwatch modulpéldány (a lusta cache miatt)."""
+        import importlib
+
+        from smart_fan_controller.core import procwatch
+
+        return importlib.reload(procwatch)
+
+    def test_non_windows_reports_unknown(self, monkeypatch):
+        """Nem Windows: None – a hívó dönti el, mit jelent."""
+        pw = self._fresh_module()
+        monkeypatch.setattr(pw, "_IS_WINDOWS", False)
+        assert pw.process_running("ZwiftApp.exe") is None
+
+    def test_callers_interpret_unknown_differently(self, monkeypatch):
+        """A HUD 'nem fut'-ként, a Zwift poller 'ne lépj ki'-ként érti."""
+        from smart_fan_controller.controller import FanController
+        from smart_fan_controller.zwift_api import runtime
+
+        monkeypatch.setattr(
+            "smart_fan_controller.controller.process_running", lambda _n: None
+        )
+        monkeypatch.setattr(
+            "smart_fan_controller.zwift_api.runtime.process_running",
+            lambda _n: None,
+        )
+        assert FanController.is_process_running("ZwiftApp.exe") is False
+        assert runtime._is_zwift_running() is True
+
+    def test_toolhelp_failure_falls_back_to_tasklist(self, monkeypatch):
+        """A Toolhelp32 hibája nem hiba: tasklist veszi át, egyszer."""
+        pw = self._fresh_module()
+        monkeypatch.setattr(pw, "_IS_WINDOWS", True)
+
+        def _broken():
+            raise OSError("kernel32 nem elérhető")
+
+        calls: list[str] = []
+
+        def _fake_tasklist(name: str):
+            calls.append(name)
+            return True
+
+        monkeypatch.setattr(pw, "_build_toolhelp_reader", _broken)
+        monkeypatch.setattr(pw, "_tasklist_running", _fake_tasklist)
+
+        assert pw.process_running("ZwiftApp.exe") is True
+        assert pw.process_running("ZwiftApp.exe") is True
+        assert calls == ["ZwiftApp.exe", "ZwiftApp.exe"]
+
+    def test_toolhelp_result_is_used_and_tasklist_skipped(self, monkeypatch):
+        """Működő Toolhelp32 esetén nem indul segédfolyamat."""
+        pw = self._fresh_module()
+        monkeypatch.setattr(pw, "_IS_WINDOWS", True)
+
+        seen: list[str] = []
+
+        def _reader_factory():
+            def _reader(target_lower: str) -> bool:
+                seen.append(target_lower)
+                return target_lower == "zwiftapp.exe"
+            return _reader
+
+        def _must_not_run(_name: str):
+            raise AssertionError("a tasklist nem indulhatott volna el")
+
+        monkeypatch.setattr(pw, "_build_toolhelp_reader", _reader_factory)
+        monkeypatch.setattr(pw, "_tasklist_running", _must_not_run)
+
+        assert pw.process_running("ZwiftApp.exe") is True
+        assert pw.process_running("Other.exe") is False
+        # A név kisbetűsen, pontos egyezésre megy (nem részstring-keresés)
+        assert seen == ["zwiftapp.exe", "other.exe"]
+
+    def test_reader_exception_disables_fast_path_once(self, monkeypatch):
+        """Egy futásidejű Toolhelp32 hiba után végleg a tasklist marad."""
+        pw = self._fresh_module()
+        monkeypatch.setattr(pw, "_IS_WINDOWS", True)
+
+        reader_calls: list[str] = []
+        tasklist_calls: list[str] = []
+
+        def _reader_factory():
+            def _reader(target_lower: str) -> bool:
+                reader_calls.append(target_lower)
+                raise OSError(5, "hozzáférés megtagadva")
+            return _reader
+
+        monkeypatch.setattr(pw, "_build_toolhelp_reader", _reader_factory)
+        monkeypatch.setattr(
+            pw, "_tasklist_running",
+            lambda name: (tasklist_calls.append(name), False)[1],
+        )
+
+        assert pw.process_running("ZwiftApp.exe") is False
+        assert pw.process_running("ZwiftApp.exe") is False
+        assert len(reader_calls) == 1, "a hibás gyors út újra lefutott"
+        assert len(tasklist_calls) == 2

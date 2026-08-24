@@ -26,7 +26,9 @@ from PySide6.QtWidgets import QApplication, QLayout, QWidget  # noqa: E402
 from hud_test.run_hud_test import FakeController  # noqa: E402
 from smart_fan_controller.config.schemas import DataSource, ZoneMode  # noqa: E402
 from smart_fan_controller.ui import theme  # noqa: E402
-from smart_fan_controller.ui.sound import LCARSSoundManager  # noqa: E402
+from smart_fan_controller.ui.sound import (  # noqa: E402
+    _QT_MULTIMEDIA_AVAILABLE, LCARSSoundManager,
+)
 from smart_fan_controller.ui.window import HUDWindow  # noqa: E402
 
 
@@ -189,6 +191,47 @@ def test_higher_wins_tile_follows_zone_mode(hud):
     hz.zone_mode = ZoneMode.POWER_ONLY
     win._update()
     assert win._tile_higher_wins.property("hudState") == "off"
+
+
+def test_tiles_follow_the_effective_zone_mode(hud):
+    """HR letiltva → a vezérlő power_only, a csempéknek ezt kell mutatniuk.
+
+    A HUD a nyers heart_rate_zones.zone_mode értéket olvasta, így a
+    (default) higher_wins beállítás mellett HR nélküli gépen is villogott
+    a HI WINS csempe, miközben a zóna kizárólag teljesítmény alapján dőlt
+    el. A ZHR IMM csempe ugyanígy aktívnak látszott, holott HR nélkül a
+    zero_hr_immediate soha nem léphet életbe.
+    """
+    win, ctrl = hud
+    hz = ctrl.settings["heart_rate_zones"]
+    hz.zone_mode = ZoneMode.HIGHER_WINS
+    hz.zero_hr_immediate = True
+
+    hz.enabled = False
+    win._update()
+    assert win._tile_higher_wins.property("hudState") == "off"
+    assert win._tile_zero_hr_imm.property("hudState") == "off"
+
+    hz.enabled = True
+    win._update()
+    assert win._tile_higher_wins.property("hudState") in ("on", "flash")
+    assert win._tile_zero_hr_imm.property("hudState") in ("on", "flash")
+
+
+def test_zero_power_tile_is_off_in_hr_only_mode(hud):
+    """hr_only módban a 0W azonnali leállás nem érvényesül – ne is világítson."""
+    win, ctrl = hud
+    ctrl.settings["power_zones"].zero_power_immediate = True
+    hz = ctrl.settings["heart_rate_zones"]
+    hz.enabled = True
+
+    hz.zone_mode = ZoneMode.HR_ONLY
+    win._update()
+    assert win._tile_zero_imm.property("hudState") == "off"
+
+    hz.zone_mode = ZoneMode.POWER_ONLY
+    win._update()
+    assert win._tile_zero_imm.property("hudState") in ("on", "flash")
 
 
 # ─────────────────────────── geometria visszaállítás ─────────────────────────
@@ -377,6 +420,14 @@ def test_box_metrics_follow_the_scale(hud, app):
 # ──────────────────────────────── hangrendszer ───────────────────────────────
 
 
+_needs_multimedia = pytest.mark.skipif(
+    not _QT_MULTIMEDIA_AVAILABLE,
+    reason="PySide6.QtMultimedia nem tölthető be (pl. hiányzó audio "
+           "kliens könyvtár) – a hangeffektek amúgy is némák",
+)
+
+
+@_needs_multimedia
 def test_sound_manager_loads_all_stock_sounds(app):
     mgr = LCARSSoundManager()
     try:
@@ -387,6 +438,7 @@ def test_sound_manager_loads_all_stock_sounds(app):
         mgr.cleanup()
 
 
+@_needs_multimedia
 def test_sound_manager_tolerates_missing_files(app, tmp_path, monkeypatch, caplog):
     """Hiányzó hangfájl: nincs kivétel, a log a pontos útvonalat adja."""
     monkeypatch.setattr(
