@@ -4,7 +4,6 @@ Eredet: fbiego ESP32_BLE_OTA protokoll. Reszletek/valtozasok: sender/README.md.
 Hasznalat: python ota.py "01:23:45:67:89:ab" "FanController_OTA_debug.ino.bin"
 """
 
-from __future__ import print_function
 from os import path
 import asyncio
 import math

@@ -25,7 +25,7 @@ probléma, hanem **rossz vagy sérült firmware fájl**:
 |---|---|
 | **Rossz fájl** | Nem az app `*.ino.bin`-t küldted. Pl. `*.merged.bin`, `*.bootloader.bin`, `*.partitions.bin`, vagy egy `.zip`/`.gz`. |
 | **Tömörített bináris** | Ha a kliens gzip-eli, az első byte 0x1F 0x8B → nem 0xE9. |
-| **Sérült átvitel** | A BLE→SPIFFS írás eleje elcsúszott/megsérült. |
+| **Sérült átvitel** | A BLE→fájlrendszer írás eleje elcsúszott/megsérült. |
 | **Vezérlőbyte a fájl elején** | Egy protokoll-byte beszivárgott az `/update.bin` elejére. |
 
 ## Mit kell feltölteni?
