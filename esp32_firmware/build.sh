@@ -21,7 +21,7 @@ set -euo pipefail
 export PATH="$HOME/.local/bin:$PATH"
 
 SKETCH_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CORE_VERSION="3.1.3"
+CORE_VERSION="3.3.11"
 # app0 partíció mérete a partitions_custom.csv-ből (0x150000) → méretkorlát-ellenőrzés
 MAX_APP_SIZE="1376256"
 

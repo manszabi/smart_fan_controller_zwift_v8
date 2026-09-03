@@ -263,3 +263,346 @@ egyetlen összevont "Update FanController_OTA_debug.ino" commitban érkeztek.)*
 
 *Ellenőrzés: mindkét cél (XIAO ESP32-C3 és C6) `--warnings all` mellett hiba- és
 figyelmeztetés-mentesen fordul. Flash C3: 1 146 468 → 1 145 894 bájt (−574).*
+
+---
+
+## v7.15.0 — Deep sleep alatt beragadó görgő-relé
+
+*Tünet: az ESP deep sleepbe megy, és a görgő reléje **meghúzva marad** (ehhez a
+tápengedélynek is aktívnak kell lennie); ébredéskor a bootkori relé-önteszt
+jogosan „beragadt fő relét" jelez → failsafe → az eszköz leáll.*
+
+- **[FIX-ESP-55]** 2026-09-02: **7.15.0** — **Kimenetek rögzítése (pad-hold) deep sleep alatt.**
+  Deep sleepben a digitális IO tápdomain lekapcsol: a GPIO-k **nagyimpedanciásra
+  (lebegőre)** váltanak, és az alvás **teljes ideje alatt** lebegve maradnak. A relé-
+  vezérlés aktív-LOW, a `RELAY_EN` tápengedély aktív-HIGH, így alvás alatt csak a panel
+  10 kΩ-os fel-/lehúzói védenek: egy kis szivárgó áram, kapacitív átkötés vagy zaj már
+  behúzhatja a görgő reléjét (`RELAY_MAIN`). Az ESP32 **pad-hold** latch-e viszont az
+  always-on tápdomainben van, ezért az elalvás pillanatában **aktívan hajtott** szintet
+  (`RELAY_EN`=LOW, minden relé=HIGH) alvás alatt is tartja. Az `enterDeepSleep()` és a
+  `setup()` mindkét korai alvás-ága (`POWERON` → alvás, illetve „gomb nélküli ébredés →
+  vissza aludni") most rögzíti az 5 relé-lábat (`relayPadsHoldEnable()`), a `setup()`
+  pedig — a lábak biztonságos szintre hajtása **után** — feloldja
+  (`relayPadsHoldRelease()`), így nincs átmeneti glitch.
+  - **C6:** van láb-szintű deep sleep hold, és a `RELAY_MAIN` (GPIO2) **RTC(LP)-láb** →
+    a hold a **bootloader alatt is él**, a `setup()` feloldása **kötelező** (enélkül a
+    görgő reléje soha többé nem lenne kapcsolható).
+  - **C3:** nincs láb-szintű deep sleep hold, ezért a láb-szintű `gpio_hold_en()` mellé
+    kell a globális `gpio_deep_sleep_hold_en()` is; ébredéskor magától felold.
+  - A `gpio_deep_sleep_hold_en()` **deklarációs feltétele core-verziónként eltér**
+    (IDF 5.3 / core 3.1.x: `SOC_GPIO_SUPPORT_HOLD_IO_IN_DSLP && !…SINGLE…`; IDF 5.5 /
+    core 3.3.x: csak `!…SINGLE…`, a `HOLD_IO_IN_DSLP` cap megszűnt). A firmware
+    **mindkettőt** lefedi egy származtatott makróval (`PAD_HOLD_NEEDS_GLOBAL_DSLP`),
+    különben az egyik core-on a hívás **némán kimaradna** — nem fordítási hibával,
+    hanem úgy, hogy a rögzítés C3-on nem lép életbe. Nem támogatott célnál `#error`.
+  - A hold csak a **kimenetet** rögzíti; a bemeneti út él, ezért a **gombos
+    GPIO-ébresztés** (a pad bemenetéről) változatlanul működik. Az ébresztő láb
+    `INPUT_PULLUP`-ja az `enterDeepSleep()`-ben is explicit (eddig csak a `setup()`
+    alvás-ágain volt az).
+  - `DEEP_SLEEP_PAD_HOLD` makróval kikapcsolható (alapból `1`).
+- **[FIX-ESP-56]** 2026-09-02: **7.15.0** — **A deep sleep nem törölte a „görgő aktív volt"
+  jelzést.** Az `enterDeepSleep()` csak `disableRelays()`-t hívott: az fizikailag
+  lekapcsol, de a `mainActive` / `savedMain=1` (RTC_NOINIT) és az NVS `fan/main=1`
+  **érintetlen maradt** (a `deactivateMain()`-t, ami ezeket nullázza, nem hívta senki).
+  Az RTC_NOINIT tartalma túléli az alvást **és** a resetek nagy részét, ezért egy alvás
+  közbeni/utáni **BROWNOUT / WDT / UNKNOWN** reset boot-helyreállítása (`[FIX-ESP-19]`,
+  `[FIX-ESP-22]`) ebből **magától újra bekapcsolta** a tápengedélyt és a görgőt —
+  miközben a felhasználó szerint az eszköz „alszik". Javítás:
+  - `enterDeepSleep()`: `deactivateMain()` (RTC-állapot 0) + `persistRelayStateOff()`
+    (NVS `main=0`, `zone=0`) a `disableRelays()` előtt.
+  - `setup()` `POWERON` ága (áramtalanítás után indulunk, gombra várunk): ugyanez a
+    nullázás alvás előtt — különben egy alvás közbeni brownout az **NVS-fallbackből**
+    indíthatta volna a görgőt.
+  - `disableRelays()` a `mainActive`-ot is törli (tápengedély nélkül a görgő-relé
+    fizikailag sem lehet behúzva).
+  - `rebootEspWithReason()` (OTA-reboot) a reset előtt biztonságos szintre hajtja a
+    reléket, hogy a reset alatti lebegő lábak ne kapcsolhassanak.
+  - Az NVS-nullázás három helyen bitre azonosan ismétlődött → közös
+    `persistRelayStateOff()` (`zeroStateForFailsafe`, `zeroStateForBypass`, alvás).
+
+*Ellenőrzés: mindkét cél (XIAO ESP32-C3 és C6) hibamentesen fordul `esp32:esp32@3.1.3`
+(CI-pin) és `@3.3.11` alatt is; a `PAD_HOLD_NEEDS_GLOBAL_DSLP` mindkét core-on a helyes
+ágat választja (C3 → 1, C6 → 0, `static_assert`-tel ellenőrizve).*
+
+---
+
+## v7.16.0 — Átvilágítás friss szemmel + toolchain a 3.3.11-es core-ra
+
+*A vizsgálat kifejezetten az `esp32:esp32@3.3.11` (IDF 5.5) core-ra készült. A 3.3-as
+core-tól az alapértelmezett BLE stack **NimBLE** (a 3.1.x-ben Bluedroid volt) — a `BLE`
+könyvtár API-ja azonos, a viselkedése nem; az alábbi FIX-ESP-58/61 ebből fakad.*
+
+- **[FIX-ESP-57]** 2026-09-02: **7.16.0** — **Bukott OTA-telepítés után az eszköz
+  véglegesen OTA-módban ragadt.** A `performUpdate()` három bukó ága (rossz `0xE9` magic,
+  `Update.begin()` hiba, `Update.end()` hiba) `return`-nel lépett ki, **anélkül, hogy az
+  `otaMode`-ot visszaállította volna**. A hívó `updateFromFS()` előtt az `otaLoop()` már
+  kinullázta az `otaTotalBytes`-t, így az `OTA_INSTALL_MODE` ágon utána **egyik feltétel
+  sem illeszkedett** — se telepítés, se abort. Következmény: `otaIsRunning()` örökre igaz
+  → a `stateMachineStep()` azonnal visszatér, tehát **nem fut a gomb (`button.tick()`), a
+  failsafe, a relé-eltérés-figyelés, a diag-kiszolgálás és az NVS-mentés sem**, a LED-ek
+  OTA-mintát villognak, a relék az aktuális állapotukban maradnak. Csak a BLE-kapcsolat
+  bontása (`onDisconnect`) vagy áramtalanítás hozta vissza. Javítás: a `performUpdate()`
+  `bool`-t ad vissza, és bukásnál a hívó kötelezően `otaResetState()`-et hív (a diag
+  naplóba is bekerül). Egyúttal a háromszor, apró eltérésekkel ismételt OTA-mező-nullázás
+  (`otaAbort`, `otaWriteBinary` „SPIFFS full", `onDisconnect`) közös
+  `otaResetState()`-be került — így nem maradhat ki mező (az `otaAbort` eddig pl. az
+  `otaInstallWaiting`-et nem törölte).
+- **[FIX-ESP-58]** 2026-09-02: **7.16.0** — **`pServer->disconnect(0)`: hardkódolt
+  kapcsolat-azonosító.** A BLE-kapcsolat bontása két helyen (kézi mód bekapcsolása,
+  `enterDeepSleep`) fixen a `0` azonosítót zárta. NimBLE alatt viszont a `conn_handle`-t
+  a kontroller osztja (0, 1, 2 … újrahasznosítva), tehát az **első újracsatlakozás után a
+  bontás egyszerűen nem történik meg** (`ble_gap_terminate` `ENOTCONN`). A kézi módnál ez
+  a rosszabb: a kód utána mégis `bleConnected = false`-ra állt, így az `onDisconnect`
+  **soha nem futott le** — nem nullázódott az auth/OTA/diag állapot, és a
+  `bleDisconnectTime` 0 maradt, amitől a **12 perces „BLE elszállt → mindent le"
+  biztonsági időzítő el sem indult**, miközben a ventilátor futott. Javítás: a könyvtár
+  saját, mindkét stack alatt karbantartott `pServer->getConnId()`-je (3.1.x-ben is
+  létezik). Alvás előtt így a kliens is tiszta bontást kap supervision-timeout helyett.
+- **[FIX-ESP-59]** 2026-09-02: **7.16.0** — **A bootkori relé-önteszt órákkal később is
+  elsülhetett.** A `relayTestPending` egyszeri jelzés volt, de a lefutást csak a
+  `!bleConnected` kapuzta — időkorlát nélkül. Ha a telefon a boot utáni pillanatban
+  visszacsatlakozott (advertising indulása és az első `loop()` között), a teszt függőben
+  maradt, és **az első BLE-bontáskor sült el**, akár órákkal később, **működő görgő
+  mellett**: `RELAY_MAIN`-t OFF-ra hajtotta és végigkapcsolta a fan-reléket, a
+  `mainActive` viszont igaz maradt. Emiatt a `checkFanRelayMismatch()` nem lépett ki a
+  `!mainActive` ágon, és NC-bekötésnél az **AC hiánya mind a három ágon „behúzva"-nak
+  látszik** (`FAN_SENSE_AC_MEANS_ENGAGED=0`) → `relaysEnabled=false` mellett azonnali,
+  **téves `STUCK` → failsafe → 10 s villogás → deep sleep**. Javítás: `RELAY_TEST_WINDOW_MS`
+  (15 s) időablak, és elévülés, ha közben elindult a görgő/tápengedély; a `relayBootTest()`
+  a `mainActive`-ot is nullázza (a tesztet követően a MAIN fizikailag OFF).
+- **[FIX-ESP-60]** 2026-09-02: **7.16.0** — a `failSafeMode()` minden körben lehúzza a
+  `RELAY_EN`-t, de a `relaysEnabled` flag `true` maradt (hamis állapot a mismatch-logika
+  és a diag számára) — nullázva.
+- **[FIX-ESP-61]** 2026-09-02: **7.16.0** — **NimBLE: a kézi `BLE2902` deprecated.** A
+  CCCD (0x2902) leírót NimBLE automatikusan létrehozza a `NOTIFY` property mellé, és a
+  könyvtár a kézi hozzáadást fel is ismeri (no-op) — de az osztály `[[deprecated]]`,
+  ez adta az egyetlen két fordítási figyelmeztetést 3.3.11 alatt. A hozzáadás
+  `#if !defined(CONFIG_NIMBLE_ENABLED)` mögé került (szándékosan a NimBLE HIÁNYÁT nézve,
+  nem a Bluedroid meglétét: ha a Bluedroid-makró neve változna, a leíró akkor is
+  bekerül — a hiánya Bluedroid alatt működésképtelen notify-t adna).
+- **[FIX-ESP-62]** 2026-09-02: **7.16.0** — **OTA: csomag-hossz ellenőrzés a fejléc-mezők
+  előtt.** Csonka csomagnál a `0xFB` (`pData[1]`) és a `0xFE`/`0xFF` (`pData[1..4]`) a BLE
+  értékpuffer végén túl olvasott. A `0xFC`-nek már volt hossz-őre (`[FIX-ESP-51]`), a
+  többinek nem — pótolva.
+
+### Toolchain / CI: `esp32:esp32@3.1.3` → `@3.3.11`
+
+- `build.sh` (`CORE_VERSION`), a GitHub Actions workflow (core install + cache-kulcs) és
+  a `.claude/hooks/session-start.sh` (`ESP32_CORE_VERSION`) a 3.3.11-es core-ra állítva —
+  ez fut éles használatban is. A forrás továbbra is fordul a 3.1.x Bluedroid stackkel.
+- A hook **OneButton**-telepítése `git clone`-ra váltott: a GitHub
+  `/archive/refs/tags/…` útvonalát a webes környezet hálózati szabálya 403-mal tiltja
+  (csak release-asset útvonalak engedettek), ezért a lépés eddig **némán** elbukott
+  (a hook `set -e` nélkül fut) és a `./build.sh` „OneButton.h not found"-dal állt meg.
+  Tarball-tartalék + explicit hibajelzés is került mellé.
+- README: a `DEBUG`/`OTA_DEBUG`/`BOOT_DIAG` alapértékei a valósághoz igazítva
+  (mindhárom `0`), és a deep sleep-szakaszból korábban kikerült „interrupt cleanup"
+  lépés leírása is a kódhoz igazítva (`[FIX-ESP-55]` körében).
+
+*Ellenőrzés: mindkét cél (XIAO ESP32-C3 és C6) `--warnings all` mellett **hiba- és
+figyelmeztetés-mentesen** fordul `esp32:esp32@3.3.11` alatt. Flash C3: 685 895 bájt
+(49%), C6: 787 826 bájt (57%).*
+
+---
+
+## v7.16.1 — TWDT-konfiguráció: néma bukás megszüntetése
+
+- **[FIX-ESP-63]** 2026-09-02: **7.16.1** — **A boot-kori watchdog-konfiguráció némán
+  elbukhatott.** A `setup()` eddig ellenőrzés nélküli `esp_task_wdt_deinit()` +
+  `esp_task_wdt_init(&wdt_config)` párral írta felül a TWDT-t. Amit az IDF 5.5
+  forrásából (`components/esp_system/task_wdt/task_wdt.c`) ellenőrizve tudni lehet:
+  - a `deinit()` leszedi a figyelt idle taskokat, de **`ESP_ERR_INVALID_STATE`-tel
+    bukik**, ha bármely task/user még feliratkozva van (`entries_slist` nem üres);
+  - az `init()` szintén **`ESP_ERR_INVALID_STATE`**-et ad, ha a TWDT már fut.
+
+  Vagyis ha a `deinit()` elbukik, az `init()` is elbukik, és **némán a gyári 5000 ms
+  marad** a szándékolt 15 000 ms helyett (a `.trigger_panic`/idle-maszk sem áll be) —
+  a kód pedig egyik visszatérési értéket sem nézte.
+
+  A **jelenlegi** core-beállítás mellett ez nem sül el: az `esp32:esp32@3.3.11`
+  sdkconfigjában `CONFIG_ESP_TASK_WDT_INIT=y` (5 s, panic), viszont
+  `CONFIG_ESP_TASK_WDT_CHECK_IDLE_TASK_CPU0` **nincs bekapcsolva**, és az Arduino
+  `main.cpp` a `loopTask`-ot sem iratkoztatja fel (`loopTaskWDTEnabled = false`) —
+  tehát a `setup()` idején nulla feliratkozó van, a `deinit()` átmegy. De ez a
+  **körülményektől** függ (core-verzió, sdkconfig, bármely korán induló könyvtár), nem
+  a kódtól — a néma 5 s-os visszaesés pedig pont a hosszan blokkoló szakaszokat
+  (relé-önteszt, bypass-villogás, alvás előtti csendesítés) érintené.
+
+  Javítás: a pontosan erre való **`esp_task_wdt_reconfigure()`** (IDF 5.3 óta létezik,
+  tehát a core 3.1.x-szel is fordul), ami a **futó** TWDT-t írja át — timeout, panic és
+  idle-maszk együtt, `deinit()` nélkül; `init()` már csak tartalék arra az esetre, ha a
+  TWDT nem futna (`CONFIG_ESP_TASK_WDT_INIT=n`). Mindkét hívás és az
+  `esp_task_wdt_add(NULL)` visszatérési értéke ellenőrzött, hiba esetén soros log **és**
+  `diag.log` bejegyzés (`[boot] TWDT config failed: …` / `… add failed: …`). Ugyanez a
+  védelem került a `performUpdate()` négy `esp_task_wdt_add(NULL)` visszairatkozására is:
+  ha ezek elbuknának, a loopTask a futás hátralévő részére **őrizetlenül** maradna.
+
+  > **Nyitott megfigyelés (a v7.16.2-ben megszüntetve, lásd `[FIX-ESP-64]`):** a `wdt_config.idle_core_mask =
+  > (1 << 0)` a 0. mag idle taskját is figyelteti — ezt a firmware kapcsolja be (az
+  > Arduino alapbeállítás nem figyeli). Ennek két következménye van: (1) a
+  > `performUpdate()` `esp_task_wdt_delete(NULL)` hívása **nem teljes** védelem a hosszú
+  > flash-írásra, mert az idle task figyelt marad; (2) egy TWDT-panic `TASK_WDT` reset-okot
+  > ad, amit a boot-helyreállítás hibás resetnek tekint (visszakapcsolhatja a görgőt).
+  > A gyakorlatban a flash-műveletek engednek futni az idle tasknak, ezért maradt.
+
+*Ellenőrzés: mindkét cél `--warnings all` mellett hiba- és figyelmeztetés-mentesen fordul
+`esp32:esp32@3.3.11` alatt (C3 685 799 B / 49%, C6 787 842 B / 57%).*
+
+---
+
+## v7.16.2 — A watchdog csak a `loop()`-ot figyeli
+
+- **[FIX-ESP-64]** 2026-09-02: **7.16.2** — **`wdt_config.idle_core_mask`: `(1 << 0)` → `0`.**
+  Eddig a firmware a 0. mag **idle taskját** is felíratta a TWDT-re (az Arduino gyári
+  beállítása ezt nem teszi). Ez a bejegyzés nem azt kérdezi, hogy „él-e a program" — azt a
+  `loopTask` bejegyzése méri, amit a `loop()` eleje etet —, hanem hogy **„volt-e a CPU-nak
+  üresjárata"**: az idle task a legalacsonyabb prioritású, tehát csak akkor fut (és eteti a
+  watchdogot az `idle_hook_cb`-n keresztül), ha semmi más nem futóképes.
+
+  Egymagos chipen (`CONFIG_FREERTOS_UNICORE=y` mindkét célon) ez alig ad pluszt: ha bármi
+  ténylegesen felzabálja a CPU-t, a `loopTask` sem jut futáshoz, tehát a saját bejegyzésünk
+  amúgy is eldurran. Egyedül az az eset marad, amikor egy task úgy pörög, hogy közben a
+  `loop()` még kap időszeletet (azonos prioritáson vagy `taskYIELD()`-del), az idle viszont
+  soha — ilyen task ebben a firmware-ben nincs (saját taskot nem hozunk létre, a BLE
+  host/kontroller taskok pedig magasabb prioritásúak).
+
+  Az ára viszont valós volt:
+  1. **Féloldalassá tette a `performUpdate()` `esp_task_wdt_delete(NULL)` hívását**: a
+     saját taskot levettük a hosszú flash-írás idejére, az idle bejegyzés viszont élesben
+     maradt. Mostantól a leiratkozás teljes — nem marad TWDT-bejegyzés, így az
+     `esp_task_wdt_reconfigure()`/timer-logika a timert is leállítja
+     (`if (!SLIST_EMPTY(&entries_slist)) restart`).
+  2. **Egy téves pánik itt drágább, mint a hiba, amit véd**: a TWDT-panic `TASK_WDT`
+     reset-okot ad, amit a boot-helyreállítás (`[FIX-ESP-22]`) hibás resetnek tekint, tehát
+     **visszakapcsolhatja a görgőt**. Fals riasztásra pedig volt esély: a nem engedő
+     szakaszok (pl. a `relayTestWait()` 200 ms-os `delayMicroseconds()` ciklusai) épp az
+     idle taskot éheztetik — és pontosan ezért kapcsolja ki az Arduino is alapból az
+     idle-figyelést (`CONFIG_ESP_TASK_WDT_CHECK_IDLE_TASK_CPU0` nincs beállítva).
+
+  A watchdog jelentése így pontosan az lett, amit ez a firmware akar: **„iterál-e még a
+  `loop()`"** — 15 s-os timeouttal, panickal.
+
+*Ellenőrzés: mindkét cél `--warnings all` mellett hiba- és figyelmeztetés-mentesen fordul
+`esp32:esp32@3.3.11` alatt (C3 685 799 B / 49%, C6 787 842 B / 57%).*
+
+---
+
+## v7.17.0 — Karbantarthatóság: duplikációk kiemelése + fordítási idejű védőhálók
+
+*Ez a kör szándékosan **viselkedés-semleges**: nem hibát javít, hanem azt csökkenti, hogy
+a következő módosítás hibát tudjon becsempészni. A bináris nem lett bitre azonos (ez egy
+de-duplikációtól nem is várható), viszont **kisebb** lett: C3 685 799 → 685 717 bájt,
+C6 787 842 → 787 760 bájt.*
+
+### Fordítási idejű pin-ellenőrzések (új védőháló)
+
+A `PINS` blokk két cél (C3/C6) **kézzel karbantartott** listája, ahol a legkönnyebben
+elkövethető hiba, hogy két funkció ugyanarra a GPIO-ra kerül — a C3-on ez különösen éles
+(GPIO20/21 = U0RXD/U0TXD, GPIO2/8/9 = strapping lábak). Két `static_assert` került be:
+
+- **Pin-ütközés:** a használt lábakból bitmaszk készül (`pinBit`), és a `pinCount()`
+  `constexpr` bitszámláló eredményét a listaelemek darabszámához hasonlítjuk. Ha két
+  funkció ugyanarra a lábra kerül, a maszk kevesebb bites → **fordítási hiba**, nem pedig
+  rejtélyes működés a panelon. A `FAN_SENSE_ENABLE` / C6-specifikus lábak feltételesen
+  kerülnek a maszkba és a darabszámba.
+- **Ébresztő láb:** `SOC_GPIO_DEEP_SLEEP_WAKE_VALID_GPIO_MASK & pinBit(BUTTON_PIN)` — a
+  gombnak deep sleepből kell ébresztenie, erre csak az RTC/LP-képes lábak alkalmasak
+  (C3: GPIO0–5, C6: GPIO0–7). Rossz láb esetén az eszköz **egyszerűen nem ébredne fel**;
+  most ez fordításkor derül ki.
+
+  *Mindkét ellenőrzés kipróbálva: szándékos ütközés (`FAN2_SENSE_PIN` 7 → 6) és nem
+  ébresztésképes gombláb (`BUTTON_PIN` 3 → 7) mellett a fordítás a saját üzenetünkkel áll le.*
+
+  A blokk szándékosan az **első függvénydefiníció után** áll, nem a `PINS` mellett: az
+  `.ino` automatikus prototípus-generálása a legelső függvénydefiníció elé szúrja be a
+  prototípusokat, így egy korán definiált `constexpr` függvény eltolná a beszúrási pontot
+  (a `CommandSource` enum elé) és elrontaná a fordítást.
+
+### Duplikációk kiemelése (viselkedés változatlan)
+
+- **`fanRelaysOff()`**: a „mindhárom fokozat-relé OFF" hármas **nyolc** helyen szerepelt
+  szó szerint (break-before-make, MAIN lekapcsolás, `enableRelays`/`disableRelays`,
+  failsafe, bootteszt ×3). Több helyen épp az a lényeg, hogy **egyik** fan se maradjon
+  behúzva — jobb, ha ez egy néven nevezett művelet, mint három egymás mellé másolt sor.
+- **`ledBlink()` / `ledHeartbeat()`**: a piros és a sárga LED ága szó szerint ugyanazt a
+  villogás- és életjel-szerkezetet másolta le, csak más lábbal és más állapotváltozókkal.
+  A `handleLEDs()` ~100 sorról ~25-re rövidült, az állapotváltozók referenciaként mennek
+  át. Egyúttal kiesett a `bleEnabled && !bleConnected` redundáns fele (abba az ágba
+  eleve csak `!bleConnected` mellett lehet eljutni).
+
+### Olvashatóság / konzisztencia
+
+- **OTA opkódok néven nevezve**: a `0xFB`/`0xFC`/`0xFD`/`0xFE`/`0xFF`/`0xEF` és a
+  `0x0F`/`0xF1`/`0xF2` eddig nyers hex-literálként szerepelt szétszórva, a protokoll
+  leírása pedig kizárólag a `sender/ota.py`-ban és a READMÉ-ben élt. Mostantól
+  `OTA_RX_*` / `OTA_TX_*` konstansok, a csomagformátummal a definíciójuk mellett.
+  (Az érték egyetlen bitje sem változott; a `0xEF` továbbra is két különböző dolgot
+  jelent a két irányban — ezt most már a két külön név is mutatja.)
+- **`FLASH` vs. `SPIFFS`**: a `setup()` négy helyen közvetlenül `SPIFFS.`-t hívott,
+  miközben a kód többi része a `FLASH` makrót használja. Egységesítve — egy esetleges
+  későbbi fájlrendszer-váltás így tényleg egyetlen `#define` módosítása.
+- **Halott kód**: a `bootMagic` RTC_NOINIT változó + `BOOT_MAGIC` makró csak írva volt,
+  soha nem olvasva — törölve.
+- `sender/ota.py`: `from __future__ import print_function` (Python 2-es maradvány) törölve;
+  a `bleak` amúgy is Python 3.8+-t igényel.
+
+### CI: a sketch figyelmeztetései hibának számítanak
+
+A GitHub Actions build mostantól `--warnings all`-lal fordít, és **elbukik**, ha a
+`FanController_OTA_debug.ino` sorára esik `warning:`. Szándékosan csak a saját forrásunk
+figyelmeztetéseire — egy jövőbeli core-/könyvtár-frissítés zaja ne törje a CI-t olyasmin,
+amit nem mi javítunk. Ez pont azt a fajta dolgot fogja meg automatikusan, amit a 3.3.11-re
+váltáskor kézzel kellett észrevenni (a NimBLE alatt `[[deprecated]]` `BLE2902`).
+
+*Ellenőrzés: mindkét cél `--warnings all` mellett hiba- és figyelmeztetés-mentesen fordul
+`esp32:esp32@3.3.11` alatt; a CI-kapu logikája helyben kipróbálva mindkét irányban.*
+
+---
+
+## v7.18.0 — SPIFFS → LittleFS
+
+- **[FIX-ESP-65]** 2026-09-02: **7.18.0** — **A `spiffs` partíción LittleFS fut, nem SPIFFS.**
+  A kód oldalán ez ténylegesen **két sor** (`#include` + a `FLASH` makró), mert a
+  fájlrendszert az egész forrás a `FLASH` makrón át éri el (a `setup()` maradék négy
+  közvetlen `SPIFFS.` hívását a v7.17.0 egységesítette), a `LittleFSFS` pedig ugyanúgy
+  `FS`-leszármazott: a `File` API (`open/read/write/seek/available/readStringUntil/close`),
+  a `FILE_READ/WRITE/APPEND` és a `totalBytes()/usedBytes()/format()/exists()/remove()`
+  szignatúrája azonos.
+
+  **Partíciós tábla nem változik:** a `LittleFS.begin()` alapértelmezett
+  `partitionLabel`-je `"spiffs"`, tehát ugyanazt a partíciót csatolja.
+
+  **Miért érte meg épp ennek az eszköznek:**
+  - **Áramszünet-biztonság.** A LittleFS copy-on-write, páros metaadat-blokkokkal: írás
+    közbeni áramtalanítás nem hagy sérült, felcsatolhatatlan fájlrendszert (a SPIFFS-nél
+    ez reális kimenet). Ez a firmware pont a rossz pillanatokban ír: a `diag.log`
+    bejegyzés **brownout/WDT reset után, bootkor** születik, az OTA pedig egy ~0,7 MB-os
+    `/update.bin`-t stagel a partícióra.
+  - **Telített fájlrendszer.** A SPIFFS ~75–80% fölött a szemétgyűjtés miatt drasztikusan
+    belassul — az OTA viszont épp jócskán megtölti a partíciót. A LittleFS a nagy fájlt és
+    az append-et lényegesen jobban bírja.
+  - A SPIFFS felfelé gyakorlatilag karbantartatlan; új terveknél a LittleFS az ajánlott.
+
+  **A mount kétlépcsős lett.** Eddig `begin(FORMAT_..._IF_FAILED)` volt egyetlen hívásban,
+  ami elrejti, hogy kellett-e formázni. Most előbb formázás **nélkül** próbálunk csatolni,
+  és ha ez nem megy, formázunk + naplózunk (`[fs] mount failed -> formatted`). Így látszik
+  a naplóban a SPIFFS→LittleFS váltás egyszeri formázása **és** egy esetleges későbbi
+  fájlrendszer-sérülés is. (A `begin()` felcsatolt állapotban azonnal `true`-val tér vissza
+  — `esp_littlefs_mounted()` ellenőrzéssel —, ezért a kétlépcsős hívás biztonságos.)
+
+  **Egyszeri hatás a frissítéskor:** az első boot a régi, SPIFFS-formátumú partíciót nem
+  tudja LittleFS-ként felcsatolni, ezért **megformázza** → a korábbi `diag.log` elveszik.
+  Ugyanez fordítva is igaz: egy SPIFFS-es buildre visszagörgetve az is formázna egyet.
+
+  **Átnevezések és szövegek:** `FORMAT_SPIFFS_IF_FAILED` → `FORMAT_FS_IF_FAILED`,
+  `SPIFFS_OVERHEAD` → `FS_OVERHEAD`, a log-/hibaszövegekben „SPIFFS" → „FS"
+  (`ERR: FS full`, `ERR: FS too small (need …)`). A BLE-n visszaküldött hibaszövegre
+  **egyik Python eszköz sem illeszt** (csak kiírja), ezért ez biztonságos csere.
+
+  **Ár:** flash C3 685 717 → **692 383** bájt (49% → 50%), C6 787 760 → **794 414** bájt
+  (57%); statikus RAM +120 bájt. A LittleFS a felcsatoláskor pár kB heapet foglal a
+  cache-nek — ahogy a SPIFFS is.
+
+*Ellenőrzés: mindkét cél `--warnings all` mellett hiba- és figyelmeztetés-mentesen fordul
+`esp32:esp32@3.3.11` alatt.*
+

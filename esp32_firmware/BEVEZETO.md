@@ -9,7 +9,7 @@ program parancsait.
 > [manszabi/FanController_OTA_debug](https://github.com/manszabi/FanController_OTA_debug)
 > repó. Az itteni másolat kényelmi célú, hogy a szoftver és a firmware egy
 > helyen legyen áttekinthető. Módosítást mindig **mindkét helyre** vezess át
-> (ez a másolat a firmware-repó `v7.14.9` állapotát tükrözi).
+> (ez a másolat a firmware-repó `v7.18.0` állapotát tükrözi).
 
 ## Hogyan kapcsolódik a fő programhoz?
 
@@ -33,8 +33,8 @@ eszköznév `FanController`.
 |---|---|
 | `FanController_OTA_debug.ino` | **A firmware maga** (Arduino vázlat, ~2700 sor): BLE vezérlés + PIN-auth, relé-állapotgép break-before-make váltással, kézi (gombos) mód, failsafe-védelem, relé-visszajelzés figyelés (H11AA1M optocsatoló), fokozat-mentés áramszünetre (RTC+NVS), BLE OTA frissítés CRC-vel és health-checkkel, deep sleep, diagnosztikai napló. |
 | `README.md` | A firmware saját, részletes (magyar) dokumentációja: hardver/pinkiosztás, üzemmódok, gombvezérlés, OTA, hibaelhárítás. **Ezt olvasd először.** |
-| `verhistory.md` | A firmware teljes verziótörténete (v7.0.0 → v7.14.9). |
-| `partitions_custom.csv` | Egyedi flash-partíciós tábla (két OTA app-partíció + SPIFFS az OTA-átmenethez). |
+| `verhistory.md` | A firmware teljes verziótörténete (v7.0.0 → v7.18.0). |
+| `partitions_custom.csv` | Egyedi flash-partíciós tábla (két OTA app-partíció + a `spiffs` címkéjű adatpartíció az OTA-átmenethez — v7.18.0 óta LittleFS fut rajta). |
 | `build.sh` | Fordítás arduino-cli-vel (XIAO ESP32-C3 alapból; `TARGET=c6` a C6-hoz). |
 | `sender/ota.py` | **BLE OTA feltöltő**: az új firmware `.bin` feltöltése vezeték nélkül (részenkénti CRC32-vel, újraküldéssel). `sender/discover.py`: BLE-eszközök listázása; `sender/run.bat`: Windows-indító. |
 | `diag_client.py` | A készülék hibanaplójának (diag.log) lekérése BLE-n (`DIAG?`). |
@@ -46,14 +46,42 @@ eszköznév `FanController`.
 
 ## Fordítás és telepítés dióhéjban
 
-1. **Fordítás:** `./build.sh` (arduino-cli + esp32 core 3.1.3 + OneButton
+1. **Fordítás:** `./build.sh` (arduino-cli + esp32 core 3.3.11 + OneButton
    könyvtár szükséges; részletek a `build.sh` fejlécében). Arduino IDE-ből is
    fordítható – board: *XIAO_ESP32C3*, partíció: `partitions_custom.csv`.
 2. **Első feltöltés:** USB-n (utána már mehet vezeték nélkül).
 3. **További frissítések OTA-val:**
    `python sender/ota.py "<MAC-cím>" "FanController_OTA_debug.ino.bin"`
 4. **Ellenőrzés:** a HUD-ból vagy a `diag_client.py`-jal lekérdezhető a
-   diag.log – az első sora a futó stabil verzió (`[ver] 7.14.9`).
+   diag.log – az első sora a futó stabil verzió (`[ver] 7.18.0`).
+
+## Mi változott v7.14.9 óta (v7.15.0 – v7.18.0)
+
+- **v7.15.0 – `[FIX-ESP-55]` deep sleep alatt beragadó görgő-relé.** Alvás közben a
+  digitális IO tápdomain lekapcsol, a GPIO-k lebegnek, így szivárgó áram vagy zaj
+  behúzhatta a `RELAY_MAIN`-t; ébredéskor a bootkori relé-önteszt „beragadt fő relét"
+  jelzett → failsafe → leállás. Megoldás: **pad-hold** (`relayPadsHoldEnable()`) az
+  always-on tápdomainben, feloldás a `setup()`-ban a lábak biztonságos szintre
+  hajtása **után**. (C6-on a hold a bootloader alatt is él, ezért a feloldás kötelező.)
+- **v7.16.0 – átvilágítás + toolchain a `esp32:esp32@3.3.11` core-ra** (IDF 5.5; a 3.3-as
+  core-tól az alapértelmezett BLE stack **NimBLE**, nem Bluedroid). `[FIX-ESP-57]`: bukott
+  OTA-telepítés után az eszköz **véglegesen OTA-módban ragadt** (nem futott a gomb, a
+  failsafe, a relé-figyelés és az NVS-mentés sem) → a `performUpdate()` bukásakor
+  kötelező `otaResetState()`.
+- **v7.16.1 – `[FIX-ESP-63]`:** a boot-kori watchdog-konfiguráció **némán elbukhatott**,
+  és a gyári 5000 ms maradt a szándékolt 15 000 ms helyett; a visszatérési értékek
+  most ellenőrzöttek.
+- **v7.16.2 – `[FIX-ESP-64]`:** a watchdog már csak a `loop()`-ot figyeli
+  (`idle_core_mask = 0`), nem az idle taskot.
+- **v7.17.0 – karbantarthatóság, viselkedés-semlegesen:** fordítási idejű `static_assert`
+  védőhálók (pin-ütközés) és duplikációk kiemelése; a bináris kissé kisebb lett.
+- **v7.18.0 – `[FIX-ESP-65]` SPIFFS → LittleFS** a `spiffs` partíción. **A partíciós tábla
+  nem változik** (a `LittleFS.begin()` alapból ezt a címkét csatolja). Indok:
+  áramszünet-biztonság (copy-on-write — a `diag.log` épp brownout/WDT reset után, bootkor
+  íródik, az OTA pedig ~0,7 MB-ot stagel) és jobb viselkedés telített fájlrendszeren.
+  > **Egyszeri hatás a frissítéskor:** az első boot a régi, SPIFFS-formátumú partíciót nem
+  > tudja felcsatolni, ezért **megformázza** → a korábbi `diag.log` elveszik. Ez a naplóban
+  > is látszik: `[fs] mount failed -> formatted`.
 
 ## A 2026-08-24-i átvilágítás eredménye (v7.14.8 – v7.14.9)
 
